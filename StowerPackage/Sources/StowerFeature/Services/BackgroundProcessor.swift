@@ -78,10 +78,16 @@ public class BackgroundProcessor: Observable {
                 let contentService = ContentExtractionService()
                 let extractedContent = try await contentService.extractContent(from: htmlString, baseURL: url)
                 
-                // Use native SwiftUI image handling - no custom processing needed
+                // Process extracted content and images
+                let processedMarkdown = await processImagesInContent(
+                    extractedContent.markdown, 
+                    imageURLs: extractedContent.images, 
+                    baseURL: url
+                )
+                
                 item.updateContent(
                     title: extractedContent.title,
-                    extractedMarkdown: extractedContent.markdown
+                    extractedMarkdown: processedMarkdown
                 )
                 
                 // Save the updated item
@@ -96,5 +102,99 @@ public class BackgroundProcessor: Observable {
             
             try? modelContext.save()
         }
+    }
+    
+    // MARK: - Image Processing
+    
+    private func processImagesInContent(_ markdown: String, imageURLs: [String], baseURL: URL?) async -> String {
+        // Extract image URLs from markdown directly
+        let extractedImageURLs = extractImageURLsFromMarkdown(markdown)
+        let allImageURLs = Set(imageURLs + extractedImageURLs)
+        
+        guard !allImageURLs.isEmpty else {
+            print("📄 BackgroundProcessor: No images to process")
+            return markdown
+        }
+        
+        print("🖼️ BackgroundProcessor: Processing \(allImageURLs.count) images")
+        
+        let imageProcessor = ImageProcessingService()
+        let imageCache = ImageCacheService.shared
+        var updatedMarkdown = markdown
+        
+        // Process each image URL
+        for imageURLString in allImageURLs {
+            guard let imageURL = URL(string: imageURLString) else {
+                print("❌ BackgroundProcessor: Invalid image URL: \(imageURLString)")
+                continue
+            }
+            
+            // Check if we already have this image cached
+            if let existingUUID = imageCache.findUUID(for: imageURL) {
+                print("🔄 BackgroundProcessor: Image already cached: \(existingUUID)")
+                // Replace URL with token in markdown
+                updatedMarkdown = updatedMarkdown.replacingOccurrences(
+                    of: imageURL.absoluteString,
+                    with: "stower://image/\(existingUUID)"
+                )
+                continue
+            }
+            
+            do {
+                // Download and process the image
+                if let processedImage = try await imageProcessor.downloadAndProcess(url: imageURL) {
+                    // Store in cache
+                    if let uuid = await imageCache.store(
+                        data: processedImage.data,
+                        sourceURL: imageURL,
+                        format: processedImage.format
+                    ) {
+                        print("✅ BackgroundProcessor: Cached image \(uuid) from \(imageURL.absoluteString)")
+                        
+                        // Replace URL with token in markdown
+                        updatedMarkdown = updatedMarkdown.replacingOccurrences(
+                            of: imageURL.absoluteString,
+                            with: "stower://image/\(uuid)"
+                        )
+                    } else {
+                        print("❌ BackgroundProcessor: Failed to cache processed image from \(imageURL.absoluteString)")
+                    }
+                } else {
+                    print("❌ BackgroundProcessor: Failed to process image from \(imageURL.absoluteString)")
+                }
+            } catch {
+                print("❌ BackgroundProcessor: Error processing image \(imageURL.absoluteString): \(error)")
+            }
+        }
+        
+        print("✅ BackgroundProcessor: Image processing complete")
+        return updatedMarkdown
+    }
+    
+    private func extractImageURLsFromMarkdown(_ markdown: String) -> [String] {
+        let imagePattern = #"!\[([^\]]*)\]\(([^)]+)\)"#
+        
+        guard let regex = try? NSRegularExpression(pattern: imagePattern, options: []) else {
+            print("❌ BackgroundProcessor: Failed to create regex for image extraction")
+            return []
+        }
+        
+        let matches = regex.matches(in: markdown, options: [], range: NSRange(markdown.startIndex..., in: markdown))
+        var imageURLs: [String] = []
+        
+        for match in matches {
+            if match.numberOfRanges >= 3 {
+                let urlRange = Range(match.range(at: 2), in: markdown)!
+                let urlString = String(markdown[urlRange])
+                
+                // Skip data URLs and stower tokens - we only want http(s) URLs
+                if urlString.hasPrefix("http://") || urlString.hasPrefix("https://") {
+                    imageURLs.append(urlString)
+                }
+            }
+        }
+        
+        print("📷 BackgroundProcessor: Extracted \(imageURLs.count) image URLs from markdown")
+        return imageURLs
     }
 }

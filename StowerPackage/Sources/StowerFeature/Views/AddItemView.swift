@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import UniformTypeIdentifiers
 
 public struct AddItemView: View {
     @Environment(\.modelContext) private var modelContext
@@ -11,26 +12,54 @@ public struct AddItemView: View {
     @State private var url = ""
     
     @State private var isAddingFromURL = false
+    @State private var isShowingFilePicker = false
+    @State private var selectedPDFURL: URL?
     
     private var isValidInput: Bool {
         if isAddingFromURL {
-            return !url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-                   URL(string: url.trimmingCharacters(in: .whitespacesAndNewlines)) != nil
+            let trimmedURL = url.trimmingCharacters(in: .whitespacesAndNewlines)
+            return !trimmedURL.isEmpty && (URL(string: trimmedURL) != nil || isPDFURL(trimmedURL))
+        } else if selectedPDFURL != nil {
+            return true // PDF file selected
         } else {
             return !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
                    !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
     }
     
+    private func isPDFURL(_ urlString: String) -> Bool {
+        return urlString.lowercased().hasSuffix(".pdf")
+    }
+    
     public var body: some View {
         NavigationStack {
             Form {
                 Section {
-                    Picker("Input Type", selection: $isAddingFromURL) {
-                        Text("Manual Text").tag(false)
-                        Text("From URL").tag(true)
+                    VStack(spacing: 12) {
+                        Picker("Input Type", selection: $isAddingFromURL) {
+                            Text("Manual Text").tag(false)
+                            Text("From URL").tag(true)
+                        }
+                        .pickerStyle(SegmentedPickerStyle())
+                        
+                        Button(action: {
+                            isShowingFilePicker = true
+                        }) {
+                            HStack {
+                                Image(systemName: "doc.badge.plus")
+                                Text(selectedPDFURL == nil ? "Import PDF File" : "PDF: \(selectedPDFURL!.lastPathComponent)")
+                                Spacer()
+                                if selectedPDFURL != nil {
+                                    Button("Clear") {
+                                        selectedPDFURL = nil
+                                    }
+                                    .buttonStyle(.plain)
+                                    .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                        .buttonStyle(.bordered)
                     }
-                    .pickerStyle(SegmentedPickerStyle())
                 }
                 
                 if isAddingFromURL {
@@ -46,15 +75,22 @@ public struct AddItemView: View {
                     
                     Section("Processing") {
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("URL processing will:")
+                            Text(isPDFURL(url) ? "PDF processing will:" : "URL processing will:")
                                 .font(.subheadline)
                                 .fontWeight(.medium)
                             
                             VStack(alignment: .leading, spacing: 4) {
-                                Label("Download the webpage", systemImage: "arrow.down.circle")
-                                Label("Extract the main content", systemImage: "doc.text")
-                                Label("Convert to clean Markdown", systemImage: "textformat")
-                                Label("Download and compress images", systemImage: "photo")
+                                if isPDFURL(url) {
+                                    Label("Download the PDF file", systemImage: "arrow.down.circle")
+                                    Label("Extract text with formatting", systemImage: "doc.text")
+                                    Label("Detect headings and structure", systemImage: "textformat.alt")
+                                    Label("Convert to clean Markdown", systemImage: "textformat")
+                                } else {
+                                    Label("Download the webpage", systemImage: "arrow.down.circle")
+                                    Label("Extract the main content", systemImage: "doc.text")
+                                    Label("Convert to clean Markdown", systemImage: "textformat")
+                                    Label("Download and compress images", systemImage: "photo")
+                                }
                             }
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -96,6 +132,36 @@ public struct AddItemView: View {
                     }
                 }
                 
+                if selectedPDFURL != nil {
+                    Section("PDF Processing") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Image(systemName: "doc.richtext")
+                                    .foregroundStyle(.red)
+                                Text("PDF Import")
+                                    .font(.subheadline)
+                                    .fontWeight(.medium)
+                                Spacer()
+                            }
+                            
+                            VStack(alignment: .leading, spacing: 4) {
+                                Label("Extract text with formatting", systemImage: "doc.text")
+                                Label("Detect headings by font size", systemImage: "textformat.size")
+                                Label("Identify lists and structure", systemImage: "list.bullet")
+                                Label("Convert to readable Markdown", systemImage: "textformat")
+                            }
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            
+                            Text("Note: Works best with text-based PDFs. Scanned documents may have limited text extraction.")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                                .padding(.top, 4)
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
+                
                 Section("Tags (Optional)") {
                     TextField("Enter tags separated by commas", text: $tags)
                         .textFieldStyle(RoundedBorderTextFieldStyle())
@@ -126,6 +192,24 @@ public struct AddItemView: View {
                     .disabled(!isValidInput)
                 }
             }
+            .fileImporter(
+                isPresented: $isShowingFilePicker,
+                allowedContentTypes: [.pdf],
+                allowsMultipleSelection: false
+            ) { result in
+                switch result {
+                case .success(let urls):
+                    if let url = urls.first {
+                        selectedPDFURL = url
+                        // Reset other inputs when PDF is selected
+                        isAddingFromURL = false
+                        title = ""
+                        content = ""
+                    }
+                case .failure(let error):
+                    print("File picker error: \(error)")
+                }
+            }
         }
     }
     
@@ -135,20 +219,37 @@ public struct AddItemView: View {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
         
-        if isAddingFromURL {
+        if let pdfURL = selectedPDFURL {
+            // Handle PDF file import
+            let item = SavedItem(
+                title: pdfURL.deletingPathExtension().lastPathComponent,
+                extractedMarkdown: "Processing PDF...",
+                tags: trimmedTags
+            )
+            
+            modelContext.insert(item)
+            
+            Task {
+                await processPDF(for: item, pdfURL: pdfURL)
+            }
+        } else if isAddingFromURL {
             let trimmedURL = url.trimmingCharacters(in: .whitespacesAndNewlines)
             if let validURL = URL(string: trimmedURL) {
                 let item = SavedItem(
                     url: validURL,
                     title: validURL.host() ?? "Untitled",
-                    extractedMarkdown: "Processing...",
+                    extractedMarkdown: isPDFURL(trimmedURL) ? "Processing PDF..." : "Processing...",
                     tags: trimmedTags
                 )
                 
                 modelContext.insert(item)
                 
                 Task {
-                    await processURL(for: item, url: validURL)
+                    if isPDFURL(trimmedURL) {
+                        await processPDFFromURL(for: item, url: validURL)
+                    } else {
+                        await processURL(for: item, url: validURL)
+                    }
                 }
             }
         } else {
@@ -182,6 +283,72 @@ public struct AddItemView: View {
         }
         
         dismiss()
+    }
+    
+    @MainActor
+    private func processPDF(for item: SavedItem, pdfURL: URL) async {
+        print("📄 AddItemView: Starting PDF processing for: \(pdfURL.lastPathComponent)")
+        
+        do {
+            // Ensure we have access to the PDF file
+            guard pdfURL.startAccessingSecurityScopedResource() else {
+                throw PDFExtractionError.processingError("Could not access PDF file")
+            }
+            defer { pdfURL.stopAccessingSecurityScopedResource() }
+            
+            let pdfService = PDFExtractionService()
+            let extractedContent = try await pdfService.extractContent(from: pdfURL)
+            
+            print("🎯 PDF extraction completed. Title: '\(extractedContent.title)', Markdown length: \(extractedContent.markdown.count)")
+            
+            item.updateContent(
+                title: extractedContent.title.isEmpty ? pdfURL.deletingPathExtension().lastPathComponent : extractedContent.title,
+                extractedMarkdown: extractedContent.markdown.isEmpty ? "No text content found in PDF" : extractedContent.markdown
+            )
+            
+            print("💾 PDF item updated successfully")
+            
+        } catch {
+            print("💥 Error processing PDF: \(error)")
+            item.updateContent(
+                title: "Failed to Process PDF",
+                extractedMarkdown: "Failed to extract content from PDF: \(error.localizedDescription)"
+            )
+        }
+    }
+    
+    @MainActor
+    private func processPDFFromURL(for item: SavedItem, url: URL) async {
+        print("🌐 AddItemView: Starting PDF download and processing for: \(url.absoluteString)")
+        
+        do {
+            let (data, response) = try await URLSession.shared.data(from: url)
+            print("📡 Downloaded PDF: \(data.count) bytes")
+            
+            if let httpResponse = response as? HTTPURLResponse {
+                print("📊 HTTP Status: \(httpResponse.statusCode)")
+                print("📋 Content-Type: \(httpResponse.mimeType ?? "unknown")")
+            }
+            
+            let pdfService = PDFExtractionService()
+            let extractedContent = try await pdfService.extractContent(from: data)
+            
+            print("🎯 PDF extraction completed. Title: '\(extractedContent.title)', Markdown length: \(extractedContent.markdown.count)")
+            
+            item.updateContent(
+                title: extractedContent.title.isEmpty ? (url.lastPathComponent.isEmpty ? "PDF Document" : url.lastPathComponent) : extractedContent.title,
+                extractedMarkdown: extractedContent.markdown.isEmpty ? "No text content found in PDF" : extractedContent.markdown
+            )
+            
+            print("💾 PDF item updated successfully")
+            
+        } catch {
+            print("💥 Error processing PDF from URL: \(error)")
+            item.updateContent(
+                title: "Failed to Load PDF",
+                extractedMarkdown: "Failed to download or process PDF from URL: \(error.localizedDescription)"
+            )
+        }
     }
     
     @MainActor
@@ -221,12 +388,16 @@ public struct AddItemView: View {
                 
                 print("🎯 Extraction completed. Title: '\(extractedContent.title)', Markdown length: \(extractedContent.markdown.count)")
                 
-                // Process images if any were found
-                // Use native SwiftUI image handling - no custom processing needed  
-                print("📝 Using native SwiftUI image handling")
+                // Process extracted content and images
+                let processedMarkdown = await processImagesInContent(
+                    extractedContent.markdown, 
+                    imageURLs: extractedContent.images, 
+                    baseURL: url
+                )
+                
                 item.updateContent(
                     title: extractedContent.title,
-                    extractedMarkdown: extractedContent.markdown
+                    extractedMarkdown: processedMarkdown
                 )
                 print("💾 Item updated successfully")
             } else {
@@ -306,6 +477,99 @@ public struct AddItemView: View {
         }
     }
     
+    // MARK: - Image Processing
+    
+    private func processImagesInContent(_ markdown: String, imageURLs: [String], baseURL: URL?) async -> String {
+        // Extract image URLs from markdown directly
+        let extractedImageURLs = extractImageURLsFromMarkdown(markdown)
+        let allImageURLs = Set(imageURLs + extractedImageURLs)
+        
+        guard !allImageURLs.isEmpty else {
+            print("📄 AddItemView: No images to process")
+            return markdown
+        }
+        
+        print("🖼️ AddItemView: Processing \(allImageURLs.count) images")
+        
+        let imageProcessor = ImageProcessingService()
+        let imageCache = ImageCacheService.shared
+        var updatedMarkdown = markdown
+        
+        // Process each image URL
+        for imageURLString in allImageURLs {
+            guard let imageURL = URL(string: imageURLString) else {
+                print("❌ AddItemView: Invalid image URL: \(imageURLString)")
+                continue
+            }
+            
+            // Check if we already have this image cached
+            if let existingUUID = imageCache.findUUID(for: imageURL) {
+                print("🔄 AddItemView: Image already cached: \(existingUUID)")
+                // Replace URL with token in markdown
+                updatedMarkdown = updatedMarkdown.replacingOccurrences(
+                    of: imageURL.absoluteString,
+                    with: "stower://image/\(existingUUID)"
+                )
+                continue
+            }
+            
+            do {
+                // Download and process the image
+                if let processedImage = try await imageProcessor.downloadAndProcess(url: imageURL) {
+                    // Store in cache
+                    if let uuid = await imageCache.store(
+                        data: processedImage.data,
+                        sourceURL: imageURL,
+                        format: processedImage.format
+                    ) {
+                        print("✅ AddItemView: Cached image \(uuid) from \(imageURL.absoluteString)")
+                        
+                        // Replace URL with token in markdown
+                        updatedMarkdown = updatedMarkdown.replacingOccurrences(
+                            of: imageURL.absoluteString,
+                            with: "stower://image/\(uuid)"
+                        )
+                    } else {
+                        print("❌ AddItemView: Failed to cache processed image from \(imageURL.absoluteString)")
+                    }
+                } else {
+                    print("❌ AddItemView: Failed to process image from \(imageURL.absoluteString)")
+                }
+            } catch {
+                print("❌ AddItemView: Error processing image \(imageURL.absoluteString): \(error)")
+            }
+        }
+        
+        print("✅ AddItemView: Image processing complete")
+        return updatedMarkdown
+    }
+    
+    private func extractImageURLsFromMarkdown(_ markdown: String) -> [String] {
+        let imagePattern = #"!\[([^\]]*)\]\(([^)]+)\)"#
+        
+        guard let regex = try? NSRegularExpression(pattern: imagePattern, options: []) else {
+            print("❌ AddItemView: Failed to create regex for image extraction")
+            return []
+        }
+        
+        let matches = regex.matches(in: markdown, options: [], range: NSRange(markdown.startIndex..., in: markdown))
+        var imageURLs: [String] = []
+        
+        for match in matches {
+            if match.numberOfRanges >= 3 {
+                let urlRange = Range(match.range(at: 2), in: markdown)!
+                let urlString = String(markdown[urlRange])
+                
+                // Skip data URLs and stower tokens - we only want http(s) URLs
+                if urlString.hasPrefix("http://") || urlString.hasPrefix("https://") {
+                    imageURLs.append(urlString)
+                }
+            }
+        }
+        
+        print("📷 AddItemView: Extracted \(imageURLs.count) image URLs from markdown")
+        return imageURLs
+    }
     
     public init() {}
 }

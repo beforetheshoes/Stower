@@ -83,6 +83,77 @@ public final class SavedItem {
         self.dateModified = Date()
     }
     
+    // MARK: - Image Migration Support
+    
+    /// Returns migrated markdown with base64 images converted to tokens
+    @MainActor
+    public var migratedMarkdown: String {
+        get async {
+            if extractedMarkdown.contains("data:image") {
+                print("🔄 SavedItem: Migrating base64 images to tokens for item: \(title)")
+                let migrated = await migrateBase64ToTokens(extractedMarkdown)
+                
+                // Update the stored markdown if migration produced changes
+                if migrated != extractedMarkdown {
+                    self.extractedMarkdown = migrated
+                    self.dateModified = Date()
+                    print("✅ SavedItem: Migration complete, updated stored markdown")
+                }
+                
+                return migrated
+            }
+            return extractedMarkdown
+        }
+    }
+    
+    @MainActor
+    private func migrateBase64ToTokens(_ markdown: String) async -> String {
+        let base64Pattern = #"!\[([^\]]*)\]\(data:image/([^;]+);base64,([^)]+)\)"#
+        
+        guard let regex = try? NSRegularExpression(pattern: base64Pattern, options: []) else {
+            print("❌ SavedItem: Failed to create regex for base64 migration")
+            return markdown
+        }
+        
+        var migratedMarkdown = markdown
+        let matches = regex.matches(in: markdown, options: [], range: NSRange(markdown.startIndex..., in: markdown))
+        
+        let imageCache = ImageCacheService.shared
+        
+        // Process matches in reverse order to avoid range issues
+        for match in matches.reversed() {
+            guard match.numberOfRanges >= 4 else { continue }
+            
+            let fullMatchRange = Range(match.range(at: 0), in: markdown)!
+            let altRange = Range(match.range(at: 1), in: markdown)!
+            let mimeTypeRange = Range(match.range(at: 2), in: markdown)!
+            let base64Range = Range(match.range(at: 3), in: markdown)!
+            
+            let fullMatch = String(markdown[fullMatchRange])
+            let altText = String(markdown[altRange])
+            let mimeType = String(markdown[mimeTypeRange])
+            let base64String = String(markdown[base64Range])
+            
+            // Decode base64
+            if let imageData = Data(base64Encoded: base64String) {
+                // Determine format from MIME type
+                let format = mimeType.contains("png") ? "png" : "jpg"
+                
+                // Store in cache
+                if let uuid = await imageCache.store(data: imageData, format: format) {
+                    let tokenReplacement = "![" + altText + "](stower://image/\(uuid))"
+                    migratedMarkdown = migratedMarkdown.replacingOccurrences(of: fullMatch, with: tokenReplacement)
+                    print("✅ SavedItem: Migrated base64 image to token: \(uuid)")
+                } else {
+                    print("❌ SavedItem: Failed to store migrated image in cache")
+                }
+            } else {
+                print("❌ SavedItem: Failed to decode base64 image data")
+            }
+        }
+        
+        return migratedMarkdown
+    }
     
     // These computed properties access external storage and cause disk I/O
     // Only use them when you actually need the image data, not in list rows

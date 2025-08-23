@@ -15,6 +15,13 @@ public final class ContentExtractionService: Sendable {
     }
     
     public func extractContent(from html: String, baseURL: URL?) async throws -> ExtractedContent {
+        // Check if this is actually PDF content (sometimes URLs redirect to PDFs)
+        if let baseURL = baseURL, isPDFURL(baseURL.absoluteString) {
+            self.log("📄 Detected PDF URL, using PDF extraction service")
+            let pdfService = PDFExtractionService(debugLogger: debugLogger)
+            return try await pdfService.extractContent(from: baseURL)
+        }
+        
         // Move CPU-heavy parsing off main thread using Task.detached
         return try await Task.detached {
             // TODO: Re-enable Foundation Models once beta issues are resolved
@@ -39,6 +46,36 @@ public final class ContentExtractionService: Sendable {
             self.log("✅ Using traditional extraction result (\(traditionalResult.markdown.count) characters)")
             return traditionalResult
         }.value
+    }
+    
+    public func extractContent(from data: Data, mimeType: String?, baseURL: URL?) async throws -> ExtractedContent {
+        // Check if this is PDF data
+        if let mimeType = mimeType, mimeType == "application/pdf" {
+            self.log("📄 Detected PDF data, using PDF extraction service")
+            let pdfService = PDFExtractionService(debugLogger: debugLogger)
+            return try await pdfService.extractContent(from: data)
+        }
+        
+        // Check PDF magic bytes as fallback
+        if data.count >= 4 {
+            let pdfHeader = data.prefix(4)
+            if pdfHeader == Data([0x25, 0x50, 0x44, 0x46]) { // "%PDF"
+                self.log("📄 Detected PDF by magic bytes, using PDF extraction service")
+                let pdfService = PDFExtractionService(debugLogger: debugLogger)
+                return try await pdfService.extractContent(from: data)
+            }
+        }
+        
+        // Convert data to string and process as HTML
+        guard let htmlString = String(data: data, encoding: .utf8) else {
+            throw NSError(domain: "ContentExtractionError", code: 1, userInfo: [NSLocalizedDescriptionKey: "Could not convert data to string"])
+        }
+        
+        return try await extractContent(from: htmlString, baseURL: baseURL)
+    }
+    
+    private func isPDFURL(_ urlString: String) -> Bool {
+        return urlString.lowercased().hasSuffix(".pdf")
     }
     
     @MainActor
@@ -99,7 +136,7 @@ public final class ContentExtractionService: Sendable {
                 log("🔍 Main content preview: '\(String(mainContentText.prefix(200)))'")
                 
                 // Convert to markdown
-                let markdown = try convertToMarkdown(mainContent)
+                let markdown = try convertToMarkdown(mainContent, baseURL: baseURL)
                 log("✅ Markdown length: \(markdown.count) characters")
                 log("📖 First 200 chars of markdown: '\(String(markdown.prefix(200)))'")
                 
@@ -125,7 +162,7 @@ public final class ContentExtractionService: Sendable {
             log("🔍 Main content preview: '\(String(mainContentText.prefix(200)))'")
             
             // Convert to markdown
-            let markdown = try convertToMarkdown(mainContent)
+            let markdown = try convertToMarkdown(mainContent, baseURL: baseURL)
             log("✅ Markdown length: \(markdown.count) characters")
             log("📖 First 200 chars of markdown: '\(String(markdown.prefix(200)))'")
             
@@ -149,7 +186,7 @@ public final class ContentExtractionService: Sendable {
         log("🔍 Main content preview: '\(String(mainContentText.prefix(200)))'")
         
         // Convert to markdown
-        let markdown = try convertToMarkdown(mainContent)
+        let markdown = try convertToMarkdown(mainContent, baseURL: baseURL)
         log("✅ Markdown length: \(markdown.count) characters")
         log("📖 First 200 chars of markdown: '\(String(markdown.prefix(200)))'")
         
@@ -462,12 +499,12 @@ public final class ContentExtractionService: Sendable {
     
     // MARK: - Markdown Conversion
     
-    private func convertToMarkdown(_ element: Element) throws -> String {
+    private func convertToMarkdown(_ element: Element, baseURL: URL? = nil) throws -> String {
         var markdown = ""
         
         // Process child nodes
         for child in element.children() {
-            let childMarkdown = try processElement(child)
+            let childMarkdown = try processElement(child, baseURL: baseURL, depth: 0)
             if !childMarkdown.isEmpty {
                 let trimmed = childMarkdown.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !trimmed.isEmpty {
@@ -484,31 +521,36 @@ public final class ContentExtractionService: Sendable {
         return cleanedMarkdown
     }
     
-    private func processElement(_ element: Element) throws -> String {
+    private func processElement(_ element: Element, baseURL: URL? = nil, depth: Int = 0) throws -> String {
+        // Prevent infinite recursion
+        guard depth < 50 else {
+            print("⚠️ Max recursion depth reached for element: \(element.tagName())")
+            return ""
+        }
         let tagName = element.tagName().lowercased()
         let text = element.ownText()
         
         switch tagName {
         case "h1":
-            let content = try processInlineElements(element).trimmingCharacters(in: .whitespacesAndNewlines)
+            let content = try processInlineElements(element, baseURL: baseURL, depth: depth + 1).trimmingCharacters(in: .whitespacesAndNewlines)
             return content.isEmpty ? "" : "# " + content
         case "h2":
-            let content = try processInlineElements(element).trimmingCharacters(in: .whitespacesAndNewlines)
+            let content = try processInlineElements(element, baseURL: baseURL, depth: depth + 1).trimmingCharacters(in: .whitespacesAndNewlines)
             return content.isEmpty ? "" : "## " + content
         case "h3":
-            let content = try processInlineElements(element).trimmingCharacters(in: .whitespacesAndNewlines)
+            let content = try processInlineElements(element, baseURL: baseURL, depth: depth + 1).trimmingCharacters(in: .whitespacesAndNewlines)
             return content.isEmpty ? "" : "### " + content
         case "h4":
-            let content = try processInlineElements(element).trimmingCharacters(in: .whitespacesAndNewlines)
+            let content = try processInlineElements(element, baseURL: baseURL, depth: depth + 1).trimmingCharacters(in: .whitespacesAndNewlines)
             return content.isEmpty ? "" : "#### " + content
         case "h5":
-            let content = try processInlineElements(element).trimmingCharacters(in: .whitespacesAndNewlines)
+            let content = try processInlineElements(element, baseURL: baseURL, depth: depth + 1).trimmingCharacters(in: .whitespacesAndNewlines)
             return content.isEmpty ? "" : "##### " + content
         case "h6":
-            let content = try processInlineElements(element).trimmingCharacters(in: .whitespacesAndNewlines)
+            let content = try processInlineElements(element, baseURL: baseURL, depth: depth + 1).trimmingCharacters(in: .whitespacesAndNewlines)
             return content.isEmpty ? "" : "###### " + content
         case "p":
-            return try processInlineElements(element)
+            return try processInlineElements(element, baseURL: baseURL, depth: depth + 1)
         case "strong", "b":
             return "**" + text + "**"
         case "em", "i":
@@ -518,14 +560,26 @@ public final class ContentExtractionService: Sendable {
             let linkText = try element.text()
             return "[\(linkText)](\(href))"
         case "img":
-            // Strip all images during extraction to prevent network requests and improve performance
+            // Preserve image as markdown with resolved absolute URL
+            let src = (try? element.attr("src")) ?? ""
+            let alt = (try? element.attr("alt")) ?? ""
+            
+            // Only include images with valid src attributes
+            if !src.isEmpty {
+                // Resolve relative URLs to absolute URLs
+                if let resolvedURL = resolveURL(src, baseURL: baseURL) {
+                    return "![\(alt)](\(resolvedURL.absoluteString))"
+                } else {
+                    return "![\(alt)](\(src))"
+                }
+            }
             return ""
         case "ul", "ol":
-            return try processList(element, ordered: tagName == "ol")
+            return try processList(element, ordered: tagName == "ol", baseURL: baseURL, depth: depth + 1)
         case "li":
-            return try processInlineElements(element)
+            return try processInlineElements(element, baseURL: baseURL, depth: depth + 1)
         case "blockquote":
-            let content = try processInlineElements(element)
+            let content = try processInlineElements(element, baseURL: baseURL, depth: depth + 1)
             return "> " + content.replacingOccurrences(of: "\n", with: "\n> ")
         case "code":
             return "`" + text + "`"
@@ -541,7 +595,7 @@ public final class ContentExtractionService: Sendable {
             if element.children().count > 0 {
                 var result = ""
                 for child in element.children() {
-                    let childMarkdown = try processElement(child)
+                    let childMarkdown = try processElement(child, baseURL: baseURL, depth: depth + 1)
                     if !childMarkdown.isEmpty {
                         let trimmed = childMarkdown.trimmingCharacters(in: .whitespacesAndNewlines)
                         if !trimmed.isEmpty {
@@ -558,7 +612,7 @@ public final class ContentExtractionService: Sendable {
             if element.children().count > 0 {
                 var result = ""
                 for child in element.children() {
-                    let childMarkdown = try processElement(child)
+                    let childMarkdown = try processElement(child, baseURL: baseURL, depth: depth + 1)
                     if !childMarkdown.isEmpty {
                         result += childMarkdown + " "
                     }
@@ -570,27 +624,27 @@ public final class ContentExtractionService: Sendable {
         }
     }
     
-    private func processInlineElements(_ element: Element) throws -> String {
+    private func processInlineElements(_ element: Element, baseURL: URL? = nil, depth: Int = 0) throws -> String {
         var result = ""
         
         for node in element.getChildNodes() {
             if let textNode = node as? TextNode {
                 result += textNode.text()
             } else if let childElement = node as? Element {
-                result += try processElement(childElement)
+                result += try processElement(childElement, baseURL: baseURL, depth: depth + 1)
             }
         }
         
         return result.trimmingCharacters(in: .whitespaces)
     }
     
-    private func processList(_ element: Element, ordered: Bool) throws -> String {
+    private func processList(_ element: Element, ordered: Bool, baseURL: URL? = nil, depth: Int = 0) throws -> String {
         var result = ""
         let items = try element.select("li")
         
         for (index, item) in items.enumerated() {
             let prefix = ordered ? "\(index + 1). " : "- "
-            let itemText = try processInlineElements(item)
+            let itemText = try processInlineElements(item, baseURL: baseURL, depth: depth + 1)
             result += prefix + itemText + "\n"
         }
         
@@ -614,13 +668,26 @@ public final class ContentExtractionService: Sendable {
     }
     
     private func resolveURL(_ urlString: String, baseURL: URL?) -> URL? {
-        if let url = URL(string: urlString) {
-            if url.scheme != nil {
-                return url // Absolute URL
-            } else if let baseURL = baseURL {
-                return URL(string: urlString, relativeTo: baseURL) // Relative URL
-            }
+        // First try to create as absolute URL
+        if let url = URL(string: urlString), url.scheme != nil {
+            return url // Already absolute URL
         }
+        
+        // Handle relative URLs
+        guard let baseURL = baseURL else {
+            print("⚠️ No baseURL provided for relative URL: \(urlString)")
+            return nil
+        }
+        
+        // Create URL relative to base and resolve it to absolute
+        if let relativeURL = URL(string: urlString, relativeTo: baseURL) {
+            // Use absoluteURL to convert relative URL to absolute
+            let absoluteURL = relativeURL.absoluteURL
+            print("🔗 Resolved '\(urlString)' with base '\(baseURL.absoluteString)' → '\(absoluteURL.absoluteString)'")
+            return absoluteURL
+        }
+        
+        print("❌ Failed to resolve URL: '\(urlString)' with base '\(baseURL.absoluteString)'")
         return nil
     }
 }

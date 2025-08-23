@@ -7,6 +7,9 @@ public struct SettingsView: View {
     @Environment(ReaderSettings.self) private var readerSettings
     @State private var showingClearDataAlert = false
     @State private var showingReaderSettings = false
+    @State private var showingClearImageCacheAlert = false
+    @State private var imageCacheSize = 0
+    @State private var imageCacheCount = 0
     
     private var totalItems: Int {
         allItems.count
@@ -17,10 +20,15 @@ public struct SettingsView: View {
     }
     
     private var storageSize: String {
-        let totalBytes = allItems.reduce(0) { total, item in
+        let legacyImageBytes = allItems.reduce(0) { total, item in
             total + item.images.values.reduce(0) { $0 + $1.count }
         }
+        let totalBytes = legacyImageBytes + imageCacheSize
         return ByteCountFormatter.string(fromByteCount: Int64(totalBytes), countStyle: .file)
+    }
+    
+    private var imageCacheStorageSize: String {
+        ByteCountFormatter.string(fromByteCount: Int64(imageCacheSize), countStyle: .file)
     }
     
     public var body: some View {
@@ -69,6 +77,29 @@ public struct SettingsView: View {
                     }
                 }
                 
+                Section("Images") {
+                    HStack {
+                        Label("Cached Images", systemImage: "photo.on.rectangle")
+                        Spacer()
+                        Text("\(imageCacheCount)")
+                            .foregroundStyle(.secondary)
+                    }
+                    
+                    HStack {
+                        Label("Image Cache Size", systemImage: "internaldrive")
+                        Spacer()
+                        Text(imageCacheStorageSize)
+                            .foregroundStyle(.secondary)
+                    }
+                    
+                    Button(role: .destructive) {
+                        showingClearImageCacheAlert = true
+                    } label: {
+                        Label("Clear Image Cache", systemImage: "trash")
+                    }
+                    .disabled(imageCacheCount == 0)
+                }
+                
                 Section("Data Management") {
                     Button(role: .destructive) {
                         showingClearDataAlert = true
@@ -113,9 +144,20 @@ public struct SettingsView: View {
             } message: {
                 Text("This will permanently delete all saved articles and images. This action cannot be undone.")
             }
+            .alert("Clear Image Cache", isPresented: $showingClearImageCacheAlert) {
+                Button("Cancel", role: .cancel) { }
+                Button("Clear", role: .destructive) {
+                    clearImageCache()
+                }
+            } message: {
+                Text("This will delete \(imageCacheCount) cached images (\(imageCacheStorageSize)). Images will be re-downloaded when needed.")
+            }
             .sheet(isPresented: $showingReaderSettings) {
                 ReaderSettingsSheet()
                     .environment(readerSettings)
+            }
+            .task {
+                await loadCacheStats()
             }
         }
     }
@@ -123,6 +165,30 @@ public struct SettingsView: View {
     private func clearAllData() {
         for item in allItems {
             modelContext.delete(item)
+        }
+        
+        // Also clear the image cache when clearing all data
+        Task {
+            ImageCacheService.shared.clearCache()
+            await loadCacheStats()
+        }
+    }
+    
+    private func clearImageCache() {
+        Task {
+            ImageCacheService.shared.clearCache()
+            await loadCacheStats()
+        }
+    }
+    
+    private func loadCacheStats() async {
+        let imageCache = ImageCacheService.shared
+        let size = imageCache.totalSize()
+        let count = imageCache.imageCount()
+        
+        await MainActor.run {
+            imageCacheSize = size
+            imageCacheCount = count
         }
     }
     
