@@ -11,6 +11,10 @@ public struct ReaderView: View {
     @State private var currentChunkIndex = 0
     @State private var showingReaderSettings = false
     @State private var isReprocessing = false
+    @State private var isEditingMetadata = false
+    @State private var editedTitle = ""
+    @State private var editedAuthor = ""
+    @State private var editedTags = ""
     
     public init(itemId: UUID) {
         self.itemId = itemId
@@ -74,22 +78,41 @@ public struct ReaderView: View {
                         }
                     }
                 }
-                .navigationTitle(item.title)
+                .navigationTitle(isEditingMetadata ? "" : item.title)
                 #if os(iOS)
                 .navigationBarTitleDisplayMode(.inline)
                 #endif
                 .toolbar {
                     #if os(iOS)
+                    ToolbarItemGroup(placement: .topBarLeading) {
+                        if isEditingMetadata {
+                            metadataEditingControls
+                        } else {
+                            editMetadataButton
+                        }
+                    }
                     ToolbarItemGroup(placement: .topBarTrailing) {
-                        reprocessButton
-                        settingsButton
+                        if !isEditingMetadata {
+                            reprocessButton
+                            settingsButton
+                        }
                     }
                     #elseif os(macOS)
                     ToolbarItemGroup(placement: .automatic) {
-                        reprocessButton
-                        settingsButton
+                        if isEditingMetadata {
+                            metadataEditingControls
+                        } else {
+                            editMetadataButton
+                            reprocessButton
+                            settingsButton
+                        }
                     }
                     #endif
+                }
+                .overlay(alignment: .top) {
+                    if isEditingMetadata {
+                        metadataEditingOverlay
+                    }
                 }
                 .sheet(isPresented: $showingReaderSettings) {
                     ReaderSettingsView(readerSettings: $readerSettings)
@@ -144,6 +167,121 @@ public struct ReaderView: View {
             Image(systemName: "textformat")
         }
         .help("Reader Settings")
+    }
+    
+    @ViewBuilder
+    private var editMetadataButton: some View {
+        Button {
+            if let item = item {
+                editedTitle = item.title
+                editedAuthor = item.author
+                editedTags = item.tags.joined(separator: ", ")
+                isEditingMetadata = true
+            }
+        } label: {
+            Image(systemName: "pencil")
+        }
+        .help("Edit Metadata")
+    }
+    
+    @ViewBuilder
+    private var metadataEditingControls: some View {
+        HStack {
+            Button("Cancel") {
+                cancelMetadataEdit()
+            }
+            .foregroundStyle(.secondary)
+            
+            Button("Save") {
+                saveMetadataEdit()
+            }
+            .disabled(editedTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+    }
+    
+    @ViewBuilder
+    private var metadataEditingOverlay: some View {
+        VStack(spacing: 16) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Edit Article Metadata")
+                    .font(.headline)
+                
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Title")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    TextField("Article Title", text: $editedTitle)
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                        .onSubmit {
+                            saveMetadataEdit()
+                        }
+                }
+                
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Author")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    TextField("Author Name", text: $editedAuthor)
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                        .onSubmit {
+                            saveMetadataEdit()
+                        }
+                }
+                
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Tags")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    TextField("Comma-separated tags", text: $editedTags)
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                        .onSubmit {
+                            saveMetadataEdit()
+                        }
+                        #if os(iOS)
+                        .submitLabel(.done)
+                        #endif
+                }
+            }
+            .padding()
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+            
+            Spacer()
+        }
+        .padding()
+    }
+    
+    private func cancelMetadataEdit() {
+        isEditingMetadata = false
+        editedTitle = ""
+        editedAuthor = ""
+        editedTags = ""
+    }
+    
+    private func saveMetadataEdit() {
+        let trimmedTitle = editedTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedTitle.isEmpty, let item = item else {
+            cancelMetadataEdit()
+            return
+        }
+        
+        let trimmedAuthor = editedAuthor.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        // Parse tags from comma-separated string
+        let parsedTags = editedTags
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        
+        item.updateContent(
+            title: trimmedTitle,
+            author: trimmedAuthor,
+            tags: parsedTags
+        )
+        
+        isEditingMetadata = false
+        editedTitle = ""
+        editedAuthor = ""
+        editedTags = ""
     }
     
     @MainActor

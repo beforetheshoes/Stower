@@ -128,6 +128,7 @@ public struct LibraryView: View {
             descriptor.propertiesToFetch = [
                 \SavedItem.id,
                 \SavedItem.title,
+                \SavedItem.author,
                 \SavedItem.url,
                 \SavedItem.dateAdded,
                 \SavedItem.dateModified,
@@ -171,6 +172,7 @@ public struct LibraryView: View {
             descriptor.propertiesToFetch = [
                 \SavedItem.id,
                 \SavedItem.title,
+                \SavedItem.author,
                 \SavedItem.url,
                 \SavedItem.dateAdded,
                 \SavedItem.dateModified,
@@ -308,6 +310,13 @@ private struct SavedItemRow: View {
                 Text(item.title)
                     .font(.headline)
                     .lineLimit(2)
+                
+                if !item.author.isEmpty {
+                    Text("by \(item.author)")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
                 
                 if let url = item.url {
                     Text(url.host() ?? url.absoluteString)

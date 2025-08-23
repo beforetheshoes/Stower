@@ -106,6 +106,8 @@ Stower/
 - Customizable fonts and sizes
 - Adjustable line spacing and margins
 - Distraction-free fullscreen reading mode
+- **Metadata editing** - Edit article titles, authors, and tags
+- Author display in article lists for better organization
 
 ### Sync & Storage
 - CloudKit integration for seamless sync across devices

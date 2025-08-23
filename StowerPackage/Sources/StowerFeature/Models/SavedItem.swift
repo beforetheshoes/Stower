@@ -7,6 +7,7 @@ public final class SavedItem {
     public var id: UUID = UUID()
     public var url: URL?
     public var title: String = ""
+    public var author: String = ""
     
     // HTML and large binary data kept in external storage
     @Attribute(.externalStorage)
@@ -33,6 +34,7 @@ public final class SavedItem {
     public init(
         url: URL? = nil,
         title: String,
+        author: String = "",
         rawHTML: String? = nil,
         extractedMarkdown: String,
         images: [UUID: Data] = [:],
@@ -42,6 +44,7 @@ public final class SavedItem {
         self.id = UUID()
         self.url = url
         self.title = title
+        self.author = author
         self.rawHTML = rawHTML
         self.extractedMarkdown = extractedMarkdown
         self.images = images
@@ -54,6 +57,7 @@ public final class SavedItem {
     
     public func updateContent(
         title: String? = nil,
+        author: String? = nil,
         extractedMarkdown: String? = nil,
         images: [UUID: Data]? = nil,
         coverImageId: UUID? = nil,
@@ -61,6 +65,9 @@ public final class SavedItem {
     ) {
         if let title = title {
             self.title = title
+        }
+        if let author = author {
+            self.author = author
         }
         if let extractedMarkdown = extractedMarkdown {
             self.extractedMarkdown = extractedMarkdown
@@ -209,6 +216,7 @@ extension SavedItem {
     public static let preview = SavedItem(
         url: URL(string: "https://example.com/article"),
         title: "Sample Article",
+        author: "Sample Author",
         extractedMarkdown: """
         # Sample Article
         

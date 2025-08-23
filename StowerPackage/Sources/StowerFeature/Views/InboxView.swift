@@ -141,6 +141,13 @@ private struct SavedItemRow: View {
                     .font(.headline)
                     .lineLimit(2)
                 
+                if !item.author.isEmpty {
+                    Text("by \(item.author)")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                
                 if let url = item.url {
                     Text(url.host() ?? url.absoluteString)
                         .font(.caption)
