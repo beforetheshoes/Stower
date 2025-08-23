@@ -200,27 +200,38 @@ public struct LibraryView: View {
     }
     
     private func deleteItems(offsets: IndexSet) {
+        let itemsToDelete = offsets.map { filteredItems[$0] }
+        
         withAnimation {
-            for index in offsets {
-                let item = filteredItems[index]
-                modelContext.delete(item)
-                // Remove from loaded items as well
+            // Remove from loaded items immediately for UI responsiveness
+            for item in itemsToDelete {
                 if let loadedIndex = loadedItems.firstIndex(where: { $0.id == item.id }) {
                     loadedItems.remove(at: loadedIndex)
                     currentOffset = max(0, currentOffset - 1)
                 }
             }
         }
+        
+        // Perform actual deletion with retry logic
+        Task {
+            let deletionService = DeletionService(modelContext: modelContext)
+            await deletionService.deleteItems(itemsToDelete)
+        }
     }
     
     private func deleteItem(_ item: SavedItem) {
         withAnimation {
-            modelContext.delete(item)
-            // Remove from loaded items as well
+            // Remove from loaded items immediately for UI responsiveness
             if let loadedIndex = loadedItems.firstIndex(where: { $0.id == item.id }) {
                 loadedItems.remove(at: loadedIndex)
                 currentOffset = max(0, currentOffset - 1)
             }
+        }
+        
+        // Perform actual deletion with retry logic
+        Task {
+            let deletionService = DeletionService(modelContext: modelContext)
+            await deletionService.deleteItem(item)
         }
     }
     

@@ -14,18 +14,7 @@ class ShareViewController: UIViewController {
     }
     
     private func setupModelContainer() {
-        do {
-            let container = try ModelContainer(
-                for: SavedItem.self,
-                configurations: ModelConfiguration(
-                    groupContainer: .identifier("group.com.ryanleewilliams.stower"),
-                    cloudKitDatabase: .automatic
-                )
-            )
-            self.modelContainer = container
-        } catch {
-            print("Failed to setup model container: \(error)")
-        }
+        self.modelContainer = Persistence.shared
     }
     
     private func handleSharedContent() {

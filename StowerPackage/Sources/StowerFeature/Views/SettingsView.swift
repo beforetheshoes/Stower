@@ -10,6 +10,9 @@ public struct SettingsView: View {
     @State private var showingClearImageCacheAlert = false
     @State private var imageCacheSize = 0
     @State private var imageCacheCount = 0
+    @State private var showingImageSettings = false
+    @State private var imageDownloadSettings: ImageDownloadSettings?
+    @State private var domainStats: [DomainImageStats] = []
     
     private var totalItems: Int {
         allItems.count
@@ -92,6 +95,12 @@ public struct SettingsView: View {
                             .foregroundStyle(.secondary)
                     }
                     
+                    Button {
+                        showingImageSettings = true
+                    } label: {
+                        Label("Image Download Settings", systemImage: "gearshape")
+                    }
+                    
                     Button(role: .destructive) {
                         showingClearImageCacheAlert = true
                     } label: {
@@ -158,6 +167,10 @@ public struct SettingsView: View {
             }
             .task {
                 await loadCacheStats()
+                await loadImageDownloadSettings()
+            }
+            .sheet(isPresented: $showingImageSettings) {
+                ImageDownloadSettingsView()
             }
         }
     }
@@ -185,10 +198,30 @@ public struct SettingsView: View {
         let imageCache = ImageCacheService.shared
         let size = imageCache.totalSize()
         let count = imageCache.imageCount()
+        let stats = imageCache.getAllDomainStats()
         
         await MainActor.run {
             imageCacheSize = size
             imageCacheCount = count
+            domainStats = stats
+        }
+    }
+    
+    @MainActor
+    private func loadImageDownloadSettings() async {
+        let descriptor = FetchDescriptor<ImageDownloadSettings>()
+        do {
+            let settings = try modelContext.fetch(descriptor)
+            if let firstSetting = settings.first {
+                imageDownloadSettings = firstSetting
+            } else {
+                let defaultSettings = ImageDownloadSettings()
+                modelContext.insert(defaultSettings)
+                imageDownloadSettings = defaultSettings
+                try? modelContext.save()
+            }
+        } catch {
+            print("❌ SettingsView: Error loading image download settings: \(error)")
         }
     }
     

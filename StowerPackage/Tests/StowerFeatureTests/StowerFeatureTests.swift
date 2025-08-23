@@ -533,6 +533,59 @@ func testMetadataSpecialCharacters() async throws {
     #expect(item.tags == unicodeTags)
 }
 
+// MARK: - Image Sync Tests
+
+@Test("SavedImageRef creation with specific UUID")
+func testSavedImageRefUUIDConsistency() async throws {
+    let imageUUID = UUID()
+    let sourceURL = URL(string: "https://example.com/image.jpg")!
+    
+    let imageRef = SavedImageRef(
+        id: imageUUID,
+        sourceURL: sourceURL,
+        width: 800,
+        height: 600,
+        origin: .web,
+        fileFormat: "jpg"
+    )
+    
+    #expect(imageRef.id == imageUUID)
+    #expect(imageRef.sourceURL == sourceURL)
+    #expect(imageRef.width == 800)
+    #expect(imageRef.height == 600)
+    #expect(imageRef.origin == .web)
+    #expect(imageRef.fileFormat == "jpg")
+    #expect(imageRef.downloadStatus == .pending)
+}
+
+@Test("SavedImageRef download state management")
+func testImageRefDownloadStates() async throws {
+    let imageRef = SavedImageRef(
+        sourceURL: URL(string: "https://example.com/image.jpg"),
+        origin: .web
+    )
+    
+    #expect(imageRef.downloadStatus == .pending)
+    #expect(!imageRef.hasLocalFile)
+    
+    // Mark in progress
+    imageRef.markDownloadInProgress()
+    #expect(imageRef.downloadStatus == .inProgress)
+    #expect(!imageRef.hasLocalFile)
+    
+    // Mark success
+    imageRef.markDownloadSuccess()
+    #expect(imageRef.downloadStatus == .completed)
+    #expect(imageRef.hasLocalFile)
+    #expect(imageRef.downloadFailureCount == 0)
+    
+    // Test failure
+    imageRef.markDownloadFailure()
+    #expect(imageRef.downloadStatus == .failed)
+    #expect(!imageRef.hasLocalFile)
+    #expect(imageRef.downloadFailureCount == 1)
+}
+
 // MARK: - UI State Management Tests for Complete Metadata Editing
 
 @Test("Metadata editing UI state simulation")

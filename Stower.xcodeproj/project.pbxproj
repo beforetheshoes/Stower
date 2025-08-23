@@ -37,11 +37,21 @@
 			);
 			target = 8B41F6442DEDD0D5001A66F9 /* Stower */;
 		};
+		94E4B7372E5A52D700C238F4 /* Exceptions for "Stower" folder in "Stower" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 8B41F6442DEDD0D5001A66F9 /* Stower */;
+		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		8B41F6472DEDD0D5001A66F9 /* Stower */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				94E4B7372E5A52D700C238F4 /* Exceptions for "Stower" folder in "Stower" target */,
+			);
 			path = Stower;
 			sourceTree = "<group>";
 		};
@@ -374,6 +384,7 @@
 				DEVELOPMENT_TEAM = 777XX46HDU;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Stower/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Stower;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.reference";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -402,6 +413,7 @@
 				DEVELOPMENT_TEAM = 777XX46HDU;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Stower/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Stower;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.reference";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;

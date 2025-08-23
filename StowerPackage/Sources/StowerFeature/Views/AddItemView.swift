@@ -14,6 +14,11 @@ public struct AddItemView: View {
     @State private var isAddingFromURL = false
     @State private var isShowingFilePicker = false
     @State private var selectedPDFURL: URL?
+    @State private var downloadImages = true
+    @State private var imageDownloadPreference: ItemImagePreference = .auto
+    @State private var showingDomainPrompt = false
+    @State private var pendingDomain: String?
+    @State private var imageDownloadSettings: ImageDownloadSettings?
     
     private var isValidInput: Bool {
         if isAddingFromURL {
@@ -239,7 +244,8 @@ public struct AddItemView: View {
                     url: validURL,
                     title: validURL.host() ?? "Untitled",
                     extractedMarkdown: isPDFURL(trimmedURL) ? "Processing PDF..." : "Processing...",
-                    tags: trimmedTags
+                    tags: trimmedTags,
+                    imageDownloadPreference: downloadImages ? .always : imageDownloadPreference
                 )
                 
                 modelContext.insert(item)
@@ -275,7 +281,8 @@ public struct AddItemView: View {
                 let item = SavedItem(
                     title: trimmedTitle,
                     extractedMarkdown: trimmedContent,
-                    tags: trimmedTags
+                    tags: trimmedTags,
+                    imageDownloadPreference: .never // Manual content doesn't have images to download
                 )
                 
                 modelContext.insert(item)
@@ -392,7 +399,8 @@ public struct AddItemView: View {
                 let processedMarkdown = await processImagesInContent(
                     extractedContent.markdown, 
                     imageURLs: extractedContent.images, 
-                    baseURL: url
+                    baseURL: url,
+                    for: item
                 )
                 
                 item.updateContent(
@@ -479,7 +487,7 @@ public struct AddItemView: View {
     
     // MARK: - Image Processing
     
-    private func processImagesInContent(_ markdown: String, imageURLs: [String], baseURL: URL?) async -> String {
+    private func processImagesInContent(_ markdown: String, imageURLs: [String], baseURL: URL?, for item: SavedItem) async -> String {
         // Extract image URLs from markdown directly
         let extractedImageURLs = extractImageURLsFromMarkdown(markdown)
         let allImageURLs = Set(imageURLs + extractedImageURLs)
@@ -505,6 +513,22 @@ public struct AddItemView: View {
             // Check if we already have this image cached
             if let existingUUID = imageCache.findUUID(for: imageURL) {
                 print("🔄 AddItemView: Image already cached: \(existingUUID)")
+                
+                // Create SavedImageRef for existing cached image if needed
+                if let metadata = imageCache.metadata(for: existingUUID) {
+                    let imageRef = SavedImageRef(
+                        id: existingUUID,
+                        sourceURL: imageURL,
+                        width: metadata.width,
+                        height: metadata.height,
+                        origin: .web,
+                        fileFormat: metadata.filename.hasSuffix(".png") ? "png" : "jpg"
+                    )
+                    imageRef.markDownloadSuccess()
+                    item.addImageRef(imageRef)
+                    print("✅ AddItemView: Created SavedImageRef for existing cached image \(existingUUID)")
+                }
+                
                 // Replace URL with token in markdown
                 updatedMarkdown = updatedMarkdown.replacingOccurrences(
                     of: imageURL.absoluteString,
@@ -523,6 +547,19 @@ public struct AddItemView: View {
                         format: processedImage.format
                     ) {
                         print("✅ AddItemView: Cached image \(uuid) from \(imageURL.absoluteString)")
+                        
+                        // Create SavedImageRef for CloudKit sync
+                        let imageRef = SavedImageRef(
+                            id: uuid,
+                            sourceURL: imageURL,
+                            width: processedImage.width,
+                            height: processedImage.height,
+                            origin: .web,
+                            fileFormat: processedImage.format
+                        )
+                        imageRef.markDownloadSuccess()
+                        item.addImageRef(imageRef)
+                        print("✅ AddItemView: Created SavedImageRef for new image \(uuid)")
                         
                         // Replace URL with token in markdown
                         updatedMarkdown = updatedMarkdown.replacingOccurrences(

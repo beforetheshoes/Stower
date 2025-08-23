@@ -16,9 +16,19 @@ public final class SavedItem {
     // Markdown should be fast to access - remove external storage
     public var extractedMarkdown: String = ""
     
-    // Keep large binary image data in external storage
+    // Keep large binary image data in external storage (legacy)
     @Attribute(.externalStorage)
     public var images: [UUID: Data] = [:]
+    
+    // New image models for sync-friendly storage
+    @Relationship(deleteRule: .cascade, inverse: \SavedImageRef.item)
+    public var imageRefs: [SavedImageRef]? = nil
+    
+    @Relationship(deleteRule: .cascade, inverse: \SavedImageAsset.item) 
+    public var imageAssets: [SavedImageAsset]? = nil
+    
+    // Image download preference for this specific item
+    public var imageDownloadPreference: ItemImagePreference = ItemImagePreference.auto
     
     public var coverImageId: UUID?
     public var dateAdded: Date = Date()
@@ -39,7 +49,8 @@ public final class SavedItem {
         extractedMarkdown: String,
         images: [UUID: Data] = [:],
         coverImageId: UUID? = nil,
-        tags: [String] = []
+        tags: [String] = [],
+        imageDownloadPreference: ItemImagePreference = .auto
     ) {
         self.id = UUID()
         self.url = url
@@ -48,6 +59,7 @@ public final class SavedItem {
         self.rawHTML = rawHTML
         self.extractedMarkdown = extractedMarkdown
         self.images = images
+        self.imageDownloadPreference = imageDownloadPreference
         self.coverImageId = coverImageId
         self.dateAdded = Date()
         self.dateModified = Date()
@@ -61,7 +73,8 @@ public final class SavedItem {
         extractedMarkdown: String? = nil,
         images: [UUID: Data]? = nil,
         coverImageId: UUID? = nil,
-        tags: [String]? = nil
+        tags: [String]? = nil,
+        imageDownloadPreference: ItemImagePreference? = nil
     ) {
         if let title = title {
             self.title = title
@@ -87,7 +100,76 @@ public final class SavedItem {
         if let tags = tags {
             self.tags = tags
         }
+        if let imageDownloadPreference = imageDownloadPreference {
+            self.imageDownloadPreference = imageDownloadPreference
+        }
         self.dateModified = Date()
+    }
+    
+    // MARK: - Image Management
+    
+    /// Returns all images for this item (both legacy and new formats)
+    public var allImages: [UUID] {
+        var imageIds: [UUID] = []
+        
+        // Add legacy images
+        imageIds.append(contentsOf: images.keys)
+        
+        // Add new format images
+        imageIds.append(contentsOf: (imageRefs ?? []).map { $0.id })
+        imageIds.append(contentsOf: (imageAssets ?? []).map { $0.id })
+        
+        return imageIds
+    }
+    
+    /// Gets the domain for this item if it has a URL
+    public var domain: String? {
+        return url?.host()
+    }
+    
+    /// Determines if images should be downloaded based on item preference and global settings
+    public func shouldDownloadImages(globalSettings: ImageDownloadSettings) -> Bool {
+        switch imageDownloadPreference {
+        case .always:
+            return true
+        case .never:
+            return false
+        case .ask:
+            return false  // Requires user interaction
+        case .auto:
+            let decision = globalSettings.shouldDownloadImages(for: domain)
+            return decision.shouldDownload
+        }
+    }
+    
+    /// Gets the effective image download preference for this item
+    public func getImageDownloadDecision(globalSettings: ImageDownloadSettings) -> ImageDownloadDecision {
+        switch imageDownloadPreference {
+        case .always:
+            return .download("Item preference: Always")
+        case .never:
+            return .skip("Item preference: Never")
+        case .ask:
+            return .ask("Item preference: Ask")
+        case .auto:
+            return globalSettings.shouldDownloadImages(for: domain)
+        }
+    }
+    
+    /// Adds an image reference for web images
+    public func addImageRef(_ imageRef: SavedImageRef) {
+        imageRef.item = self
+        if imageRefs == nil { imageRefs = [] }
+        imageRefs!.append(imageRef)
+        dateModified = Date()
+    }
+    
+    /// Adds an image asset for PDF/pasted images
+    public func addImageAsset(_ imageAsset: SavedImageAsset) {
+        imageAsset.item = self
+        if imageAssets == nil { imageAssets = [] }
+        imageAssets!.append(imageAsset)
+        dateModified = Date()
     }
     
     // MARK: - Image Migration Support
@@ -146,14 +228,23 @@ public final class SavedItem {
                 // Determine format from MIME type
                 let format = mimeType.contains("png") ? "png" : "jpg"
                 
-                // Store in cache
-                if let uuid = await imageCache.store(data: imageData, format: format) {
-                    let tokenReplacement = "![" + altText + "](stower://image/\(uuid))"
-                    migratedMarkdown = migratedMarkdown.replacingOccurrences(of: fullMatch, with: tokenReplacement)
-                    print("✅ SavedItem: Migrated base64 image to token: \(uuid)")
-                } else {
-                    print("❌ SavedItem: Failed to store migrated image in cache")
-                }
+                // Create SavedImageAsset for sync-friendly storage
+                let imageAsset = await SavedImageAsset.create(
+                    from: imageData,
+                    origin: .migrated,
+                    fileFormat: format,
+                    altText: altText
+                )
+                
+                // Add to this item
+                addImageAsset(imageAsset)
+                
+                // Also store in cache for immediate availability
+                _ = await imageCache.store(data: imageData, format: format)
+                
+                let tokenReplacement = "![" + altText + "](stower://image/\(imageAsset.id))"
+                migratedMarkdown = migratedMarkdown.replacingOccurrences(of: fullMatch, with: tokenReplacement)
+                print("✅ SavedItem: Migrated base64 image to asset: \(imageAsset.id)")
             } else {
                 print("❌ SavedItem: Failed to decode base64 image data")
             }
@@ -208,6 +299,31 @@ public final class SavedItem {
         }
         
         return truncated + "…"
+    }
+}
+
+public enum ItemImagePreference: String, Codable, CaseIterable, Sendable {
+    case auto = "auto"        // Use global/domain settings
+    case always = "always"    // Always download for this item
+    case never = "never"      // Never download for this item  
+    case ask = "ask"          // Ask user each time
+    
+    public var displayName: String {
+        switch self {
+        case .auto: return "Use Settings"
+        case .always: return "Always Download"
+        case .never: return "Never Download"
+        case .ask: return "Ask Each Time"
+        }
+    }
+    
+    public var systemImage: String {
+        switch self {
+        case .auto: return "gear"
+        case .always: return "checkmark.circle.fill"
+        case .never: return "xmark.circle.fill"
+        case .ask: return "questionmark.circle.fill"
+        }
     }
 }
 
