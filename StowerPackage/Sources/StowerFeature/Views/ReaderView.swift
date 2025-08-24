@@ -1,12 +1,11 @@
 import SwiftUI
 import SwiftData
-import MarkdownUI
 
 public struct ReaderView: View {
     let itemId: UUID
     
     @Query private var items: [SavedItem]
-    @State private var readerSettings = ReaderSettings()
+    @Environment(ReaderSettings.self) private var readerSettings
     @State private var hasScrolledToLastPosition = false
     @State private var currentChunkIndex = 0
     @State private var showingReaderSettings = false
@@ -37,7 +36,6 @@ public struct ReaderView: View {
                     ScrollView {
                         SimpleMarkdownView(
                             item: item,
-                            readerSettings: readerSettings,
                             onChunkVisible: { chunkIndex in
                                 // Only update state if the value actually changed
                                 if currentChunkIndex != chunkIndex {
@@ -115,7 +113,8 @@ public struct ReaderView: View {
                     }
                 }
                 .sheet(isPresented: $showingReaderSettings) {
-                    ReaderSettingsView(readerSettings: $readerSettings)
+                    ReaderSettingsSheet()
+                        .environment(readerSettings)
                 }
             } else {
                 let _ = print("🐛 ReaderView: No item found for ID: \(itemId)")

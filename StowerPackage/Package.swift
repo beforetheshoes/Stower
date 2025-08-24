@@ -14,7 +14,7 @@ let package = Package(
         ),
     ],
     dependencies: [
-        .package(url: "https://github.com/gonzalezreal/swift-markdown-ui", from: "2.0.2"),
+        .package(url: "https://github.com/swiftlang/swift-markdown", from: "0.4.0"),
         .package(url: "https://github.com/scinfu/SwiftSoup.git", from: "2.6.0")
     ],
     targets: [
@@ -23,7 +23,7 @@ let package = Package(
         .target(
             name: "StowerFeature",
             dependencies: [
-                .product(name: "MarkdownUI", package: "swift-markdown-ui"),
+                .product(name: "Markdown", package: "swift-markdown"),
                 .product(name: "SwiftSoup", package: "SwiftSoup")
             ]
         ),

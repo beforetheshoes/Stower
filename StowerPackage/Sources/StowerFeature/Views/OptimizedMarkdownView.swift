@@ -1,5 +1,4 @@
 import SwiftUI
-import MarkdownUI
 
 enum ChunkContent {
     case text(String)
@@ -10,16 +9,14 @@ enum ChunkContent {
 /// Chunked lazy markdown view for optimal performance on large documents
 public struct SimpleMarkdownView: View {
     let item: SavedItem
-    let readerSettings: ReaderSettings
     let onChunkVisible: (Int) -> Void
+    @Environment(ReaderSettings.self) private var readerSettings
     
     public init(
         item: SavedItem,
-        readerSettings: ReaderSettings,
         onChunkVisible: @escaping (Int) -> Void = { _ in }
     ) {
         self.item = item
-        self.readerSettings = readerSettings
         self.onChunkVisible = onChunkVisible
     }
     
@@ -153,7 +150,6 @@ public struct SimpleMarkdownView: View {
             }
         }
         .background(readerSettings.effectiveBackground)
-        .preferredColorScheme(readerSettings.effectiveColorScheme)
         .task {
             await loadChunks()
         }
@@ -163,9 +159,10 @@ public struct SimpleMarkdownView: View {
     private func chunkView(for chunk: ChunkContent, at index: Int) -> some View {
         switch chunk {
         case .text(let markdownText):
-            Markdown(markdownText)
-                .markdownTheme(.stower(settings: readerSettings, screenWidth: getScreenWidth()))
-                .font(.system(size: readerSettings.effectiveFontSize, design: readerSettings.effectiveFont.fontDesign))
+            SwiftUIMarkdownRenderer(markdownText: markdownText, readerSettings: readerSettings)
+                .onAppear {
+                    print("🐛 Font Debug: effectiveFontSize=\(readerSettings.effectiveFontSize), effectiveFont=\(readerSettings.effectiveFont.rawValue)")
+                }
                 
         case .base64Image(let imageData, _):
             #if os(iOS)
@@ -352,7 +349,7 @@ public struct SimpleMarkdownView: View {
 
 #Preview {
     SimpleMarkdownView(
-        item: SavedItem.preview,
-        readerSettings: ReaderSettings()
-    )
+        item: SavedItem.preview
+    )
+    .environment(ReaderSettings())
 }

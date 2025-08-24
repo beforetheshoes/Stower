@@ -278,14 +278,36 @@ public final class SavedItem {
     
     /// Generates a lightweight preview text from markdown without loading the full content
     public static func generatePreview(from markdown: String) -> String {
+        // Handle truly empty content
+        let trimmed = markdown.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return "No content available" // Provide fallback for empty input for better UX
+        }
+        
         // Remove markdown formatting and extract first ~150 characters
-        let cleanText = markdown
+        var cleanText = trimmed
             .replacingOccurrences(of: #"!\[.*?\]\(.*?\)"#, with: "", options: .regularExpression) // Remove images
             .replacingOccurrences(of: #"#{1,6}\s+"#, with: "", options: .regularExpression) // Remove headers
             .replacingOccurrences(of: #"\*{1,2}(.*?)\*{1,2}"#, with: "$1", options: .regularExpression) // Remove bold/italic
             .replacingOccurrences(of: #"`(.*?)`"#, with: "$1", options: .regularExpression) // Remove code
             .replacingOccurrences(of: #"\[(.*?)\]\(.*?\)"#, with: "$1", options: .regularExpression) // Remove links, keep text
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        // Handle list items by replacing with the text content (removing bullets)
+        // Process line by line to handle list markers at start of lines
+        let lines = cleanText.components(separatedBy: .newlines)
+        let processedLines = lines.map { line in
+            line.replacingOccurrences(of: #"^\s*[-*+]\s+"#, with: "", options: .regularExpression)
+                .replacingOccurrences(of: #"^\s*\d+\.\s+"#, with: "", options: .regularExpression)
+        }
+        cleanText = processedLines.joined(separator: "\n")
+        
+        // Clean up whitespace
+        cleanText = cleanText.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        // If content contains only special/invisible characters after cleaning, provide fallback
+        if cleanText.isEmpty && !trimmed.isEmpty {
+            return "Special content"
+        }
         
         let previewLength = 150
         if cleanText.count <= previewLength {

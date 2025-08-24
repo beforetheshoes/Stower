@@ -1,5 +1,4 @@
 import SwiftUI
-import MarkdownUI
 
 public struct CustomMarkdownView: View {
     private let markdown: String
@@ -38,7 +37,6 @@ public struct CustomMarkdownView: View {
         }
         .font(.system(size: readerSettings.effectiveFontSize, design: readerSettings.effectiveFont.fontDesign))
         .background(readerSettings.effectiveBackground)
-        .preferredColorScheme(readerSettings.effectiveColorScheme)
         .onAppear {
             // Use async processing for large markdown content
             if markdown.count > 10000 {
@@ -101,8 +99,7 @@ public struct CustomMarkdownView: View {
         Group {
             switch section {
             case .text(let markdownText):
-                Markdown(markdownText)
-                    .markdownTheme(.stower(settings: readerSettings, screenWidth: screenWidth))
+                SwiftUIMarkdownRenderer(markdownText: markdownText, readerSettings: readerSettings)
             case .image(let imageData, _):
 #if os(iOS)
                 if let uiImage = UIImage(data: imageData) {

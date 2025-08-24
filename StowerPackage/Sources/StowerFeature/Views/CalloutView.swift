@@ -1,5 +1,4 @@
 import SwiftUI
-import MarkdownUI
 
 struct CalloutView: View {
     let type: CalloutType
@@ -25,8 +24,7 @@ struct CalloutView: View {
                     .foregroundColor(effectiveColor)
                     .textCase(.uppercase)
                 
-                Markdown(content)
-                    .markdownTheme(.stower(settings: readerSettings))
+                SwiftUIMarkdownRenderer(markdownText: content, readerSettings: readerSettings)
                     .padding(.top, 2) // Small gap between title and content
             }
             

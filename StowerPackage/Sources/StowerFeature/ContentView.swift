@@ -13,7 +13,7 @@ extension Notification.Name {
 }
 
 public struct ContentView: View {
-    @State private var readerSettings = ReaderSettings()
+    @State private var readerSettings = ReaderSettings.loadFromUserDefaults()
     @State private var selectedSection: ContentSection? = .inbox
     @State private var columnVisibility: NavigationSplitViewVisibility = .automatic
     @State private var showingAddURLDialog = false
@@ -28,6 +28,8 @@ public struct ContentView: View {
             DetailView(selectedSection: selectedSection ?? .inbox)
         }
         .environment(readerSettings)
+        .preferredColorScheme(readerSettings.effectiveColorScheme)
+        .tint(readerSettings.effectiveAccentColor)
         .navigationSplitViewStyle(.balanced)
         .onReceive(NotificationCenter.default.publisher(for: .showAddURLDialog)) { _ in
             showingAddURLDialog = true
@@ -78,6 +80,8 @@ public struct ContentView: View {
                         }
                 }
                 .environment(readerSettings)
+                .preferredColorScheme(readerSettings.effectiveColorScheme)
+                .tint(readerSettings.effectiveAccentColor)
             } else {
                 // Use NavigationSplitView for larger screens (iPad)
                 NavigationSplitView(columnVisibility: $columnVisibility) {
@@ -86,6 +90,8 @@ public struct ContentView: View {
                     DetailView(selectedSection: selectedSection ?? .inbox)
                 }
                 .environment(readerSettings)
+                .preferredColorScheme(readerSettings.effectiveColorScheme)
+                .tint(readerSettings.effectiveAccentColor)
             }
         }
         .onAppear {

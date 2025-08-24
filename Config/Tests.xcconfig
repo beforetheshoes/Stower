@@ -12,3 +12,10 @@ TEST_TARGET_NAME = StowerMac
 
 // Fix duplicate module name issue
 PRODUCT_MODULE_NAME = $(PRODUCT_NAME)UITests
+
+// ==========================================
+// Code Coverage Settings
+// ==========================================
+CLANG_ENABLE_CODE_COVERAGE = YES
+GCC_GENERATE_TEST_COVERAGE_FILES = YES
+GCC_INSTRUMENT_PROGRAM_FLOW_ARCS = YES
