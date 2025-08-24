@@ -143,4 +143,54 @@ struct ReaderSettingsTests {
         let reloadedSettings = ReaderSettings.loadForTesting(from: defaults)
         #expect(reloadedSettings.selectedPreset == .highContrast)
     }
+    
+    @Test("Custom preset with sepia background should use dark text")
+    func testCustomPresetSepiaBackgroundTextColor() async throws {
+        // Given: Custom preset with sepia background
+        let settings = ReaderSettings()
+        settings.selectedPreset = .custom
+        settings.customBackground = .sepia
+        settings.isDarkMode = true  // Dark mode enabled but should be overridden
+        
+        // When: Getting effective text color
+        let textColor = settings.effectiveTextColor
+        
+        // Then: Should use dark text for readability on sepia background
+        #expect(textColor == .black, "Sepia background should always use dark text for readability")
+    }
+    
+    @Test("Custom preset with dark background should use light text")
+    func testCustomPresetDarkBackgroundTextColor() async throws {
+        // Given: Custom preset with dark background
+        let settings = ReaderSettings()
+        settings.selectedPreset = .custom
+        settings.customBackground = .dark
+        settings.isDarkMode = false  // Light mode enabled but should be overridden
+        
+        // When: Getting effective text color
+        let textColor = settings.effectiveTextColor
+        
+        // Then: Should use light text for readability on dark background
+        #expect(textColor == .white, "Dark background should always use light text for readability")
+    }
+    
+    @Test("Custom preset with system background should respect color scheme")
+    func testCustomPresetSystemBackgroundTextColor() async throws {
+        // Given: Custom preset with system background and dark mode
+        let settings = ReaderSettings()
+        settings.selectedPreset = .custom
+        settings.customBackground = .system
+        settings.isDarkMode = true
+        
+        // When: Getting effective text color
+        let textColor = settings.effectiveTextColor
+        
+        // Then: Should use light text for dark mode
+        #expect(textColor == .white, "System background with dark mode should use light text")
+        
+        // And: Light mode should use dark text
+        settings.isDarkMode = false
+        let lightTextColor = settings.effectiveTextColor
+        #expect(lightTextColor == .black, "System background with light mode should use dark text")
+    }
 }

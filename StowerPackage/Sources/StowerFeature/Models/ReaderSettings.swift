@@ -131,6 +131,38 @@ public final class ReaderSettings: Codable {
         }
     }
     
+    public var effectiveTextColor: Color {
+        if selectedPreset == .custom {
+            // For custom preset, determine text color based on background
+            switch customBackground {
+            case .sepia, .paper:
+                // Light backgrounds always use dark text
+                return .black
+            case .dark, .black:
+                // Dark backgrounds always use light text
+                return .white
+            case .system:
+                // System background respects color scheme
+                if let isDarkMode = isDarkMode {
+                    return isDarkMode ? .white : .black
+                } else {
+                    // Fallback to system preference
+                    return Color.primary
+                }
+            }
+        } else {
+            // For built-in presets, use predefined text colors
+            switch selectedPreset {
+            case .sepia, .academic, .highContrast:
+                return .black
+            case .darkMode:
+                return .white
+            default:
+                return Color.primary
+            }
+        }
+    }
+    
     // User preset management
     public func saveCurrentAsPreset(name: String) {
         let newPreset = UserPreset(

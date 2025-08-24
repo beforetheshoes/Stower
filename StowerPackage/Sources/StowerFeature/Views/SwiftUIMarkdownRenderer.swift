@@ -38,7 +38,7 @@ struct MarkdownElementView: View {
             case let paragraph as Paragraph:
                 Text(renderInlineMarkup(paragraph))
                     .font(.system(size: readerSettings.effectiveFontSize, design: readerSettings.effectiveFont.fontDesign))
-                    .foregroundColor(textColor)
+                    .foregroundColor(readerSettings.effectiveTextColor)
                     .lineSpacing(readerSettings.effectiveFontSize * 0.25)
                 
             case let heading as Heading:
@@ -74,7 +74,7 @@ struct MarkdownElementView: View {
                                 
                                 Text(renderInlineMarkup(listItem))
                                     .font(.system(size: readerSettings.effectiveFontSize, design: readerSettings.effectiveFont.fontDesign))
-                                    .foregroundColor(textColor)
+                                    .foregroundColor(readerSettings.effectiveTextColor)
                             }
                             .padding(.leading, 16)
                         }
@@ -115,16 +115,6 @@ struct MarkdownElementView: View {
         return text
     }
     
-    private var textColor: Color {
-        switch readerSettings.selectedPreset {
-        case .sepia, .academic, .highContrast:
-            return .black
-        case .darkMode:
-            return .white
-        default:
-            return Color.primary
-        }
-    }
     
     private func headingFontSize(for level: Int) -> CGFloat {
         let multipliers: [CGFloat] = [2.2, 1.8, 1.5, 1.3, 1.1, 1.05]
