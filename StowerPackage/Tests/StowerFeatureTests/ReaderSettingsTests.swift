@@ -10,22 +10,21 @@ struct ReaderSettingsTests {
     func testSettingsSaveToUserDefaults() async throws {
         // Given: Isolated UserDefaults instance
         let defaults = UserDefaults.makeIsolated()
+        let testKey = "testSettingsSaveToUserDefaults"
         
-        // Use TestDefaultsScope to ensure proper isolation
-        TestDefaultsScope.use(defaults) {
-            // When: Creating ReaderSettings and changing values
-            let settings = ReaderSettings()  // Will use override
-            settings.selectedPreset = .sepia
-            settings.customFontSize = 20.0
-            settings.customFont = .serif
-            settings.isDarkMode = true
-            
-            // Then: Settings should be saved to UserDefaults automatically
-            settings.save()
-            
-            let savedData = defaults.data(forKey: "ReaderSettings")
-            #expect(savedData != nil, "Settings data should be saved to UserDefaults")
-        }
+        // When: Creating ReaderSettings and changing values
+        let settings = ReaderSettings.createForTesting(with: defaults, isolationKey: testKey)
+        settings.selectedPreset = .custom  // Set to custom to allow direct custom property assignment
+        settings.customFontSize = 20.0
+        settings.customFont = .serif
+        settings.isDarkMode = true
+        
+        // Then: Settings should be saved to UserDefaults automatically via didSet
+        // Additional explicit save call for verification
+        settings.save()
+        
+        let savedData = defaults.data(forKey: testKey)
+        #expect(savedData != nil, "Settings data should be saved to UserDefaults")
     }
     
     @Test("Settings should load from UserDefaults on initialization") 
@@ -34,7 +33,8 @@ struct ReaderSettingsTests {
         let defaults = UserDefaults.makeIsolated()
         
         // Given: Settings saved in UserDefaults with custom preset
-        let originalSettings = ReaderSettings.createForTesting(with: defaults)
+        let testKey = "testSettingsLoadFromUserDefaults"
+        let originalSettings = ReaderSettings.createForTesting(with: defaults, isolationKey: testKey)
         originalSettings.selectedPreset = .custom  // Use custom to save custom values
         originalSettings.customFontSize = 22.0
         originalSettings.customFont = .monospaced
@@ -43,7 +43,7 @@ struct ReaderSettingsTests {
         originalSettings.save()
         
         // When: Creating new ReaderSettings instance (simulating app restart)
-        let newSettings = ReaderSettings.loadForTesting(from: defaults)
+        let newSettings = ReaderSettings.loadForTesting(from: defaults, isolationKey: testKey)
         
         // Then: Settings should match the saved values
         #expect(newSettings.selectedPreset == .custom)
@@ -78,6 +78,10 @@ struct ReaderSettingsTests {
         settings.saveCurrentAsPreset(name: "My Custom Theme")
         settings.customAccentColor = .red
         settings.saveCurrentAsPreset(name: "Red Theme")
+        
+        // Ensure data is synchronously written before loading
+        settings.save()
+        defaults.synchronize()
         
         // When: Reloading (presets should already be saved by saveCurrentAsPreset)
         let reloadedSettings = ReaderSettings.loadForTesting(from: defaults, isolationKey: "testUserPresetsPersistence")
@@ -127,7 +131,8 @@ struct ReaderSettingsTests {
         let defaults = UserDefaults.makeIsolated()
         
         // Given: Settings that auto-save on changes
-        let settings = ReaderSettings.createForTesting(with: defaults)
+        let testKey = "testAutomaticSaving"
+        let settings = ReaderSettings.createForTesting(with: defaults, isolationKey: testKey)
         
         // When: Changing a setting using convenience method
         settings.updatePreset(.highContrast)
@@ -136,11 +141,11 @@ struct ReaderSettingsTests {
         try await Task.sleep(for: .milliseconds(100))
         
         // Then: Settings should be automatically saved
-        let savedData = defaults.data(forKey: "ReaderSettings")
+        let savedData = defaults.data(forKey: testKey)
         #expect(savedData != nil, "Settings should auto-save when changed")
         
         // Verify by loading fresh instance
-        let reloadedSettings = ReaderSettings.loadForTesting(from: defaults)
+        let reloadedSettings = ReaderSettings.loadForTesting(from: defaults, isolationKey: testKey)
         #expect(reloadedSettings.selectedPreset == .highContrast)
     }
     

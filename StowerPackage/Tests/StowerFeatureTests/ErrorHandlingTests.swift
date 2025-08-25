@@ -175,8 +175,9 @@ struct ErrorHandlingTests {
             let partialData = partialJSON.data(using: .utf8)!
             defaults.set(partialData, forKey: key)
             settings = ReaderSettings.loadFromUserDefaults()  // Will use override
-            // Should either load with defaults for missing fields or fallback to full defaults
-            #expect(settings.selectedPreset == ReaderPreset.default, "Should fallback to default preset for corrupted JSON")
+            // Partial JSON with missing required fields should fail to decode and fallback to defaults
+            #expect(settings.selectedPreset == .default, "Incomplete JSON should fallback to defaults")
+            #expect(settings.customFontSize == 16.0, "Fallback should use default values")
         }
     }
     

@@ -14,24 +14,31 @@ public struct ReaderSettingsView: View {
         NavigationStack {
             Group {
                 #if os(macOS)
-                ScrollView {
-                    VStack(spacing: 20) {
+                ScrollView(.vertical, showsIndicators: true) {
+                    VStack(alignment: .leading, spacing: 20) {
                         presetSection
                         
                         if !readerSettings.userPresets.isEmpty {
                             userPresetsSection
                         }
                         
+                        // Always show customization controls
+                        customizationSection
+                        
+                        // Only show save button when custom preset is selected
                         if readerSettings.selectedPreset == .custom {
-                            customizationSection
                             savePresetSection
                         }
                         
                         previewSection
+                        
+                        // Add bottom padding to ensure preview is fully visible
+                        Spacer().frame(height: 20)
                     }
                     .padding()
-                    .frame(maxWidth: 600)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                .scrollableMacOSDialog()
                 #else
                 Form {
                     presetSection
@@ -40,8 +47,11 @@ public struct ReaderSettingsView: View {
                         userPresetsSection
                     }
                     
+                    // Always show customization controls  
+                    customizationSection
+                    
+                    // Only show save button when custom preset is selected
                     if readerSettings.selectedPreset == .custom {
-                        customizationSection
                         savePresetSection
                     }
                     
@@ -94,7 +104,7 @@ public struct ReaderSettingsView: View {
                 .font(.headline)
                 .foregroundStyle(.primary)
             
-            VStack(spacing: 8) {
+            VStack(spacing: 4) {
                 ForEach(ReaderPreset.allCases, id: \.self) { preset in
                     PresetRowView(
                         preset: preset,
@@ -105,6 +115,7 @@ public struct ReaderSettingsView: View {
                     }
                 }
             }
+            .padding(8)
             .background(Color(NSColor.controlBackgroundColor))
             .clipShape(RoundedRectangle(cornerRadius: 8))
         }
@@ -131,7 +142,7 @@ public struct ReaderSettingsView: View {
                 .font(.headline)
                 .foregroundStyle(.primary)
             
-            VStack(spacing: 8) {
+            VStack(spacing: 4) {
                 ForEach(readerSettings.userPresets) { preset in
                     UserPresetRowView(
                         preset: preset,
@@ -142,6 +153,7 @@ public struct ReaderSettingsView: View {
                     }
                 }
             }
+            .padding(8)
             .background(Color(NSColor.controlBackgroundColor))
             .clipShape(RoundedRectangle(cornerRadius: 8))
         }
@@ -170,16 +182,39 @@ public struct ReaderSettingsView: View {
     private var customizationSection: some View {
         #if os(macOS)
         VStack(alignment: .leading, spacing: 12) {
-            Text("Customization")
-                .font(.headline)
-                .foregroundStyle(.primary)
+            HStack {
+                Text("Customization")
+                    .font(.headline)
+                    .foregroundStyle(.primary)
+                
+                Spacer()
+                
+                if readerSettings.selectedPreset != .custom {
+                    Text("Editing \(readerSettings.selectedPreset.rawValue)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.secondary.opacity(0.1))
+                        .clipShape(Capsule())
+                }
+            }
             
             VStack(spacing: 16) {
                 // Accent Color
                 HStack {
                     Label("Accent Color", systemImage: "paintpalette.fill")
                     Spacer()
-                    ColorPicker("", selection: $readerSettings.customAccentColor, supportsOpacity: false)
+                    ColorPicker("", selection: Binding(
+                        get: { readerSettings.effectiveAccentColor },
+                        set: { newColor in
+                            // First transition to custom mode preserving all current values
+                            readerSettings.transitionToCustomMode()
+                            // Then apply the specific change
+                            readerSettings.customAccentColor = newColor
+                            readerSettings.saveIfNeeded()
+                        }
+                    ), supportsOpacity: false)
                         .labelsHidden()
                         .frame(width: 40, height: 30)
                 }
@@ -188,13 +223,22 @@ public struct ReaderSettingsView: View {
                 HStack {
                     Label("Font", systemImage: "textformat")
                     Spacer()
-                    Picker("Font", selection: $readerSettings.customFont) {
+                    Picker("", selection: Binding(
+                        get: { readerSettings.effectiveFont },
+                        set: { newFont in
+                            // First transition to custom mode preserving all current values
+                            readerSettings.transitionToCustomMode()
+                            // Then apply the specific change
+                            readerSettings.customFont = newFont
+                            readerSettings.saveIfNeeded()
+                        }
+                    )) {
                         ForEach(ReaderFont.allCases, id: \.self) { font in
                             Text(font.displayName).tag(font)
                         }
                     }
                     .pickerStyle(.menu)
-                    .frame(width: 120)
+                    .flexiblePicker(minWidth: 100, idealWidth: 140)
                 }
                 
                 // Font Size
@@ -205,7 +249,16 @@ public struct ReaderSettingsView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         Slider(
-                            value: $readerSettings.customFontSize,
+                            value: Binding(
+                                get: { readerSettings.effectiveFontSize },
+                                set: { newSize in
+                                    // First transition to custom mode preserving all current values
+                                    readerSettings.transitionToCustomMode()
+                                    // Then apply the specific change
+                                    readerSettings.customFontSize = newSize
+                                    readerSettings.saveIfNeeded()
+                                }
+                            ),
                             in: 12...24,
                             step: 1
                         )
@@ -213,7 +266,7 @@ public struct ReaderSettingsView: View {
                             .font(.title2)
                             .foregroundStyle(.secondary)
                     }
-                    Text("\(Int(readerSettings.customFontSize))pt")
+                    Text("\(Int(readerSettings.effectiveFontSize))pt")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -222,7 +275,29 @@ public struct ReaderSettingsView: View {
                 HStack {
                     Label("Background", systemImage: "rectangle.fill")
                     Spacer()
-                    Picker("Background", selection: $readerSettings.customBackground) {
+                    Picker("", selection: Binding(
+                        get: { 
+                            if readerSettings.selectedPreset == .custom {
+                                return readerSettings.customBackground
+                            } else {
+                                // Map presets to their closest BackgroundStyle
+                                switch readerSettings.selectedPreset {
+                                case .sepia: return .sepia
+                                case .academic: return .paper
+                                case .darkMode: return .dark
+                                case .highContrast: return .paper
+                                default: return .system
+                                }
+                            }
+                        },
+                        set: { newBackground in
+                            // First transition to custom mode preserving all current values
+                            readerSettings.transitionToCustomMode()
+                            // Then apply the specific change
+                            readerSettings.customBackground = newBackground
+                            readerSettings.saveIfNeeded()
+                        }
+                    )) {
                         ForEach(BackgroundStyle.allCases, id: \.self) { background in
                             HStack {
                                 Text(background.displayName)
@@ -235,20 +310,41 @@ public struct ReaderSettingsView: View {
                         }
                     }
                     .pickerStyle(.menu)
-                    .frame(width: 120)
+                    .flexiblePicker(minWidth: 100, idealWidth: 140)
                 }
                 
                 // Dark Mode Override
                 HStack {
                     Label("Appearance", systemImage: "moon.fill")
                     Spacer()
-                    Picker("Appearance", selection: $readerSettings.isDarkMode) {
+                    Picker("", selection: Binding(
+                        get: { 
+                            if readerSettings.selectedPreset == .custom {
+                                return readerSettings.isDarkMode
+                            } else {
+                                // Map presets to their color scheme
+                                let colorScheme = readerSettings.selectedPreset.colorScheme
+                                switch colorScheme {
+                                case .dark: return true
+                                case .light: return false
+                                case .none, .some(_): return nil
+                                }
+                            }
+                        },
+                        set: { newDarkMode in
+                            // First transition to custom mode preserving all current values
+                            readerSettings.transitionToCustomMode()
+                            // Then apply the specific change
+                            readerSettings.isDarkMode = newDarkMode
+                            readerSettings.saveIfNeeded()
+                        }
+                    )) {
                         Text("System").tag(nil as Bool?)
                         Text("Light").tag(false as Bool?)
                         Text("Dark").tag(true as Bool?)
                     }
                     .pickerStyle(.segmented)
-                    .frame(width: 180)
+                    .flexiblePicker(minWidth: 160, idealWidth: 200)
                 }
             }
             .padding()
@@ -256,12 +352,34 @@ public struct ReaderSettingsView: View {
             .clipShape(RoundedRectangle(cornerRadius: 8))
         }
         #else
-        Section("Customization") {
+        Section {
+            // Section header for iOS
+            if readerSettings.selectedPreset != .custom {
+                HStack {
+                    Text("Editing \(readerSettings.selectedPreset.rawValue)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text("Changes will create Custom preset")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            
             // Accent Color
             HStack {
                 Label("Accent Color", systemImage: "paintpalette.fill")
                 Spacer()
-                ColorPicker("", selection: $readerSettings.customAccentColor, supportsOpacity: false)
+                ColorPicker("", selection: Binding(
+                    get: { readerSettings.effectiveAccentColor },
+                    set: { newColor in
+                        // First transition to custom mode preserving all current values
+                        readerSettings.transitionToCustomMode()
+                        // Then apply the specific change
+                        readerSettings.customAccentColor = newColor
+                        readerSettings.saveIfNeeded()
+                    }
+                ), supportsOpacity: false)
                     .labelsHidden()
                     .frame(width: 40, height: 30)
             }
@@ -270,7 +388,16 @@ public struct ReaderSettingsView: View {
             HStack {
                 Label("Font", systemImage: "textformat")
                 Spacer()
-                Picker("Font", selection: $readerSettings.customFont) {
+                Picker("", selection: Binding(
+                    get: { readerSettings.effectiveFont },
+                    set: { newFont in
+                        // First transition to custom mode preserving all current values
+                        readerSettings.transitionToCustomMode()
+                        // Then apply the specific change
+                        readerSettings.customFont = newFont
+                        readerSettings.saveIfNeeded()
+                    }
+                )) {
                     ForEach(ReaderFont.allCases, id: \.self) { font in
                         Text(font.displayName).tag(font)
                     }
@@ -286,7 +413,16 @@ public struct ReaderSettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Slider(
-                        value: $readerSettings.customFontSize,
+                        value: Binding(
+                            get: { readerSettings.effectiveFontSize },
+                            set: { newSize in
+                                // First transition to custom mode preserving all current values
+                                readerSettings.transitionToCustomMode()
+                                // Then apply the specific change
+                                readerSettings.customFontSize = newSize
+                                readerSettings.saveIfNeeded()
+                            }
+                        ),
                         in: 12...24,
                         step: 1
                     )
@@ -294,7 +430,7 @@ public struct ReaderSettingsView: View {
                         .font(.title2)
                         .foregroundStyle(.secondary)
                 }
-                Text("\(Int(readerSettings.customFontSize))pt")
+                Text("\(Int(readerSettings.effectiveFontSize))pt")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -303,7 +439,29 @@ public struct ReaderSettingsView: View {
             HStack {
                 Label("Background", systemImage: "rectangle.fill")
                 Spacer()
-                Picker("Background", selection: $readerSettings.customBackground) {
+                Picker("", selection: Binding(
+                    get: { 
+                        if readerSettings.selectedPreset == .custom {
+                            return readerSettings.customBackground
+                        } else {
+                            // Map presets to their closest BackgroundStyle
+                            switch readerSettings.selectedPreset {
+                            case .sepia: return .sepia
+                            case .academic: return .paper
+                            case .darkMode: return .dark
+                            case .highContrast: return .paper
+                            default: return .system
+                            }
+                        }
+                    },
+                    set: { newBackground in
+                        // First transition to custom mode preserving all current values
+                        readerSettings.transitionToCustomMode()
+                        // Then apply the specific change
+                        readerSettings.customBackground = newBackground
+                        readerSettings.saveIfNeeded()
+                    }
+                )) {
                     ForEach(BackgroundStyle.allCases, id: \.self) { background in
                         HStack {
                             Text(background.displayName)
@@ -322,13 +480,34 @@ public struct ReaderSettingsView: View {
             HStack {
                 Label("Appearance", systemImage: "moon.fill")
                 Spacer()
-                Picker("Appearance", selection: $readerSettings.isDarkMode) {
+                Picker("", selection: Binding(
+                    get: { 
+                        if readerSettings.selectedPreset == .custom {
+                            return readerSettings.isDarkMode
+                        } else {
+                            // Map presets to their color scheme
+                            let colorScheme = readerSettings.selectedPreset.colorScheme
+                            switch colorScheme {
+                            case .dark: return true
+                            case .light: return false
+                            case .none, .some(_): return nil
+                            }
+                        }
+                    },
+                    set: { newDarkMode in
+                        // First transition to custom mode preserving all current values
+                        readerSettings.transitionToCustomMode()
+                        // Then apply the specific change
+                        readerSettings.isDarkMode = newDarkMode
+                        readerSettings.saveIfNeeded()
+                    }
+                )) {
                     Text("System").tag(nil as Bool?)
                     Text("Light").tag(false as Bool?)
                     Text("Dark").tag(true as Bool?)
                 }
                 .pickerStyle(.segmented)
-                .frame(width: 180)
+                .flexiblePicker(minWidth: 160, idealWidth: 200)
             }
         }
         #endif
@@ -476,6 +655,8 @@ private struct PresetRowView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .frame(minHeight: 44) // Ensure minimum tap target height
+        .padding(.vertical, 4)
     }
 }
 
@@ -529,6 +710,8 @@ private struct UserPresetRowView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .frame(minHeight: 44) // Ensure minimum tap target height
+        .padding(.vertical, 4)
     }
 }
 

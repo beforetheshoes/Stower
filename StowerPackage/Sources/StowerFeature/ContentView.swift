@@ -30,7 +30,7 @@ public struct ContentView: View {
         .environment(readerSettings)
         .preferredColorScheme(readerSettings.effectiveColorScheme)
         .tint(readerSettings.effectiveAccentColor)
-        .navigationSplitViewStyle(.balanced)
+        .navigationSplitViewStyle(.prominentDetail)
         .onReceive(NotificationCenter.default.publisher(for: .showAddURLDialog)) { _ in
             showingAddURLDialog = true
         }
@@ -156,7 +156,7 @@ struct AddURLDialog: View {
             }
         }
         .padding()
-        .frame(width: 400)
+        .compactMacOSDialog()
     }
     
     private func addURL() {
@@ -218,7 +218,7 @@ struct SidebarView: View {
         }
         .navigationTitle("Stower")
         #if os(macOS)
-        .navigationSplitViewColumnWidth(min: 200, ideal: 250, max: 300)
+        .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 320)
         .toolbar {
             ToolbarItem(placement: .automatic) {
                 Button(action: {

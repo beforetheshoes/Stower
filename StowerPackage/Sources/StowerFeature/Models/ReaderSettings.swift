@@ -188,6 +188,33 @@ public final class ReaderSettings: Codable {
         saveIfNeeded()
     }
     
+    /// Transitions from current preset to custom mode, preserving all current effective values
+    public func transitionToCustomMode() {
+        if selectedPreset != .custom {
+            // Copy all current effective values to custom properties
+            customAccentColor = effectiveAccentColor
+            customFont = effectiveFont
+            customFontSize = effectiveFontSize
+            customBackground = selectedPreset == .custom ? customBackground : mapPresetToBackgroundStyle(selectedPreset)
+            isDarkMode = selectedPreset.colorScheme == nil ? nil : (selectedPreset.colorScheme == .dark)
+            
+            // Now switch to custom mode
+            selectedPreset = .custom
+        }
+        saveIfNeeded()
+    }
+    
+    /// Helper to map presets to their corresponding BackgroundStyle
+    public func mapPresetToBackgroundStyle(_ preset: ReaderPreset) -> BackgroundStyle {
+        switch preset {
+        case .sepia: return .sepia
+        case .academic: return .paper
+        case .darkMode: return .dark
+        case .highContrast: return .paper
+        default: return .system
+        }
+    }
+    
     public func deleteUserPreset(at index: Int) {
         guard index < userPresets.count else { return }
         userPresets.remove(at: index)
@@ -229,12 +256,26 @@ public final class ReaderSettings: Codable {
         defaults.removeObject(forKey: keyToUse)
         defaults.synchronize()
         
-        let settings = ReaderSettings(defaults: defaults)
+        // Create settings with forced defaults (bypassing global override for testing isolation)
+        let settings = ReaderSettings(forTestingWithDefaults: defaults)
         if let isolationKey = isolationKey {
             settings.userDefaultsKey = isolationKey
         }
         settings.enableAutomaticSaving()
         return settings
+    }
+    
+    /// Private initializer for testing that bypasses global testingDefaultsOverride
+    private init(forTestingWithDefaults defaults: UserDefaults) {
+        // Force the use of the provided defaults, ignoring global override
+        self.defaults = defaults
+        self.selectedPreset = .default
+        self.customAccentColor = .blue
+        self.customFont = .system
+        self.customFontSize = 16
+        self.customBackground = .system
+        self.isDarkMode = nil
+        self.userPresets = []
     }
     
     /// Load settings from a specific UserDefaults instance for testing
