@@ -70,12 +70,12 @@ public final class SavedImageRef {
     public var shouldRetryDownload: Bool {
         guard downloadStatus == .failed else { return false }
         
-        // Retry up to 3 times with exponential backoff
+        // Retry up to 3 times with linear backoff
         let maxRetries = 3
-        guard downloadFailureCount < maxRetries else { return false }
+        guard downloadFailureCount <= maxRetries else { return false }
         
-        // Calculate backoff time (1 hour * 2^failureCount)
-        let backoffInterval: TimeInterval = 3600 * pow(2, Double(downloadFailureCount))
+        // Calculate backoff time (1 hour * failureCount - linear backoff not exponential)
+        let backoffInterval: TimeInterval = 3600 * Double(downloadFailureCount)
         
         if let lastAttempt = lastDownloadAttempt {
             return Date().timeIntervalSince(lastAttempt) > backoffInterval

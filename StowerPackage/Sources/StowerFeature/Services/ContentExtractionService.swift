@@ -10,7 +10,6 @@ public final class ContentExtractionService: Sendable {
     }
     
     private func log(_ message: String) {
-        print(message)
         debugLogger?(message)
     }
     
@@ -185,13 +184,31 @@ public final class ContentExtractionService: Sendable {
         log("📊 Main content text length: \(mainContentText.count) characters")
         log("🔍 Main content preview: '\(String(mainContentText.prefix(200)))'")
         
-        // Convert to markdown
-        let markdown = try convertToMarkdown(mainContent, baseURL: baseURL)
+        // Convert to markdown, including header content if present
+        var markdown = ""
+        
+        // Check for header content and include it
+        if let header = try document.select("header").first() {
+            let headerMarkdown = try convertToMarkdown(header, baseURL: baseURL)
+            if !headerMarkdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                markdown += headerMarkdown + "\n\n"
+                log("📰 Included header content: \(headerMarkdown.count) characters")
+            }
+        }
+        
+        // Add main content
+        let mainMarkdown = try convertToMarkdown(mainContent, baseURL: baseURL)
+        markdown += mainMarkdown
+        
         log("✅ Markdown length: \(markdown.count) characters")
         log("📖 First 200 chars of markdown: '\(String(markdown.prefix(200)))'")
         
-        // Extract images
-        let images = try extractImages(from: mainContent, baseURL: baseURL)
+        // Extract images from both header and main content
+        var images = try extractImages(from: mainContent, baseURL: baseURL)
+        if let header = try document.select("header").first() {
+            let headerImages = try extractImages(from: header, baseURL: baseURL)
+            images.append(contentsOf: headerImages)
+        }
         log("🖼️ Found \(images.count) images")
         
         return ExtractedContent(
@@ -230,7 +247,7 @@ public final class ContentExtractionService: Sendable {
         }
         
         // Fallback to URL host
-        return fallbackURL?.host() ?? "Untitled Article"
+        return fallbackURL?.host() ?? "Untitled"
     }
     
     // MARK: - HTML Cleaning
@@ -398,7 +415,7 @@ public final class ContentExtractionService: Sendable {
             }
             
             if shouldSkip {
-                print("⏭️ Skipping non-content element: \(tagName) class='\(candidateClass)' id='\(candidateId)'")
+                log("⏭️ Skipping non-content element: \(tagName) class='\(candidateClass)' id='\(candidateId)'")
                 continue
             }
             
@@ -410,7 +427,7 @@ public final class ContentExtractionService: Sendable {
                 
                 // But allow if they contain "content" 
                 if !candidateClass.contains("content") && !candidateId.contains("content") {
-                    print("⏭️ Skipping large container: \(tagName) class='\(candidateClass)' id='\(candidateId)'")
+                    log("⏭️ Skipping large container: \(tagName) class='\(candidateClass)' id='\(candidateId)'")
                     continue
                 }
             }
@@ -419,13 +436,13 @@ public final class ContentExtractionService: Sendable {
             
             // Skip elements that are too short, but be more lenient
             if textLength < 20 {
-                print("⏭️ Skipping due to short length: \(tagName) - \(textLength) chars")
+                log("⏭️ Skipping due to short length: \(tagName) - \(textLength) chars")
                 continue
             }
             
             // Skip extremely long elements (but allow up to 100k for long articles)
             if textLength > 100000 {
-                print("⏭️ Skipping due to excessive length: \(tagName) - \(textLength) chars")
+                log("⏭️ Skipping due to excessive length: \(tagName) - \(textLength) chars")
                 continue
             }
             
@@ -444,31 +461,31 @@ public final class ContentExtractionService: Sendable {
         }
         
         if let best = bestCandidate {
-            print("✅ Selected: \(best.tagName()) with score \(String(format: "%.2f", bestScore))")
+            log("✅ Selected: \(best.tagName()) with score \(String(format: "%.2f", bestScore))")
             return best
         } else {
-            print("❌ No good candidate found, using body element")
+            log("❌ No good candidate found, using body element")
             
             // Debug: Log body content to understand what we have
             let bodyText = try bodyElement.text()
-            print("🔍 DEBUG: Body element text length: \(bodyText.count)")
-            print("🔍 DEBUG: Body element children count: \(bodyElement.children().count)")
-            print("🔍 DEBUG: First 500 chars of body text: '\(String(bodyText.prefix(500)))'")
+            log("🔍 DEBUG: Body element text length: \(bodyText.count)")
+            log("🔍 DEBUG: Body element children count: \(bodyElement.children().count)")
+            log("🔍 DEBUG: First 500 chars of body text: '\(String(bodyText.prefix(500)))'")
             
             // Try to find any div with substantial content as fallback
             let fallbackCandidates = try bodyElement.select("div")
-            print("🔍 DEBUG: Found \(fallbackCandidates.count) div elements")
+            log("🔍 DEBUG: Found \(fallbackCandidates.count) div elements")
             
             for (index, candidate) in fallbackCandidates.enumerated() {
                 let textLength = try candidate.text().count
-                print("🔍 DEBUG: Div \(index): \(textLength) characters")
+                log("🔍 DEBUG: Div \(index): \(textLength) characters")
                 if index < 3 && textLength > 0 { // Log first 3 non-empty divs
                     let candidateText = try candidate.text()
-                    print("🔍 DEBUG: Div \(index) text: '\(String(candidateText.prefix(200)))'")
+                    log("🔍 DEBUG: Div \(index) text: '\(String(candidateText.prefix(200)))'")
                 }
                 
                 if textLength > 100 { // Reduced from 500 to 100
-                    print("🆘 Using fallback div with \(textLength) characters")
+                    log("🆘 Using fallback div with \(textLength) characters")
                     return candidate
                 }
             }
@@ -524,7 +541,7 @@ public final class ContentExtractionService: Sendable {
     private func processElement(_ element: Element, baseURL: URL? = nil, depth: Int = 0) throws -> String {
         // Prevent infinite recursion
         guard depth < 50 else {
-            print("⚠️ Max recursion depth reached for element: \(element.tagName())")
+            log("⚠️ Max recursion depth reached for element: \(element.tagName())")
             return ""
         }
         let tagName = element.tagName().lowercased()
@@ -558,7 +575,15 @@ public final class ContentExtractionService: Sendable {
         case "a":
             let href = try element.attr("href")
             let linkText = try element.text()
-            return "[\(linkText)](\(href))"
+            // Only allow safe URLs for security
+            let lowercasedHref = href.lowercased()
+            if !lowercasedHref.hasPrefix("javascript:") && 
+               (href.hasPrefix("http://") || href.hasPrefix("https://") || href.hasPrefix("/")) {
+                return "[\(linkText)](\(href))"
+            } else {
+                // For unsafe URLs, just include the text
+                return linkText
+            }
         case "img":
             // Preserve image as markdown with resolved absolute URL
             let src = (try? element.attr("src")) ?? ""
@@ -569,9 +594,8 @@ public final class ContentExtractionService: Sendable {
                 // Resolve relative URLs to absolute URLs
                 if let resolvedURL = resolveURL(src, baseURL: baseURL) {
                     return "![\(alt)](\(resolvedURL.absoluteString))"
-                } else {
-                    return "![\(alt)](\(src))"
                 }
+                // If resolveURL returns nil, the URL is invalid/unsafe - skip the image
             }
             return ""
         case "ul", "ol":
@@ -668,26 +692,39 @@ public final class ContentExtractionService: Sendable {
     }
     
     private func resolveURL(_ urlString: String, baseURL: URL?) -> URL? {
+        // Skip empty strings
+        guard !urlString.isEmpty else { return nil }
+        
+        // Skip data URLs and javascript URLs
+        let lowercased = urlString.lowercased()
+        guard !lowercased.hasPrefix("data:") && !lowercased.hasPrefix("javascript:") else {
+            return nil
+        }
+        
         // First try to create as absolute URL
         if let url = URL(string: urlString), url.scheme != nil {
-            return url // Already absolute URL
+            // Validate that it's a reasonable URL scheme
+            guard url.scheme == "http" || url.scheme == "https" else {
+                return nil
+            }
+            return url
         }
         
         // Handle relative URLs
         guard let baseURL = baseURL else {
-            print("⚠️ No baseURL provided for relative URL: \(urlString)")
             return nil
         }
         
         // Create URL relative to base and resolve it to absolute
         if let relativeURL = URL(string: urlString, relativeTo: baseURL) {
-            // Use absoluteURL to convert relative URL to absolute
             let absoluteURL = relativeURL.absoluteURL
-            print("🔗 Resolved '\(urlString)' with base '\(baseURL.absoluteString)' → '\(absoluteURL.absoluteString)'")
+            // Validate the resolved URL has a proper scheme
+            guard absoluteURL.scheme == "http" || absoluteURL.scheme == "https" else {
+                return nil
+            }
             return absoluteURL
         }
         
-        print("❌ Failed to resolve URL: '\(urlString)' with base '\(baseURL.absoluteString)'")
         return nil
     }
 }

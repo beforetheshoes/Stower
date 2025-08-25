@@ -60,11 +60,11 @@ public enum SchemaV1: VersionedSchema {
         
         static func generatePreview(from markdown: String) -> String {
             let cleanText = markdown
-                .replacingOccurrences(of: #"!\\[.*?\\]\\(.*?\\)"#, with: "", options: .regularExpression)
-                .replacingOccurrences(of: #"#{1,6}\\s+"#, with: "", options: .regularExpression)
-                .replacingOccurrences(of: #"\\*{1,2}(.*?)\\*{1,2}"#, with: "$1", options: .regularExpression)
+                .replacingOccurrences(of: #"!\[.*?\]\(.*?\)"#, with: "", options: .regularExpression)
+                .replacingOccurrences(of: #"#{1,6}\s+"#, with: "", options: .regularExpression)
+                .replacingOccurrences(of: #"\*{1,2}(.*?)\*{1,2}"#, with: "$1", options: .regularExpression)
                 .replacingOccurrences(of: #"`(.*?)`"#, with: "$1", options: .regularExpression)
-                .replacingOccurrences(of: #"\\[(.*?)\\]\\(.*?\\)"#, with: "$1", options: .regularExpression)
+                .replacingOccurrences(of: #"\[(.*?)\]\(.*?\)"#, with: "$1", options: .regularExpression)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             
             let previewLength = 150
@@ -171,11 +171,11 @@ public enum SchemaV2: VersionedSchema {
         
         static func generatePreview(from markdown: String) -> String {
             let cleanText = markdown
-                .replacingOccurrences(of: #"!\\[.*?\\]\\(.*?\\)"#, with: "", options: .regularExpression)
-                .replacingOccurrences(of: #"#{1,6}\\s+"#, with: "", options: .regularExpression)
-                .replacingOccurrences(of: #"\\*{1,2}(.*?)\\*{1,2}"#, with: "$1", options: .regularExpression)
+                .replacingOccurrences(of: #"!\[.*?\]\(.*?\)"#, with: "", options: .regularExpression)
+                .replacingOccurrences(of: #"#{1,6}\s+"#, with: "", options: .regularExpression)
+                .replacingOccurrences(of: #"\*{1,2}(.*?)\*{1,2}"#, with: "$1", options: .regularExpression)
                 .replacingOccurrences(of: #"`(.*?)`"#, with: "$1", options: .regularExpression)
-                .replacingOccurrences(of: #"\\[(.*?)\\]\\(.*?\\)"#, with: "$1", options: .regularExpression)
+                .replacingOccurrences(of: #"\[(.*?)\]\(.*?\)"#, with: "$1", options: .regularExpression)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             
             let previewLength = 150

@@ -14,7 +14,6 @@ public final class PDFExtractionService: Sendable {
     }
     
     private func log(_ message: String) {
-        print(message)
         debugLogger?(message)
     }
     
@@ -55,6 +54,11 @@ public final class PDFExtractionService: Sendable {
             }
             
             self.log("✅ PDF extraction completed: \(totalTextLength) characters from \(pageCount) pages")
+            
+            // If we couldn't extract any text, throw an error
+            if totalTextLength == 0 {
+                throw PDFExtractionError.emptyPDF
+            }
             
             // Clean up the final markdown
             let cleanedMarkdown = self.cleanupMarkdown(markdown)
@@ -108,6 +112,11 @@ public final class PDFExtractionService: Sendable {
             }
             
             self.log("✅ PDF extraction completed: \(totalTextLength) characters from \(pageCount) pages")
+            
+            // If we couldn't extract any text, throw an error
+            if totalTextLength == 0 {
+                throw PDFExtractionError.emptyPDF
+            }
             
             // Clean up the final markdown
             let cleanedMarkdown = self.cleanupMarkdown(markdown)
@@ -625,12 +634,12 @@ public final class PDFExtractionService: Sendable {
         return formattedText
     }
     
-    internal func isListItem(_ text: String) -> Bool {
+    public func isListItem(_ text: String) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         
         // Check for bullet point indicators
         let bulletPatterns = [
-            #"^[•◦▪▫‣▸▹▶‣→⇒➤➢⟨⟩★☆▹⊚⊛⊙] "#,  // Various bullet symbols
+            #"^[•◦▪▫‣▸▹▶‣→⇒➤➢⟨⟩★☆▹⊚⊛⊙■□▲▼◆◇] "#,  // Various bullet symbols including squares and diamonds
             #"^[-–—*+] "#,                           // Simple bullets
             #"^\d+[\.\)] "#,                         // Numbered lists (1. or 1))
             #"^[a-zA-Z][\.\)] "#,                    // Letter lists (a. or A))
@@ -757,27 +766,52 @@ public final class PDFExtractionService: Sendable {
     
     // MARK: - Cleanup
     
-    internal func cleanupMarkdown(_ markdown: String) -> String {
+    public func cleanupMarkdown(_ markdown: String) -> String {
         var cleaned = markdown
         
+        // First, extract and preserve code blocks
+        var codeBlocks: [(String, String)] = []
+        let codeBlockPattern = #"```[\s\S]*?```"#
+        let codeBlockRegex = try! NSRegularExpression(pattern: codeBlockPattern)
+        let matches = codeBlockRegex.matches(in: cleaned, range: NSRange(cleaned.startIndex..., in: cleaned))
+        
+        for (index, match) in matches.enumerated().reversed() {
+            let range = Range(match.range, in: cleaned)!
+            let codeBlock = String(cleaned[range])
+            let placeholder = "___CODE_BLOCK_\(index)___"
+            codeBlocks.append((placeholder, codeBlock))
+            cleaned = cleaned.replacingCharacters(in: range, with: placeholder)
+        }
+        
         // Fix hyphenated line breaks (common in PDFs) - but preserve intentional hyphens
-        cleaned = cleaned.replacingOccurrences(of: #"([a-z])-\s*\n\s*([a-z])"#, with: "$1$2", options: .regularExpression)
+        // Handle double newlines first (keep paragraph break)
+        cleaned = cleaned.replacingOccurrences(of: #"([a-zA-Z])-\n\n([a-zA-Z])"#, with: "$1\n\n$2", options: .regularExpression)
+        // Then handle single newlines (join words completely) 
+        cleaned = cleaned.replacingOccurrences(of: #"([a-zA-Z])-\n([a-zA-Z])"#, with: "$1$2", options: .regularExpression)
         
         // Fix broken words across lines
         cleaned = cleaned.replacingOccurrences(of: #"([a-zA-Z])\n\s*([a-z])"#, with: "$1$2", options: .regularExpression)
         
+        // Convert single newlines followed by spaces to just spaces (for hyphenated words with spaces)
+        cleaned = cleaned.replacingOccurrences(of: #"\n +"#, with: " ", options: .regularExpression)
+        
         // Clean up spacing around punctuation
         cleaned = cleaned.replacingOccurrences(of: #"\s+([,.;:!?])"#, with: "$1", options: .regularExpression)
         
-        // Normalize whitespace within lines
+        // Normalize whitespace within lines (outside code blocks)
         cleaned = cleaned.replacingOccurrences(of: #"[ \t]+"#, with: " ", options: .regularExpression)
         
         // Fix spacing around markdown formatting
         cleaned = cleaned.replacingOccurrences(of: #"(\*+)\s+([^\*]+)\s+(\*+)"#, with: "$1$2$3", options: .regularExpression)
         
         // Clean up excessive line breaks but preserve intentional spacing
-        cleaned = cleaned.replacingOccurrences(of: #"\n{4,}"#, with: "\n\n\n", options: .regularExpression)
-        cleaned = cleaned.replacingOccurrences(of: #"\n{3}"#, with: "\n\n", options: .regularExpression)
+        // First handle newlines with potential spaces between them
+        cleaned = cleaned.replacingOccurrences(of: #"\n\s*\n\s*\n\s*\n+"#, with: "\n\n", options: .regularExpression)
+        // Then handle pure consecutive newlines
+        cleaned = cleaned.replacingOccurrences(of: #"\n{3,}"#, with: "\n\n", options: .regularExpression)
+        
+        // Remove leading spaces after line breaks
+        cleaned = cleaned.replacingOccurrences(of: #"\n +"#, with: "\n", options: .regularExpression)
         
         // Remove trailing whitespace from lines
         cleaned = cleaned.replacingOccurrences(of: #"[ \t]+\n"#, with: "\n", options: .regularExpression)
@@ -787,6 +821,11 @@ public final class PDFExtractionService: Sendable {
         
         // Ensure proper spacing after headings
         cleaned = cleaned.replacingOccurrences(of: #"(#{1,6} [^\n]+)\n([^\n#])"#, with: "$1\n\n$2", options: .regularExpression)
+        
+        // Restore code blocks
+        for (placeholder, codeBlock) in codeBlocks {
+            cleaned = cleaned.replacingOccurrences(of: placeholder, with: codeBlock)
+        }
         
         return cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
     }

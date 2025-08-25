@@ -47,6 +47,9 @@ public final class SavedImageAsset {
     
     /// Returns the size of the image in a human-readable format
     public var formattedSize: String {
+        if byteCount == 0 {
+            return "0 bytes"
+        }
         let formatter = ByteCountFormatter()
         formatter.countStyle = .file
         return formatter.string(fromByteCount: Int64(byteCount))

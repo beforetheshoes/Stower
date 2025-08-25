@@ -154,8 +154,10 @@ public class HTMLSanitizationService {
         case "a":
             let text = try element.text()
             if let href = try? element.attr("href"), !href.isEmpty, !text.isEmpty {
-                // Only allow http/https URLs for security
-                if href.hasPrefix("http://") || href.hasPrefix("https://") || href.hasPrefix("/") {
+                // Only allow safe URLs for security
+                let lowercasedHref = href.lowercased()
+                if !lowercasedHref.hasPrefix("javascript:") && 
+                   (href.hasPrefix("http://") || href.hasPrefix("https://") || href.hasPrefix("/")) {
                     markdown += "[\(text)](\(href))"
                 } else {
                     // For unsafe URLs, just include the text
@@ -169,7 +171,9 @@ public class HTMLSanitizationService {
             if let alt = try? element.attr("alt"), 
                let src = try? element.attr("src"), !src.isEmpty {
                 // Only allow safe image URLs
-                if src.hasPrefix("http://") || src.hasPrefix("https://") || src.hasPrefix("/") || src.hasPrefix("data:image/") {
+                let lowercasedSrc = src.lowercased()
+                if !lowercasedSrc.hasPrefix("javascript:") && !lowercasedSrc.hasPrefix("data:text/") &&
+                   (src.hasPrefix("http://") || src.hasPrefix("https://") || src.hasPrefix("/") || src.hasPrefix("data:image/")) {
                     let altText = alt.isEmpty ? "Image" : alt
                     markdown += "![\(altText)](\(src))"
                 }
@@ -211,8 +215,9 @@ public class HTMLSanitizationService {
             if !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 let lines = content.components(separatedBy: .newlines)
                 for line in lines {
-                    if !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        markdown += "> \(line)\n"
+                    let trimmedLine = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !trimmedLine.isEmpty {
+                        markdown += "> \(trimmedLine)\n"
                     }
                 }
                 markdown += "\n"
