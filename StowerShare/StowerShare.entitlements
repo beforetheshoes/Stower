@@ -4,7 +4,7 @@
 <dict>
 	<!-- CloudKit and App Groups for Stower Share Extension -->
 	
-	<!-- CloudKit for SwiftData sync -->
+	<!-- CloudKit sync -->
 	<key>com.apple.developer.icloud-services</key>
 	<array>
 		<string>CloudKit</string>

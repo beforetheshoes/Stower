@@ -14,7 +14,7 @@ CURRENT_PROJECT_VERSION = 1
 // ==========================================
 // Platform Configuration
 // ==========================================
-MACOSX_DEPLOYMENT_TARGET = 15.0
+MACOSX_DEPLOYMENT_TARGET = 26.0
 
 // ==========================================
 // Info PLIST

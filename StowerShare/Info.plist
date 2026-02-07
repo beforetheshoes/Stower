@@ -16,8 +16,8 @@
 	<string>XPC!</string>
 	<key>CFBundleExecutable</key>
 	<string>StowerShare</string>
-	<key>MinimumOSVersion</key>
-	<string>26.0</string>
+    <key>MinimumOSVersion</key>
+    <string>26.0</string>
 	<key>NSExtension</key>
 	<dict>
 		<key>NSExtensionPointIdentifier</key>

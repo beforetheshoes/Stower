@@ -2,6 +2,14 @@
 
 A clean, modern read-it-later app that saves articles for offline reading across all your devices. Built natively for iOS and macOS with SwiftUI and CloudKit sync.
 
+## 2026 Reboot Architecture
+
+The app now uses:
+- The Composable Architecture (TCA) for state, actions, reducers, and effects
+- SQLite-Data for persistence and CloudKit-backed sync engine wiring
+- A library-first product model with no unread debt framing in UI copy
+
+
 ## Features
 
 - **Save articles instantly** from Safari or any app using the Share Extension
@@ -88,9 +96,9 @@ Stower/
 
 - **Language**: Swift 6.1+ with strict concurrency
 - **UI Framework**: SwiftUI (iOS 18.0+, macOS 15.0+)
-- **Data**: SwiftData with CloudKit sync
+- **Data**: SQLite-Data with CloudKit sync engine
 - **Testing**: Swift Testing framework (not XCTest)
-- **Architecture**: Model-View (MV) pattern using SwiftUI's built-in state management
+- **Architecture**: The Composable Architecture (TCA)
 - **Concurrency**: Swift Concurrency (async/await, actors, @MainActor)
 
 ## Features Overview

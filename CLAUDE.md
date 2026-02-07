@@ -662,14 +662,14 @@ get_sim_app_path_name_ws({
 
 ## Data Persistence
 
-When data persistence is required, always prefer **SwiftData** over CoreData. However, carefully consider whether persistence is truly necessary - many apps can function well with in-memory state that loads on launch.
+When data persistence is required, prefer **SQLite-Data** with explicit schema and migration planning. However, carefully consider whether persistence is truly necessary - many apps can function well with in-memory state that loads on launch.
 
-### When to Use SwiftData
+### When to Use SQLite-Data
 
 - You have complex relational data that needs to persist across app launches
 - You need advanced querying capabilities with predicates and sorting
 - You're building a data-heavy app (note-taking, inventory, task management)
-- You need CloudKit sync with minimal configuration
+- You need CloudKit sync and explicit control of schema evolution
 
 ### When NOT to Use Data Persistence
 
@@ -678,55 +678,13 @@ When data persistence is required, always prefer **SwiftData** over CoreData. Ho
 - Small configuration data (consider JSON files or plist)
 - Apps that primarily display remote data
 
-### SwiftData Best Practices
+### SQLite-Data Best Practices
 
-```swift
-import SwiftData
-
-@Model
-final class Task {
-    var title: String
-    var isCompleted: Bool
-    var createdAt: Date
-    
-    init(title: String) {
-        self.title = title
-        self.isCompleted = false
-        self.createdAt = Date()
-    }
-}
-
-// In your app
-@main
-struct StowerApp: App {
-    var body: some Scene {
-        WindowGroup {
-            ContentView()
-                .modelContainer(for: Task.self)
-        }
-    }
-}
-
-// In your views
-struct TaskListView: View {
-    @Query private var tasks: [Task]
-    @Environment(\.modelContext) private var context
-    
-    var body: some View {
-        List(tasks) { task in
-            Text(task.title)
-        }
-        .toolbar {
-            Button("Add") {
-                let newTask = Task(title: "New Task")
-                context.insert(newTask)
-            }
-        }
-    }
-}
-```
-
-**Important:** Never use CoreData for new projects. SwiftData provides a modern, type-safe API that's easier to work with and integrates seamlessly with SwiftUI.
+- Define explicit tables and migrations up front
+- Keep write transactions short and deterministic
+- Scope queries to what a view actually needs
+- Treat CloudKit sync as a dependency with clear startup and error paths
+- Prefer reducer-driven data flow for side effects and writes
 
 ---
 
