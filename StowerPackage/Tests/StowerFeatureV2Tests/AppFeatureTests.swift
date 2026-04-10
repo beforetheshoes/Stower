@@ -18,7 +18,7 @@ struct AppFeatureTests {
         let created = try await repository.createItemFromIngestion(ingestion)
 
         // 2) Verify fetchLibrary returns it
-        let library = try await repository.fetchLibrary()
+        let library = try await repository.fetchLibrary(.all)
         #expect(library.contains(where: { $0.id == created.id }))
 
         // 3) Test the reader load flow with TCA
@@ -61,7 +61,11 @@ struct AppFeatureTests {
                 statusStream: { AsyncStream { continuation in continuation.finish() } }
             )
             $0.stowerRepository.fetchPendingIngestionJobs = { [] }
-            $0.stowerRepository.fetchLibrary = { [item] }
+            $0.stowerRepository.fetchLibrary = { _ in [item] }
+            $0.stowerRepository.fetchListCounts = { .zero }
+            $0.stowerRepository.fetchTags = { [] }
+            $0.stowerRepository.observeLibraryChanges = { AsyncStream { $0.finish() } }
+            $0.stowerRepository.purgeOldTrash = { [] }
             $0.stowerRepository.loadSettings = { settings }
             $0.stowerRepository.loadReaderAppearanceSettings = { appearance }
             $0.stowerRepository.enqueueHydrationJobsForMissingContent = { 0 }

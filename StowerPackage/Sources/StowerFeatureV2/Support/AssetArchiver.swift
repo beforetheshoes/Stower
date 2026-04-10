@@ -82,12 +82,49 @@ enum AssetArchiver {
         let sourcePath = archiveDir.appendingPathComponent("source.html")
         try? html.write(to: sourcePath, atomically: true, encoding: .utf8)
 
-        // Step 4: Patch the HTML for offline rendering and save as index.html
+        // Step 4: Persist archive metadata (origin URL) so the local server
+        // can fetch-through missing assets on later loads, even without the
+        // caller passing the origin in explicitly.
+        saveMetadata(origin: baseURL, for: itemID)
+
+        // Step 5: Patch the HTML for offline rendering and save as index.html
         let patchedHTML = Self.patchHTMLForOffline(html)
         let indexPath = archiveDir.appendingPathComponent("index.html")
         try? patchedHTML.write(to: indexPath, atomically: true, encoding: .utf8)
 
         return archived
+    }
+
+    // MARK: - Archive metadata sidecar
+
+    /// Metadata sidecar stored alongside the archive so the server knows where
+    /// to fetch-through missing assets on subsequent loads.
+    private struct ArchiveMetadata: Codable {
+        var origin: String
+    }
+
+    private static let metadataFilename = "archive-meta.json"
+
+    /// Persists the origin URL for an archive so `LocalArchiveServer` can
+    /// fetch-through missing assets.
+    static func saveMetadata(origin: URL, for itemID: UUID) {
+        let dir = archiveDirectory(for: itemID)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let metaPath = dir.appendingPathComponent(metadataFilename)
+        let meta = ArchiveMetadata(origin: origin.absoluteString)
+        if let data = try? JSONEncoder().encode(meta) {
+            try? data.write(to: metaPath)
+        }
+    }
+
+    /// Reads the persisted origin URL for an archive, if present.
+    static func loadOriginURL(for itemID: UUID) -> URL? {
+        let metaPath = archiveDirectory(for: itemID).appendingPathComponent(metadataFilename)
+        guard let data = try? Data(contentsOf: metaPath),
+              let meta = try? JSONDecoder().decode(ArchiveMetadata.self, from: data),
+              let url = URL(string: meta.origin)
+        else { return nil }
+        return url
     }
 
     /// Returns the archive directory for a given item.
@@ -132,31 +169,17 @@ enum AssetArchiver {
         try? patched.write(to: indexPath, atomically: true, encoding: .utf8)
     }
 
-    /// Injects reader CSS directly into the archive's index.html file.
-    /// This ensures CSS is part of the HTML itself — no JS injection timing issues.
-    static func injectReaderCSS(_ css: String, for itemID: UUID) {
+    /// Strips any `<style id="stower-reader-css">` block that a previous
+    /// version of the app may have baked into `index.html`. Left in place as
+    /// a one-time cleanup for archives created before the overlay CSS was
+    /// removed; new archives don't need it. Safe to call unconditionally.
+    static func stripLegacyInjectedCSS(for itemID: UUID) {
         let indexPath = archiveDirectory(for: itemID).appendingPathComponent("index.html")
-        guard var html = try? String(contentsOf: indexPath, encoding: .utf8) else { return }
-
-        // Remove any previously injected reader CSS
-        if let existingStart = html.range(of: "<style id=\"stower-reader-css\">"),
-           let existingEnd = html[existingStart.lowerBound...].range(of: "</style>") {
-            html.removeSubrange(existingStart.lowerBound..<existingEnd.upperBound)
-        }
-
-        let styleTag = "<style id=\"stower-reader-css\">\(css)</style>"
-
-        // Insert into <head> if present
-        if let headRange = html.range(of: "<head>", options: .caseInsensitive) {
-            html.insert(contentsOf: styleTag, at: headRange.upperBound)
-        } else if let headRange = html.range(of: "<head ", options: .caseInsensitive),
-                  let closeBracket = html[headRange.lowerBound...].range(of: ">") {
-            html.insert(contentsOf: styleTag, at: closeBracket.upperBound)
-        } else {
-            // No <head> — prepend
-            html = styleTag + html
-        }
-
+        guard var html = try? String(contentsOf: indexPath, encoding: .utf8),
+              let existingStart = html.range(of: "<style id=\"stower-reader-css\">"),
+              let existingEnd = html[existingStart.lowerBound...].range(of: "</style>")
+        else { return }
+        html.removeSubrange(existingStart.lowerBound..<existingEnd.upperBound)
         try? html.write(to: indexPath, atomically: true, encoding: .utf8)
     }
 

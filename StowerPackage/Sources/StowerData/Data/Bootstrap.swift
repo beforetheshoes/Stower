@@ -103,6 +103,7 @@ public enum StowerDatabase {
         migrator.registerMigration("cloudkit-split-sync-v1") { db in try migration_v2(db) }
         migrator.registerMigration("add-source-html-to-content") { db in try migration_v3(db) }
         migrator.registerMigration("add-last-read-block-index") { db in try migration_v4(db) }
+        migrator.registerMigration("add-isread-isstarred-softdelete-and-tags") { db in try migration_v5(db) }
         try migrator.migrate(database)
     }
 
@@ -336,6 +337,44 @@ public enum StowerDatabase {
         // Reading-position persistence column on the sync table.
         // Nullable so unread articles are distinguishable from "at top".
         try db.execute(sql: #"ALTER TABLE "savedItemSyncTables" ADD COLUMN "lastReadBlockIndex" INTEGER"#)
+    }
+
+    private static func migration_v5(_ db: Database) throws {
+        // New columns on the sync table for read/starred state and soft delete.
+        try db.execute(sql: #"ALTER TABLE "savedItemSyncTables" ADD COLUMN "isRead" INTEGER NOT NULL DEFAULT 0"#)
+        try db.execute(sql: #"ALTER TABLE "savedItemSyncTables" ADD COLUMN "isStarred" INTEGER NOT NULL DEFAULT 0"#)
+        try db.execute(sql: #"ALTER TABLE "savedItemSyncTables" ADD COLUMN "deletedAt" TEXT"#)
+
+        // Backfill: anything with a persisted reading position was at least opened.
+        try db.execute(sql: #"UPDATE "savedItemSyncTables" SET "isRead" = 1 WHERE "lastReadBlockIndex" IS NOT NULL"#)
+
+        // CloudKit-synced tags. FK-less to match the existing sync table pattern.
+        try db.execute(sql: """
+            CREATE TABLE IF NOT EXISTS "tagSyncTables" (
+              "id" TEXT PRIMARY KEY NOT NULL,
+              "name" TEXT NOT NULL DEFAULT '',
+              "colorHex" TEXT,
+              "createdAt" TEXT NOT NULL,
+              "updatedAt" TEXT NOT NULL
+            ) STRICT
+            """)
+        try db.execute(sql: """
+            CREATE TABLE IF NOT EXISTS "itemTagSyncTables" (
+              "id" TEXT PRIMARY KEY NOT NULL,
+              "itemID" TEXT NOT NULL,
+              "tagID" TEXT NOT NULL,
+              "createdAt" TEXT NOT NULL
+            ) STRICT
+            """)
+
+        // Indices for filter/count queries.
+        try db.execute(sql: #"CREATE INDEX IF NOT EXISTS idx_savedItemSyncTables_isRead ON "savedItemSyncTables"("isRead")"#)
+        try db.execute(sql: #"CREATE INDEX IF NOT EXISTS idx_savedItemSyncTables_isStarred ON "savedItemSyncTables"("isStarred")"#)
+        try db.execute(sql: #"CREATE INDEX IF NOT EXISTS idx_savedItemSyncTables_deletedAt ON "savedItemSyncTables"("deletedAt")"#)
+        try db.execute(sql: #"CREATE UNIQUE INDEX IF NOT EXISTS idx_tagSyncTables_name ON "tagSyncTables"(LOWER("name"))"#)
+        try db.execute(sql: #"CREATE UNIQUE INDEX IF NOT EXISTS idx_itemTagSyncTables_item_tag ON "itemTagSyncTables"("itemID","tagID")"#)
+        try db.execute(sql: #"CREATE INDEX IF NOT EXISTS idx_itemTagSyncTables_itemID ON "itemTagSyncTables"("itemID")"#)
+        try db.execute(sql: #"CREATE INDEX IF NOT EXISTS idx_itemTagSyncTables_tagID ON "itemTagSyncTables"("tagID")"#)
     }
 }
 

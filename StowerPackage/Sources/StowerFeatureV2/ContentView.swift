@@ -16,6 +16,7 @@ public struct ContentView: View {
 
 public struct AppView: View {
     @Bindable var store: StoreOf<AppFeature>
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
     public init(store: StoreOf<AppFeature>) {
         self.store = store
@@ -23,42 +24,32 @@ public struct AppView: View {
 
     public var body: some View {
         let theme = store.readerTheme
-        #if os(macOS)
-        NavigationSplitView {
-            Group {
-                switch store.selectedSection {
-                case .library:
-                    LibraryScreen(store: store.scope(state: \.library, action: \.library))
-                case .settings:
-                    SettingsScreen(store: store.scope(state: \.settings, action: \.settings))
-                }
-            }
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                Picker("", selection: $store.selectedSection.sending(\.selectedSectionChanged)) {
-                    Label("Library", systemImage: "books.vertical")
-                        .tag(AppFeature.State.Section.library)
-                    Label("Settings", systemImage: "gear")
-                        .tag(AppFeature.State.Section.settings)
-                }
-                .pickerStyle(.segmented)
-                .padding(12)
-                .background(theme.sidebarBackground)
-            }
+
+        NavigationSplitView(columnVisibility: $columnVisibility) {
+            SidebarScreen(
+                store: store.scope(state: \.sidebar, action: \.sidebar),
+                onOpenSettings: { store.send(.openSettings) }
+            )
             .scrollContentBackground(.hidden)
             .background(theme.sidebarBackground)
-            .navigationSplitViewColumnWidth(min: 320, ideal: 380, max: 500)
+            .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 320)
+        } content: {
+            LibraryScreen(store: store.scope(state: \.library, action: \.library))
+                .scrollContentBackground(.hidden)
+                .background(theme.sidebarBackground)
+                .navigationSplitViewColumnWidth(min: 320, ideal: 380, max: 500)
         } detail: {
+            // `ContentUnavailableView` is self-sizing, so `.background()`
+            // alone only paints the card-sized area around its content —
+            // leaving the rest of the detail column painted in the system
+            // `windowBackgroundColor` (white in light mode). We have to
+            // explicitly expand the content to fill the column *before*
+            // applying the background so the fill paints the entire pane.
             if let readerStore = store.scope(state: \.reader, action: \.reader.presented) {
                 NavigationStack {
                     ReaderScreen(store: readerStore)
-                        .toolbar {
-                            ToolbarItem(placement: .automatic) {
-                                Button("Close") {
-                                    store.send(.closeReaderTapped)
-                                }
-                            }
-                        }
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(theme.readerBackground)
             } else {
                 ContentUnavailableView(
@@ -66,37 +57,34 @@ public struct AppView: View {
                     systemImage: "doc.text",
                     description: Text("Choose an article from Library to read.")
                 )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(theme.readerBackground)
             }
         }
+        #if os(macOS)
         .toolbarBackground(theme.toolbarBackground, for: .windowToolbar)
         .toolbarBackgroundVisibility(.visible, for: .windowToolbar)
-        .preferredColorScheme(theme.colorScheme)
-        .alert($store.scope(state: \.resetAlert, action: \.resetAlert))
         #else
-        NavigationStack {
-            TabView(selection: $store.selectedSection.sending(\.selectedSectionChanged)) {
-                LibraryScreen(store: store.scope(state: \.library, action: \.library))
-                    .tabItem {
-                        Label("Library", systemImage: "books.vertical")
-                    }
-                    .tag(AppFeature.State.Section.library)
-
-                SettingsScreen(store: store.scope(state: \.settings, action: \.settings))
-                    .tabItem {
-                        Label("Settings", systemImage: "gear")
-                    }
-                    .tag(AppFeature.State.Section.settings)
-            }
-            .sheet(item: $store.scope(state: \.reader, action: \.reader)) { readerStore in
-                NavigationStack { ReaderScreen(store: readerStore) }
-            }
-        }
         .toolbarBackground(theme.toolbarBackground, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
+        #endif
         .preferredColorScheme(theme.colorScheme)
         .alert($store.scope(state: \.resetAlert, action: \.resetAlert))
-        #endif
+        .sheet(
+            isPresented: Binding(
+                get: { store.isSettingsPresented },
+                set: { if !$0 { store.send(.closeSettings) } }
+            )
+        ) {
+            NavigationStack {
+                SettingsScreen(store: store.scope(state: \.settings, action: \.settings))
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Done") { store.send(.closeSettings) }
+                        }
+                    }
+            }
+        }
     }
 }
 

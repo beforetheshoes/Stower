@@ -1,4 +1,5 @@
 import ComposableArchitecture
+import Foundation
 import Testing
 @testable import StowerFeature
 
@@ -15,7 +16,7 @@ struct LibraryFeatureTests {
         let store = TestStore(initialState: LibraryFeature.State()) {
             LibraryFeature()
         } withDependencies: {
-            $0.stowerRepository.fetchLibrary = { expected }
+            $0.stowerRepository.fetchLibrary = { _ in expected }
         }
 
         await store.send(LibraryFeature.Action.reload) {
@@ -38,6 +39,203 @@ struct LibraryFeatureTests {
 
         #expect(state.filteredItems.count == 1)
         #expect(state.filteredItems[0].title == "Swift Concurrency")
+    }
+
+    @Test
+    func filterChanged_triggersReloadWithNewFilter() async {
+        let unreadItem = SavedItem(title: "U", content: "", isRead: false)
+        let readItem = SavedItem(title: "R", content: "", isRead: true)
+
+        let store = TestStore(initialState: LibraryFeature.State()) {
+            LibraryFeature()
+        } withDependencies: {
+            $0.stowerRepository.fetchLibrary = { filter in
+                switch filter {
+                case .read: return [readItem]
+                case .unread: return [unreadItem]
+                default: return [unreadItem, readItem]
+                }
+            }
+        }
+
+        await store.send(.filterChanged(.read)) {
+            $0.filter = .read
+        }
+        await store.receive(.reload) { $0.isLoading = true }
+        await store.receive(.response([readItem])) {
+            $0.isLoading = false
+            $0.items = [readItem]
+        }
+    }
+
+    @Test
+    func toggleStar_whileViewingStarred_removesRow() async {
+        let starred = SavedItem(title: "S", content: "", isStarred: true)
+        var initial = LibraryFeature.State()
+        initial.filter = .starred
+        initial.items = [starred]
+
+        let store = TestStore(initialState: initial) {
+            LibraryFeature()
+        } withDependencies: {
+            $0.stowerRepository.setStarred = { _, _ in }
+        }
+
+        await store.send(.toggleStar(starred.id)) {
+            $0.items = []
+        }
+    }
+
+    @Test
+    func deleteItem_inAllFilter_removesOptimistically() async {
+        let item = SavedItem(title: "Doomed", content: "")
+        var initial = LibraryFeature.State()
+        initial.items = [item]
+
+        let store = TestStore(initialState: initial) {
+            LibraryFeature()
+        } withDependencies: {
+            $0.stowerRepository.deleteItem = { _ in }
+        }
+
+        await store.send(.deleteItem(item.id)) {
+            $0.items = []
+        }
+        await store.receive(.deleteFinished)
+    }
+
+    @Test
+    func deleteItem_inTrashFilter_keepsRowVisible() async {
+        let item = SavedItem(title: "Already deleted", content: "")
+        var initial = LibraryFeature.State()
+        initial.filter = .recentlyDeleted
+        initial.items = [item]
+
+        let store = TestStore(initialState: initial) {
+            LibraryFeature()
+        } withDependencies: {
+            $0.stowerRepository.deleteItem = { _ in }
+        }
+
+        await store.send(.deleteItem(item.id))
+        await store.receive(.deleteFinished)
+        #expect(store.state.items.count == 1)
+    }
+
+    @Test
+    func permanentlyDelete_removesRow() async {
+        let item = SavedItem(title: "Gone", content: "")
+        var initial = LibraryFeature.State()
+        initial.filter = .recentlyDeleted
+        initial.items = [item]
+
+        let store = TestStore(initialState: initial) {
+            LibraryFeature()
+        } withDependencies: {
+            $0.stowerRepository.permanentlyDelete = { _ in }
+        }
+
+        await store.send(.permanentlyDelete(item.id)) {
+            $0.items = []
+        }
+        await store.receive(.deleteFinished)
+    }
+
+    @Test
+    func toggleTagOnItem_addsTagOptimistically() async {
+        let tagID = UUID()
+        let item = SavedItem(title: "Untagged", content: "")
+        var initial = LibraryFeature.State()
+        initial.items = [item]
+        initial.availableTags = [Tag(id: tagID, name: "work")]
+
+        let store = TestStore(initialState: initial) {
+            LibraryFeature()
+        } withDependencies: {
+            $0.stowerRepository.addTag = { _, _ in }
+        }
+
+        await store.send(.toggleTagOnItem(item.id, tagID)) {
+            $0.items[0].tagIDs = [tagID]
+        }
+    }
+
+    @Test
+    func toggleTagOnItem_removesTagOptimistically() async {
+        let tagID = UUID()
+        let item = SavedItem(title: "Tagged", content: "", tagIDs: [tagID])
+        var initial = LibraryFeature.State()
+        initial.items = [item]
+        initial.availableTags = [Tag(id: tagID, name: "work")]
+
+        let store = TestStore(initialState: initial) {
+            LibraryFeature()
+        } withDependencies: {
+            $0.stowerRepository.removeTag = { _, _ in }
+        }
+
+        await store.send(.toggleTagOnItem(item.id, tagID)) {
+            $0.items[0].tagIDs = []
+        }
+    }
+
+    @Test
+    func toggleTagOnItem_whileViewingUntagged_dropsRowWhenTagAdded() async {
+        let tagID = UUID()
+        let item = SavedItem(title: "Orphan", content: "")
+        var initial = LibraryFeature.State()
+        initial.filter = .untagged
+        initial.items = [item]
+        initial.availableTags = [Tag(id: tagID, name: "work")]
+
+        let store = TestStore(initialState: initial) {
+            LibraryFeature()
+        } withDependencies: {
+            $0.stowerRepository.addTag = { _, _ in }
+        }
+
+        await store.send(.toggleTagOnItem(item.id, tagID)) {
+            $0.items = []
+        }
+    }
+
+    @Test
+    func toggleTagOnItem_whileViewingTagFilter_dropsRowWhenTagRemoved() async {
+        let tagID = UUID()
+        let otherTag = UUID()
+        let item = SavedItem(title: "Tagged", content: "", tagIDs: [tagID, otherTag])
+        var initial = LibraryFeature.State()
+        initial.filter = .tag(tagID)
+        initial.items = [item]
+        initial.availableTags = [
+            Tag(id: tagID, name: "work"),
+            Tag(id: otherTag, name: "later"),
+        ]
+
+        let store = TestStore(initialState: initial) {
+            LibraryFeature()
+        } withDependencies: {
+            $0.stowerRepository.removeTag = { _, _ in }
+        }
+
+        await store.send(.toggleTagOnItem(item.id, tagID)) {
+            $0.items = []
+        }
+    }
+
+    @Test
+    func reloadTags_populatesAvailableTags() async {
+        let tags = [Tag(name: "a"), Tag(name: "b")]
+        let store = TestStore(initialState: LibraryFeature.State()) {
+            LibraryFeature()
+        } withDependencies: {
+            $0.stowerRepository.fetchTags = { tags }
+        }
+
+        await store.send(.reloadTags)
+        await store.receive(.tagsLoaded(tags)) {
+            $0.availableTags = tags
+        }
     }
 
     @Test

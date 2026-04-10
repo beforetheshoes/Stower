@@ -21,6 +21,14 @@ public struct SavedItem: Equatable, Identifiable, Sendable {
     public var updatedAt: Date
     /// Block index of the last-read position for scroll restoration. Nil means unread or at the top.
     public var lastReadBlockIndex: Int?
+    public var isRead: Bool
+    public var isStarred: Bool
+    /// When set, this item is in the Recently Deleted bucket and will be
+    /// permanently purged after the retention window expires.
+    public var deletedAt: Date?
+    /// IDs of tags assigned to this item. Populated by repository reads via a
+    /// batched junction-table query (never N+1).
+    public var tagIDs: [UUID]
 
     public init(
         id: UUID = UUID(),
@@ -41,7 +49,11 @@ public struct SavedItem: Equatable, Identifiable, Sendable {
         processingError: String? = nil,
         createdAt: Date = .now,
         updatedAt: Date = .now,
-        lastReadBlockIndex: Int? = nil
+        lastReadBlockIndex: Int? = nil,
+        isRead: Bool = false,
+        isStarred: Bool = false,
+        deletedAt: Date? = nil,
+        tagIDs: [UUID] = []
     ) {
         self.id = id
         self.title = title
@@ -62,6 +74,10 @@ public struct SavedItem: Equatable, Identifiable, Sendable {
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.lastReadBlockIndex = lastReadBlockIndex
+        self.isRead = isRead
+        self.isStarred = isStarred
+        self.deletedAt = deletedAt
+        self.tagIDs = tagIDs
     }
 }
 

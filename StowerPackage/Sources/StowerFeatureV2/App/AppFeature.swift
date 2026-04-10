@@ -7,23 +7,48 @@ public struct AppFeature {
 
     @ObservableState
     public struct State: Equatable {
-        public enum Section: String, CaseIterable, Equatable {
-            case library
-            case settings
-        }
-
-        public var selectedSection: Section = .library
+        public var sidebar = SidebarFeature.State()
         public var library = LibraryFeature.State()
         public var settings = SettingsFeature.State()
-        public var readerTheme: ReaderTheme = .white
-        public var cachedAppearance = ReaderAppearanceSettings()
+        public var isSettingsPresented: Bool = false
+        public var readerTheme: ReaderTheme
+        public var cachedAppearance: ReaderAppearanceSettings
         @Presents public var reader: ReaderFeature.State?
         public var startupFinished = false
         public var startupErrorMessage: String?
         public var cloudSyncStatus: CloudSyncStatus = .starting
         @Presents public var resetAlert: AlertState<Action.ResetAlert>?
 
-        public init() {}
+        public init() {
+            // Seed the initial theme from UserDefaults so the very first
+            // frame is rendered in the right color. Persisted appearance
+            // still loads asynchronously from SQLite, but the theme —
+            // which is what every background on the screen depends on —
+            // must be synchronously available or the entire app flashes
+            // white on every launch before the SQLite read completes.
+            let seeded = ThemeCache.loadTheme()
+            self.readerTheme = seeded
+            var appearance = ReaderAppearanceSettings()
+            appearance.theme = seeded
+            self.cachedAppearance = appearance
+        }
+    }
+
+    /// Synchronous read/write of the last-known theme so `State.init`
+    /// can paint the correct background before SQLite responds.
+    enum ThemeCache {
+        static let key = "stower.readerTheme"
+
+        static func loadTheme() -> ReaderTheme {
+            guard let raw = UserDefaults.standard.string(forKey: key),
+                  let theme = ReaderTheme(rawValue: raw)
+            else { return .sepia }
+            return theme
+        }
+
+        static func saveTheme(_ theme: ReaderTheme) {
+            UserDefaults.standard.set(theme.rawValue, forKey: key)
+        }
     }
 
     public enum Action: Equatable {
@@ -32,14 +57,15 @@ public struct AppFeature {
         case startupFailed(String)
         case readerAppearanceLoaded(ReaderAppearanceSettings)
         case readerAppearanceFailed(String)
-        case selectedSectionChanged(State.Section)
+        case openSettings
+        case closeSettings
         case cloudSyncStatusChanged(CloudSyncStatus)
         case resetAlert(PresentationAction<ResetAlert>)
 
+        case sidebar(SidebarFeature.Action)
         case library(LibraryFeature.Action)
         case settings(SettingsFeature.Action)
         case reader(PresentationAction<ReaderFeature.Action>)
-        case closeReaderTapped
 
         public enum ResetAlert: Equatable {
             case confirmReset
@@ -56,6 +82,9 @@ public struct AppFeature {
     @Dependency(\.context) var context
 
     public var body: some ReducerOf<Self> {
+        Scope(state: \.sidebar, action: \.sidebar) {
+            SidebarFeature()
+        }
         Scope(state: \.library, action: \.library) {
             LibraryFeature()
         }
@@ -104,6 +133,10 @@ public struct AppFeature {
                     }
                     .cancellable(id: CancelID.syncStatus, cancelInFlight: true),
                     periodicSync,
+                    // Sidebar subscription: loads counts + tags and listens for changes.
+                    .send(.sidebar(.onAppear)),
+                    // Purge expired trash items (fire-and-forget).
+                    .run { _ in _ = try? await repository.purgeOldTrash() },
                     .run { send in
                         do {
                             try await cloudSyncClient.start()
@@ -136,13 +169,24 @@ public struct AppFeature {
             case .readerAppearanceLoaded(let appearance):
                 state.cachedAppearance = appearance
                 state.readerTheme = appearance.theme
+                ThemeCache.saveTheme(appearance.theme)
                 return .none
 
             case .readerAppearanceFailed:
                 return .none
 
-            case .selectedSectionChanged(let section):
-                state.selectedSection = section
+            case .openSettings:
+                state.isSettingsPresented = true
+                return .none
+
+            case .closeSettings:
+                state.isSettingsPresented = false
+                return .none
+
+            case .sidebar(.selectList(let filter)):
+                return .send(.library(.filterChanged(filter)))
+
+            case .sidebar:
                 return .none
 
             case .cloudSyncStatusChanged(let status):
@@ -158,6 +202,7 @@ public struct AppFeature {
                         _ = try? await repository.enqueueHydrationJobsForMissingContent()
                         try? await processIngestionJobs(repository: repository, ingestionClient: ingestionClient)
                         await send(.library(.reload))
+                        await send(.sidebar(.reload))
                     }
                 }
 
@@ -209,13 +254,10 @@ public struct AppFeature {
                 )
                 return .none
 
-            case .closeReaderTapped:
-                state.reader = nil
-                return .none
-
             case .reader(.presented(.themeChanged(let theme))):
                 state.readerTheme = theme
                 state.cachedAppearance.theme = theme
+                ThemeCache.saveTheme(theme)
                 return .none
 
             case .reader(.presented(.saveAppearanceFinished)):
@@ -223,6 +265,7 @@ public struct AppFeature {
                 if let readerAppearance = state.reader?.appearance {
                     state.cachedAppearance = readerAppearance
                     state.readerTheme = readerAppearance.theme
+                    ThemeCache.saveTheme(readerAppearance.theme)
                 }
                 return .none
 

@@ -23,6 +23,11 @@ public struct ReaderScreen: View {
             .background(store.appearance.backgroundColor)
             .navigationTitle("Reader")
             .toolbar {
+                if store.hasInteractiveContent {
+                    ToolbarItem(placement: .automatic) {
+                        switchModeButton
+                    }
+                }
                 ToolbarItem(placement: .automatic) {
                     Button {
                         isAppearancePanelPresented.toggle()
@@ -74,9 +79,6 @@ public struct ReaderScreen: View {
                 isWebViewFormat: store.effectiveRenderFormat == .webView,
                 highlightedBlockIndex: store.speech.currentBlockIndex,
                 restoreBlockIndex: item.lastReadBlockIndex,
-                onSwitchToNative: store.hasInteractiveContent
-                    ? { store.send(.switchRenderMode(store.effectiveRenderFormat == .webView ? .structuredV1 : .webView)) }
-                    : nil,
                 onReadingProgress: { index in store.send(.scrollProgressChanged(index)) },
                 onOpenInlineEmbed: { urlString in store.send(.openInlineWebEmbed(urlString)) }
             )
@@ -96,6 +98,31 @@ public struct ReaderScreen: View {
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+    }
+
+    /// Toolbar button that flips between the interactive (archive/WebView)
+    /// rendering and the stripped structured reader view. Only shown when
+    /// the article was ingested as `.webView`, so `hasInteractiveContent`
+    /// gates its visibility upstream.
+    ///
+    /// Label + icon reflect the destination, not the current mode, so the
+    /// user can always read it as "this is what I'm about to get".
+    @ViewBuilder
+    private var switchModeButton: some View {
+        let isCurrentlyInteractive = store.effectiveRenderFormat == .webView
+        let nextMode: RenderFormat = isCurrentlyInteractive ? .structuredV1 : .webView
+        Button {
+            store.send(.switchRenderMode(nextMode))
+        } label: {
+            if isCurrentlyInteractive {
+                Label("Reader View", systemImage: "doc.plaintext")
+            } else {
+                Label("Interactive View", systemImage: "safari")
+            }
+        }
+        .help(isCurrentlyInteractive
+              ? "Show the stripped-down reader version of this article"
+              : "Show the original interactive page with SVGs and scripts")
     }
 
     /// Picks the right HTML to show. For interactive articles (`webView`
@@ -171,7 +198,7 @@ private struct ReaderBottomBar: View {
         )
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
-        .background(.ultraThinMaterial)
+        .background(store.appearance.surfaceColor)
     }
 }
 

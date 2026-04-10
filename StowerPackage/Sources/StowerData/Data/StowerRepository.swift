@@ -4,7 +4,7 @@ import Foundation
 import SQLiteData
 
 public struct StowerRepository: Sendable {
-    public var fetchLibrary: @Sendable () async throws -> [SavedItem]
+    public var fetchLibrary: @Sendable (LibraryFilter) async throws -> [SavedItem]
     public var loadItem: @Sendable (UUID) async throws -> SavedItem?
     public var createItemFromIngestion: @Sendable (IngestionResult) async throws -> SavedItem
     public var updateItemFromIngestion: @Sendable (UUID, IngestionResult) async throws -> SavedItem?
@@ -14,9 +14,34 @@ public struct StowerRepository: Sendable {
     public var saveReaderDocument: @Sendable (UUID, ReaderDocument, String) async throws -> Void
     public var loadSourceHTML: @Sendable (UUID) async throws -> String?
     public var upsertMedia: @Sendable ([MediaDescriptor], UUID) async throws -> Void
+    /// Soft-deletes an item (moves it to the Recently Deleted list).
+    /// Retained for backwards compatibility with all existing call sites.
     public var deleteItem: @Sendable (UUID) async throws -> Void
     /// Persist the last-read block index for an item (scroll position restoration).
     public var saveReadingProgress: @Sendable (_ itemID: UUID, _ blockIndex: Int) async throws -> Void
+
+    // MARK: - List/filter + bucket mutations
+    public var setReadStatus: @Sendable (UUID, Bool) async throws -> Void
+    public var setStarred: @Sendable (UUID, Bool) async throws -> Void
+    public var restoreFromTrash: @Sendable (UUID) async throws -> Void
+    /// Hard delete + remove asset archive. Use from the Recently Deleted list.
+    public var permanentlyDelete: @Sendable (UUID) async throws -> Void
+    /// Deletes trash items older than the retention window; returns the purged IDs.
+    public var purgeOldTrash: @Sendable () async throws -> [UUID]
+    public var fetchListCounts: @Sendable () async throws -> LibraryListCounts
+
+    // MARK: - Tags
+    public var fetchTags: @Sendable () async throws -> [Tag]
+    public var fetchTagIDs: @Sendable (UUID) async throws -> [UUID]
+    public var createTag: @Sendable (String, String?) async throws -> Tag
+    public var renameTag: @Sendable (UUID, String) async throws -> Void
+    public var deleteTag: @Sendable (UUID) async throws -> Void
+    public var addTag: @Sendable (UUID, UUID) async throws -> Void
+    public var removeTag: @Sendable (UUID, UUID) async throws -> Void
+
+    /// Ping stream fired after any library mutation. Sidebar + library screens
+    /// subscribe to reload counts/rows without explicit callback plumbing.
+    public var observeLibraryChanges: @Sendable () -> AsyncStream<Void>
 
     public var loadSettings: @Sendable () async throws -> ImageDownloadSettings
     public var saveSettings: @Sendable (ImageDownloadSettings) async throws -> Void
@@ -50,47 +75,41 @@ public enum RepositoryError: Error {
 
 extension StowerRepository {
     static let failing: StowerRepository = {
-        let fetchLibrary: @Sendable () async throws -> [SavedItem] = { [] }
-        let loadItem: @Sendable (UUID) async throws -> SavedItem? = { _ in nil }
-        let createItemFromIngestion: @Sendable (IngestionResult) async throws -> SavedItem = { _ in throw RepositoryError.notBootstrapped }
-        let updateItemFromIngestion: @Sendable (UUID, IngestionResult) async throws -> SavedItem? = { _, _ in nil }
-        let hydrateItemContent: @Sendable (UUID, IngestionResult) async throws -> Void = { _, _ in }
-        let updateLocalContentStatus: @Sendable (UUID, String, String?) async throws -> Void = { _, _, _ in }
-        let loadReaderDocument: @Sendable (UUID) async throws -> ReaderDocument? = { _ in nil }
-        let saveReaderDocument: @Sendable (UUID, ReaderDocument, String) async throws -> Void = { _, _, _ in }
-        let loadSourceHTML: @Sendable (UUID) async throws -> String? = { _ in nil }
-        let upsertMedia: @Sendable ([MediaDescriptor], UUID) async throws -> Void = { _, _ in }
-        let deleteItem: @Sendable (UUID) async throws -> Void = { _ in }
-        let saveReadingProgress: @Sendable (UUID, Int) async throws -> Void = { _, _ in }
-        let loadSettings: @Sendable () async throws -> ImageDownloadSettings = { ImageDownloadSettings() }
-        let saveSettings: @Sendable (ImageDownloadSettings) async throws -> Void = { _ in }
-        let loadReaderAppearanceSettings: @Sendable () async throws -> ReaderAppearanceSettings = { ReaderAppearanceSettings() }
-        let saveReaderAppearanceSettings: @Sendable (ReaderAppearanceSettings) async throws -> Void = { _ in }
-        let enqueueIngestionJob: @Sendable (IngestionJob.Kind, String) async throws -> Void = { _, _ in }
-        let fetchPendingIngestionJobs: @Sendable () async throws -> [IngestionJob] = { [] }
-        let markIngestionJobProcessed: @Sendable (UUID) async throws -> Void = { _ in }
-        let enqueueHydrationJobsForMissingContent: @Sendable () async throws -> Int = { 0 }
-        return StowerRepository(
-            fetchLibrary: fetchLibrary,
-            loadItem: loadItem,
-            createItemFromIngestion: createItemFromIngestion,
-            updateItemFromIngestion: updateItemFromIngestion,
-            hydrateItemContent: hydrateItemContent,
-            updateLocalContentStatus: updateLocalContentStatus,
-            loadReaderDocument: loadReaderDocument,
-            saveReaderDocument: saveReaderDocument,
-            loadSourceHTML: loadSourceHTML,
-            upsertMedia: upsertMedia,
-            deleteItem: deleteItem,
-            saveReadingProgress: saveReadingProgress,
-            loadSettings: loadSettings,
-            saveSettings: saveSettings,
-            loadReaderAppearanceSettings: loadReaderAppearanceSettings,
-            saveReaderAppearanceSettings: saveReaderAppearanceSettings,
-            enqueueIngestionJob: enqueueIngestionJob,
-            fetchPendingIngestionJobs: fetchPendingIngestionJobs,
-            markIngestionJobProcessed: markIngestionJobProcessed,
-            enqueueHydrationJobsForMissingContent: enqueueHydrationJobsForMissingContent
+        StowerRepository(
+            fetchLibrary: { _ in [] },
+            loadItem: { _ in nil },
+            createItemFromIngestion: { _ in throw RepositoryError.notBootstrapped },
+            updateItemFromIngestion: { _, _ in nil },
+            hydrateItemContent: { _, _ in },
+            updateLocalContentStatus: { _, _, _ in },
+            loadReaderDocument: { _ in nil },
+            saveReaderDocument: { _, _, _ in },
+            loadSourceHTML: { _ in nil },
+            upsertMedia: { _, _ in },
+            deleteItem: { _ in },
+            saveReadingProgress: { _, _ in },
+            setReadStatus: { _, _ in },
+            setStarred: { _, _ in },
+            restoreFromTrash: { _ in },
+            permanentlyDelete: { _ in },
+            purgeOldTrash: { [] },
+            fetchListCounts: { .zero },
+            fetchTags: { [] },
+            fetchTagIDs: { _ in [] },
+            createTag: { name, _ in Tag(name: name) },
+            renameTag: { _, _ in },
+            deleteTag: { _ in },
+            addTag: { _, _ in },
+            removeTag: { _, _ in },
+            observeLibraryChanges: { AsyncStream { _ in } },
+            loadSettings: { ImageDownloadSettings() },
+            saveSettings: { _ in },
+            loadReaderAppearanceSettings: { ReaderAppearanceSettings() },
+            saveReaderAppearanceSettings: { _ in },
+            enqueueIngestionJob: { _, _ in },
+            fetchPendingIngestionJobs: { [] },
+            markIngestionJobProcessed: { _ in },
+            enqueueHydrationJobsForMissingContent: { 0 }
         )
     }()
 }
@@ -102,8 +121,16 @@ extension StowerRepository {
         database: any DatabaseWriter,
         cloudSyncClient: CloudSyncClient
     ) -> Self {
+        // Broadcast for the library-change stream. Every mutation closure pings
+        // this; sidebar + library screens subscribe to refresh counts/rows.
+        let changeBroadcast = LibraryChangeBroadcast()
+
         let scheduleSync: @Sendable () -> Void = {
             Task { await cloudSyncClient.scheduleSendChanges() }
+        }
+        let scheduleSyncAndNotify: @Sendable () -> Void = {
+            scheduleSync()
+            changeBroadcast.ping()
         }
 
         // In-memory LRU cache shared across the live repository's closures so
@@ -124,22 +151,33 @@ extension StowerRepository {
             documentCache.set(id, document: document)
         }
 
-        let baseUpdateFromIngestion = _updateItemFromIngestion(database: database, scheduleSync: scheduleSync)
+        let baseUpdateFromIngestion = _updateItemFromIngestion(database: database, scheduleSync: scheduleSyncAndNotify)
         let cachedUpdateFromIngestion: @Sendable (UUID, IngestionResult) async throws -> SavedItem? = { id, result in
             documentCache.invalidate(id)
             return try await baseUpdateFromIngestion(id, result)
         }
 
-        let baseDeleteItem = _deleteItem(database: database, scheduleSync: scheduleSync)
+        // `deleteItem` now soft-deletes. The document cache stays valid
+        // because the item may be restored from trash before being purged.
+        let softDelete = _softDeleteItem(database: database, scheduleSync: scheduleSyncAndNotify)
         let cachedDeleteItem: @Sendable (UUID) async throws -> Void = { id in
+            try await softDelete(id)
+        }
+
+        // Hard-delete path also invalidates the reader cache.
+        let rawPermanentDelete = _permanentlyDelete(database: database, scheduleSync: scheduleSyncAndNotify)
+        let cachedPermanentDelete: @Sendable (UUID) async throws -> Void = { id in
             documentCache.invalidate(id)
-            try await baseDeleteItem(id)
+            try await rawPermanentDelete(id)
         }
 
         return Self(
-            fetchLibrary: _fetchLibrary(database: database),
+            fetchLibrary: _fetchLibraryFiltered(database: database),
             loadItem: _loadItem(database: database),
-            createItemFromIngestion: _createItemFromIngestion(database: database, scheduleSync: scheduleSync),
+            createItemFromIngestion: _createItemFromIngestionWithNotify(
+                base: _createItemFromIngestion(database: database, scheduleSync: scheduleSyncAndNotify),
+                broadcast: changeBroadcast
+            ),
             updateItemFromIngestion: cachedUpdateFromIngestion,
             hydrateItemContent: _hydrateItemContent(database: database),
             updateLocalContentStatus: _updateLocalContentStatus(database: database),
@@ -149,6 +187,20 @@ extension StowerRepository {
             upsertMedia: _upsertMedia(database: database),
             deleteItem: cachedDeleteItem,
             saveReadingProgress: _saveReadingProgress(database: database, scheduleSync: scheduleSync),
+            setReadStatus: _setReadStatus(database: database, scheduleSync: scheduleSyncAndNotify),
+            setStarred: _setStarred(database: database, scheduleSync: scheduleSyncAndNotify),
+            restoreFromTrash: _restoreFromTrash(database: database, scheduleSync: scheduleSyncAndNotify),
+            permanentlyDelete: cachedPermanentDelete,
+            purgeOldTrash: _purgeOldTrash(database: database, scheduleSync: scheduleSyncAndNotify),
+            fetchListCounts: _fetchListCounts(database: database),
+            fetchTags: _fetchTags(database: database),
+            fetchTagIDs: _fetchTagIDs(database: database),
+            createTag: _createTag(database: database, scheduleSync: scheduleSyncAndNotify),
+            renameTag: _renameTag(database: database, scheduleSync: scheduleSyncAndNotify),
+            deleteTag: _deleteTag(database: database, scheduleSync: scheduleSyncAndNotify),
+            addTag: _addTag(database: database, scheduleSync: scheduleSyncAndNotify),
+            removeTag: _removeTag(database: database, scheduleSync: scheduleSyncAndNotify),
+            observeLibraryChanges: { changeBroadcast.stream() },
             loadSettings: _loadSettings(database: database),
             saveSettings: _saveSettings(database: database),
             loadReaderAppearanceSettings: _loadReaderAppearanceSettings(database: database),
@@ -158,5 +210,49 @@ extension StowerRepository {
             markIngestionJobProcessed: _markIngestionJobProcessed(database: database),
             enqueueHydrationJobsForMissingContent: _enqueueHydrationJobsForMissingContent(database: database)
         )
+    }
+
+    /// Wraps the create-ingestion closure so a successful create also pings
+    /// the library-change broadcast (inserts show up in sidebar counts).
+    private static func _createItemFromIngestionWithNotify(
+        base: @escaping @Sendable (IngestionResult) async throws -> SavedItem,
+        broadcast: LibraryChangeBroadcast
+    ) -> @Sendable (IngestionResult) async throws -> SavedItem {
+        { result in
+            let item = try await base(result)
+            broadcast.ping()
+            return item
+        }
+    }
+}
+
+// MARK: - Library change broadcast
+
+/// Thread-safe fan-out of "the library just changed" notifications.
+/// Mutation closures call `ping()`; consumers subscribe via `stream()`.
+final class LibraryChangeBroadcast: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuations: [UUID: AsyncStream<Void>.Continuation] = [:]
+
+    func stream() -> AsyncStream<Void> {
+        AsyncStream { continuation in
+            let id = UUID()
+            lock.lock()
+            continuations[id] = continuation
+            lock.unlock()
+            continuation.onTermination = { [weak self] _ in
+                guard let self else { return }
+                self.lock.lock()
+                self.continuations.removeValue(forKey: id)
+                self.lock.unlock()
+            }
+        }
+    }
+
+    func ping() {
+        lock.lock()
+        let all = Array(continuations.values)
+        lock.unlock()
+        for c in all { c.yield(()) }
     }
 }

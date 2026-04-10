@@ -20,8 +20,20 @@ public struct ReaderFeature {
         /// Whether the user has manually overridden the render mode.
         public var renderModeOverride: RenderFormat?
 
+        /// The render format the reader should use right now.
+        ///
+        /// Priority:
+        /// 1. Explicit user override (`switchRenderMode` button)
+        /// 2. The item's own `renderFormat` as detected during ingestion —
+        ///    this is what makes SVG-rich articles render in the archive/
+        ///    WebView path instead of falling back to stripped structured
+        ///    text. Falling back to `.structuredV1` here (as was previously
+        ///    the case) silently broke every interactive-SVG page.
+        /// 3. `.structuredV1` if the item hasn't loaded yet.
         public var effectiveRenderFormat: RenderFormat {
-            renderModeOverride ?? .structuredV1
+            if let renderModeOverride { return renderModeOverride }
+            if let item { return item.renderFormat }
+            return .structuredV1
         }
 
         /// Whether the original article was detected as having interactive content.
@@ -70,6 +82,9 @@ public struct ReaderFeature {
         /// Triggers a debounced save of the reading position.
         case scrollProgressChanged(Int)
         case saveReadingProgress(Int)
+
+        /// User tapped the toolbar mark-read/unread button.
+        case toggleReadTapped
     }
 
     private enum CancelID {
@@ -244,22 +259,47 @@ public struct ReaderFeature {
                 // as "no restore state") so new opens don't get a false restore.
                 guard blockIndex >= 0 else { return .none }
                 state.item?.lastReadBlockIndex = blockIndex > 0 ? blockIndex : nil
+
+                // Auto-mark as read the first time the user scrolls past the
+                // intro. Guarded by `isRead == false` so we only fire once.
+                var autoMarkEffect: Effect<Action> = .none
+                if blockIndex > 0, state.item?.isRead == false {
+                    state.item?.isRead = true
+                    let repo = self.repository
+                    let id = state.itemID
+                    autoMarkEffect = .run { _ in
+                        try? await repo.setReadStatus(id, true)
+                    }
+                }
+
                 if blockIndex == 0 {
-                    return .cancel(id: CancelID.readingProgressSave)
+                    return .merge(
+                        .cancel(id: CancelID.readingProgressSave),
+                        autoMarkEffect
+                    )
                 }
                 let clock = self.continuousClock
-                return .run { [id = state.itemID] send in
+                let saveEffect: Effect<Action> = .run { send in
                     try? await clock.sleep(for: .seconds(1))
                     await send(.saveReadingProgress(blockIndex), animation: nil)
-                    _ = id
                 }
                 .cancellable(id: CancelID.readingProgressSave, cancelInFlight: true)
+                return .merge(saveEffect, autoMarkEffect)
 
             case .saveReadingProgress(let blockIndex):
                 let repository = self.repository
                 return .run { [id = state.itemID] _ in
                     try? await repository.saveReadingProgress(id, blockIndex)
                 }
+
+            case .toggleReadTapped:
+                guard var item = state.item else { return .none }
+                let newValue = !item.isRead
+                item.isRead = newValue
+                state.item = item
+                let repo = self.repository
+                let id = state.itemID
+                return .run { _ in try? await repo.setReadStatus(id, newValue) }
 
             case .speech:
                 return .none

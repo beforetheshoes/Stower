@@ -1,11 +1,59 @@
 import ComposableArchitecture
 import Foundation
 import Testing
+@testable import StowerData
 @testable import StowerFeature
 
 @MainActor
 @Suite
 struct ReaderFeatureTests {
+    @Test
+    func effectiveRenderFormat_defaultsToItemRenderFormat_forInteractiveArticles() {
+        // Regression: previously `effectiveRenderFormat` always returned
+        // `.structuredV1` when no manual override was set, which silently
+        // broke every SVG-rich article (joshwcomeau.com, ngrok.com blog,
+        // etc.). It must fall back to the item's ingestion-detected format.
+        let webViewItem = SavedItem(
+            title: "Interactive SVG",
+            renderFormat: .webView,
+            content: "Body"
+        )
+        var state = ReaderFeature.State(item: webViewItem)
+        #expect(state.effectiveRenderFormat == .webView)
+        #expect(state.hasInteractiveContent)
+
+        // Structured items still default to structured.
+        let structuredItem = SavedItem(
+            title: "Plain article",
+            renderFormat: .structuredV1,
+            content: "Body"
+        )
+        state = ReaderFeature.State(item: structuredItem)
+        #expect(state.effectiveRenderFormat == .structuredV1)
+        #expect(!state.hasInteractiveContent)
+    }
+
+    @Test
+    func effectiveRenderFormat_manualOverride_takesPrecedenceOverItemFormat() {
+        let webViewItem = SavedItem(
+            title: "Interactive SVG",
+            renderFormat: .webView,
+            content: "Body"
+        )
+        var state = ReaderFeature.State(item: webViewItem)
+        state.renderModeOverride = .structuredV1
+        #expect(state.effectiveRenderFormat == .structuredV1)
+
+        state.renderModeOverride = .webView
+        #expect(state.effectiveRenderFormat == .webView)
+    }
+
+    @Test
+    func effectiveRenderFormat_withoutItem_fallsBackToStructured() {
+        let state = ReaderFeature.State(itemID: UUID())
+        #expect(state.effectiveRenderFormat == .structuredV1)
+    }
+
     @Test
     func load_populatesItemAndDocument() async {
         let itemID = UUID()

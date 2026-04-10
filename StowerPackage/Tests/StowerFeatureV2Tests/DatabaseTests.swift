@@ -12,7 +12,7 @@ struct DatabaseTests {
 
         let ingestion = IngestionResult.sharedText("A body of content")
         let saved = try await repository.createItemFromIngestion(ingestion)
-        let items = try await repository.fetchLibrary()
+        let items = try await repository.fetchLibrary(.all)
 
         #expect(items.count >= 1)
         #expect(items.contains(where: { $0.id == saved.id }))
@@ -57,7 +57,7 @@ struct DatabaseTests {
         let created = try await repository.createItemFromIngestion(ingestion)
 
         // Simulate what fetchLibrary does (user sees item in list)
-        let library = try await repository.fetchLibrary()
+        let library = try await repository.fetchLibrary(.all)
         let libraryItem = try #require(library.first(where: { $0.id == created.id }))
 
         // Simulate what ReaderFeature.load does (user taps item)

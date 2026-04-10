@@ -23,7 +23,6 @@ public struct ReaderWebView: View {
     let isWebViewFormat: Bool
     let highlightedBlockIndex: Int?
     let restoreBlockIndex: Int?
-    let onSwitchToNative: (() -> Void)?
     let onReadingProgress: ((Int) -> Void)?
     let onOpenInlineEmbed: ((String) -> Void)?
 
@@ -41,7 +40,6 @@ public struct ReaderWebView: View {
         isWebViewFormat: Bool = false,
         highlightedBlockIndex: Int? = nil,
         restoreBlockIndex: Int? = nil,
-        onSwitchToNative: (() -> Void)? = nil,
         onReadingProgress: ((Int) -> Void)? = nil,
         onOpenInlineEmbed: ((String) -> Void)? = nil
     ) {
@@ -52,33 +50,26 @@ public struct ReaderWebView: View {
         self.isWebViewFormat = isWebViewFormat
         self.highlightedBlockIndex = highlightedBlockIndex
         self.restoreBlockIndex = restoreBlockIndex
-        self.onSwitchToNative = onSwitchToNative
         self.onReadingProgress = onReadingProgress
         self.onOpenInlineEmbed = onOpenInlineEmbed
     }
 
     public var body: some View {
-        VStack(spacing: 0) {
-            if let onSwitchToNative {
-                HStack {
-                    Spacer()
-                    Button("Switch to Reader Version") {
-                        onSwitchToNative()
-                    }
-                    .font(.caption)
-                    .foregroundStyle(appearance.secondaryTextColor)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
-                }
-                .background(appearance.surfaceColor)
-            }
+        // The container has to always occupy real space, even before the
+        // `WebPage` has been created by `loadContent()`. `Group { if let }`
+        // resolves to `EmptyView` while `page == nil`, which gives the
+        // parent a zero-sized child — the WebView then never gets real
+        // bounds when `page` finally becomes non-nil. A `ZStack` with the
+        // theme color as its first layer guarantees the container is
+        // flexibly-filled regardless of whether the WebView is ready yet.
+        ZStack {
+            appearance.backgroundColor
 
             if let page {
                 WebView(page)
                     .webViewContentBackground(.hidden)
             }
         }
-        .background(appearance.backgroundColor)
         .task(id: itemID) {
             loadContent()
         }
@@ -165,19 +156,45 @@ public struct ReaderWebView: View {
         itemID: UUID,
         appearance: ReaderAppearanceSettings
     ) async -> (URL?, LocalArchiveServer?) {
+        // Interactive mode shows the original archived page unmodified —
+        // that is the whole point of the `.webView` format. No theme CSS
+        // injection, no background overrides. If the user wants themed,
+        // comfortable text they switch to Reader View from the toolbar.
         if !html.isEmpty {
             AssetArchiver.refreshIndexHTML(for: itemID, sourceHTML: html)
         } else {
             AssetArchiver.refreshIndexHTML(for: itemID)
         }
-
-        let css = appearance.readerOverlayCSS(pageWidth: 10_000)
-        AssetArchiver.injectReaderCSS(css, for: itemID)
+        // Wipe any overlay CSS block baked in by an older build.
+        AssetArchiver.stripLegacyInjectedCSS(for: itemID)
 
         let archiveDir = AssetArchiver.archiveDirectory(for: itemID)
-        let articlePath = sourceURL.flatMap(URL.init(string:))?.path ?? "/"
+        let sourceURLValue = sourceURL.flatMap(URL.init(string:))
+        let articlePath = sourceURLValue?.path ?? "/"
 
-        let server = LocalArchiveServer(archiveDir: archiveDir, articlePath: articlePath)
+        // Resolve the origin used by the local server's fetch-through.
+        // Prefer the fresh `sourceURL` from the caller; fall back to the
+        // archive's persisted metadata so archives created before the
+        // metadata sidecar existed still self-heal on first open.
+        let originURL: URL? = {
+            if let sourceURLValue {
+                var components = URLComponents(url: sourceURLValue, resolvingAgainstBaseURL: false)
+                components?.path = ""
+                components?.query = nil
+                components?.fragment = nil
+                if let stripped = components?.url {
+                    AssetArchiver.saveMetadata(origin: stripped, for: itemID)
+                    return stripped
+                }
+            }
+            return AssetArchiver.loadOriginURL(for: itemID)
+        }()
+
+        let server = LocalArchiveServer(
+            archiveDir: archiveDir,
+            articlePath: articlePath,
+            originURL: originURL
+        )
         guard let port = try? await server.start() else { return (nil, nil) }
 
         let loadURL = URL(string: "http://localhost:\(port)\(articlePath)")!
@@ -190,13 +207,13 @@ public struct ReaderWebView: View {
     private func updateCSS(_ appearance: ReaderAppearanceSettings) {
         guard let page else { return }
 
-        let css: String
+        // Interactive mode: leave the original page untouched. Appearance
+        // settings apply only to Reader View.
         if isWebViewFormat && AssetArchiver.archiveExists(for: itemID) {
-            css = appearance.readerOverlayCSS(pageWidth: 10_000)
-        } else {
-            css = appearance.readerCSS(pageWidth: 10_000)
+            return
         }
 
+        let css = appearance.readerCSS(pageWidth: 10_000)
         Task {
             await ReaderWebPageFactory.updateCSS(css, on: page)
         }

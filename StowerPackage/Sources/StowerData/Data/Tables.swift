@@ -23,6 +23,34 @@ public nonisolated struct SavedItemSyncTable: Hashable, Identifiable, Sendable {
     /// Used to restore scroll position across sessions and devices.
     /// Nil means the user has never scrolled past the top (or hasn't read it yet).
     public var lastReadBlockIndex: Int?
+    /// Whether the user has marked this item as read. Auto-flipped when the
+    /// reader scrolls past the first block; also toggleable manually.
+    public var isRead: Bool = false
+    /// Whether the user has starred this item.
+    public var isStarred: Bool = false
+    /// Soft-delete timestamp. NULL means the item is live; non-NULL places it
+    /// in the Recently Deleted list until the 30-day retention window expires.
+    public var deletedAt: Date?
+}
+
+/// A user-created tag. CloudKit-synced; case-insensitively unique by name.
+@Table
+public nonisolated struct TagSyncTable: Hashable, Identifiable, Sendable {
+    public let id: UUID
+    public var name: String = ""
+    public var colorHex: String?
+    public var createdAt: Date = .now
+    public var updatedAt: Date = .now
+}
+
+/// Junction row assigning a tag to a saved item. Its own `id` so CloudKit
+/// records have a stable name; uniqueness is enforced by a composite index.
+@Table
+public nonisolated struct ItemTagSyncTable: Hashable, Identifiable, Sendable {
+    public let id: UUID
+    public var itemID: UUID
+    public var tagID: UUID
+    public var createdAt: Date = .now
 }
 
 // MARK: - Local-Only Tables

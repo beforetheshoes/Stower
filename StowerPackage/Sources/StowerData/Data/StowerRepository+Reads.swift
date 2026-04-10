@@ -2,33 +2,9 @@ import Foundation
 import SQLiteData
 
 extension StowerRepository {
-    static func _fetchLibrary(database: any DatabaseWriter) -> @Sendable () async throws -> [SavedItem] {
-        { () async throws -> [SavedItem] in
-            try await database.read { db -> [SavedItem] in
-                let synced: [SavedItemSyncTable] = try SavedItemSyncTable
-                    .where { !$0.isArchived }
-                    .order { $0.updatedAt.desc() }
-                    .fetchAll(db)
-
-                let ids: [UUID] = synced.map(\.id)
-                let locals: [SavedItemContentLocalTable] = try SavedItemContentLocalTable
-                    .where { $0.itemID.in(ids) }
-                    .fetchAll(db)
-                let localByID: [UUID: SavedItemContentLocalTable] = Dictionary(
-                    uniqueKeysWithValues: locals.map { ($0.itemID, $0) }
-                )
-
-                var seen = Set<String>()
-                return synced.compactMap { row -> SavedItem? in
-                    if let key = normalizedURLKey(row.canonicalURL ?? row.sourceURL) {
-                        if seen.contains(key) { return nil }
-                        seen.insert(key)
-                    }
-                    return toDomain(sync: row, local: localByID[row.id])
-                }
-            }
-        }
-    }
+    // `_fetchLibrary()` has been replaced by `_fetchLibraryFiltered(_:)` in
+    // StowerRepository+Filters.swift — every caller now routes through a
+    // `LibraryFilter` so the repository can push the filter into SQL.
 
     static func _loadItem(database: any DatabaseWriter) -> @Sendable (UUID) async throws -> SavedItem? {
         { (id: UUID) async throws -> SavedItem? in
@@ -61,17 +37,11 @@ extension StowerRepository {
         }
     }
 
-    static func _deleteItem(
-        database: any DatabaseWriter,
-        scheduleSync: @escaping @Sendable () -> Void
-    ) -> @Sendable (UUID) async throws -> Void {
-        { (id: UUID) async throws -> Void in
-            try await database.write { db -> Void in
-                try SavedItemSyncTable.find(id).delete().execute(db)
-            }
-            scheduleSync()
-        }
-    }
+    // The old `_deleteItem` hard-delete has been replaced by the soft-delete
+    // path in StowerRepository+Filters.swift (`_softDeleteItem`). The public
+    // `deleteItem` closure on the repository struct now routes to that
+    // soft-delete implementation so existing call sites get trash behavior
+    // for free. Use `permanentlyDelete` for the old hard-delete semantics.
 
     static func _saveReadingProgress(
         database: any DatabaseWriter,

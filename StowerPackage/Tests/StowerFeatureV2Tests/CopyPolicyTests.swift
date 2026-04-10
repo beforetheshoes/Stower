@@ -11,7 +11,10 @@ struct CopyPolicyTests {
             .deletingLastPathComponent()
         let sources = root.appendingPathComponent("Sources/StowerFeatureV2")
 
-        let bannedTerms = ["unread", "backlog", "behind", "overdue", "catching up"]
+        // "unread" is a neutral descriptor used in the Lists sidebar and is
+        // explicitly allowed. The remaining terms are shame-framing copy that
+        // pressures the user about their reading habits and must stay out.
+        let bannedTerms = ["backlog", "behind", "overdue", "catching up"]
         let files = try FileManager.default.subpathsOfDirectory(atPath: sources.path)
             .filter { $0.hasSuffix(".swift") }
 

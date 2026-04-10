@@ -67,33 +67,86 @@ public struct LibraryScreen: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .swipeActions {
-                    Button("Improve") {
-                        store.send(.reprocessItem(item.id))
-                    }
-                    .tint(.blue)
+                .swipeActions(edge: .leading) {
+                    if store.filter != .recentlyDeleted {
+                        Button {
+                            store.send(.toggleStar(item.id))
+                        } label: {
+                            Label(item.isStarred ? "Unstar" : "Star", systemImage: item.isStarred ? "star.slash" : "star.fill")
+                        }
+                        .tint(.yellow)
 
-                    Button(role: .destructive) {
-                        store.send(.deleteItem(item.id))
-                    } label: {
-                        Text("Delete")
+                        Button {
+                            store.send(.toggleRead(item.id))
+                        } label: {
+                            Label(
+                                item.isRead ? "Unread" : "Read",
+                                systemImage: item.isRead ? "circle" : "checkmark.circle"
+                            )
+                        }
+                        .tint(.blue)
+                    } else {
+                        Button {
+                            store.send(.restoreFromTrash(item.id))
+                        } label: {
+                            Label("Restore", systemImage: "arrow.uturn.backward")
+                        }
+                        .tint(.green)
+                    }
+                }
+                .swipeActions(edge: .trailing) {
+                    if store.filter == .recentlyDeleted {
+                        Button(role: .destructive) {
+                            store.send(.permanentlyDelete(item.id))
+                        } label: {
+                            Label("Delete Forever", systemImage: "trash")
+                        }
+                    } else {
+                        Button(role: .destructive) {
+                            store.send(.deleteItem(item.id))
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+
+                        Button {
+                            store.send(.reprocessItem(item.id))
+                        } label: {
+                            Label("Improve", systemImage: "wand.and.stars")
+                        }
+                        .tint(.purple)
                     }
                 }
                 .contextMenu {
                     Button("Open") {
                         store.send(.openItem(item))
                     }
-                    Button("Improve Formatting") {
-                        store.send(.reprocessItem(item.id))
-                    }
-                    Button("Delete", role: .destructive) {
-                        store.send(.deleteItem(item.id))
+                    if store.filter == .recentlyDeleted {
+                        Button("Restore") {
+                            store.send(.restoreFromTrash(item.id))
+                        }
+                        Button("Delete Forever", role: .destructive) {
+                            store.send(.permanentlyDelete(item.id))
+                        }
+                    } else {
+                        Button(item.isStarred ? "Unstar" : "Star") {
+                            store.send(.toggleStar(item.id))
+                        }
+                        Button(item.isRead ? "Mark as Unread" : "Mark as Read") {
+                            store.send(.toggleRead(item.id))
+                        }
+                        tagsSubmenu(for: item)
+                        Button("Improve Formatting") {
+                            store.send(.reprocessItem(item.id))
+                        }
+                        Button("Delete", role: .destructive) {
+                            store.send(.deleteItem(item.id))
+                        }
                     }
                 }
             }
         }
         .scrollContentBackground(.hidden)
-        .navigationTitle("Library")
+        .navigationTitle(navigationTitle)
         .searchable(text: $store.query.sending(\.queryChanged), prompt: "Search")
         .overlay {
             if store.isLoading {
@@ -101,7 +154,43 @@ public struct LibraryScreen: View {
             }
         }
         .task {
-            store.send(.reload)
+            store.send(.onAppear)
+        }
+    }
+
+    @ViewBuilder
+    private func tagsSubmenu(for item: SavedItem) -> some View {
+        if store.availableTags.isEmpty {
+            Button("Tags…", systemImage: "tag") { }
+                .disabled(true)
+        } else {
+            Menu {
+                ForEach(store.availableTags) { tag in
+                    Button {
+                        store.send(.toggleTagOnItem(item.id, tag.id))
+                    } label: {
+                        if item.tagIDs.contains(tag.id) {
+                            Label(tag.name, systemImage: "checkmark")
+                        } else {
+                            Text(tag.name)
+                        }
+                    }
+                }
+            } label: {
+                Label("Tags", systemImage: "tag")
+            }
+        }
+    }
+
+    private var navigationTitle: String {
+        switch store.filter {
+        case .all: return "All"
+        case .unread: return "Unread"
+        case .read: return "Read"
+        case .starred: return "Starred"
+        case .untagged: return "Untagged"
+        case .recentlyDeleted: return "Recently Deleted"
+        case .tag: return "Tag"
         }
     }
 
@@ -110,9 +199,17 @@ public struct LibraryScreen: View {
         HStack(spacing: 10) {
             TextField("Paste Source URL", text: $store.sourceURL.sending(\.sourceURLChanged))
                 .autocorrectionDisabled()
-                #if os(macOS)
-                .textFieldStyle(.roundedBorder)
-                #endif
+                .textFieldStyle(.plain)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(Color.primary.opacity(0.06))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5)
+                )
                 .onSubmit { store.send(.saveURLTapped) }
 
             Button {

@@ -5,7 +5,11 @@ import SQLiteData
 // MARK: - Domain Mapping
 
 extension StowerRepository {
-    static func toDomain(sync: SavedItemSyncTable, local: SavedItemContentLocalTable?) -> SavedItem {
+    static func toDomain(
+        sync: SavedItemSyncTable,
+        local: SavedItemContentLocalTable?,
+        tagIDs: [UUID] = []
+    ) -> SavedItem {
         SavedItem(
             id: sync.id,
             title: sync.title,
@@ -25,7 +29,11 @@ extension StowerRepository {
             processingError: local?.localError,
             createdAt: sync.createdAt,
             updatedAt: sync.updatedAt,
-            lastReadBlockIndex: sync.lastReadBlockIndex
+            lastReadBlockIndex: sync.lastReadBlockIndex,
+            isRead: sync.isRead,
+            isStarred: sync.isStarred,
+            deletedAt: sync.deletedAt,
+            tagIDs: tagIDs
         )
     }
 
@@ -49,7 +57,20 @@ extension StowerRepository {
             processingError: local?.localError,
             createdAt: draft.createdAt,
             updatedAt: draft.updatedAt,
-            lastReadBlockIndex: draft.lastReadBlockIndex
+            lastReadBlockIndex: draft.lastReadBlockIndex,
+            isRead: draft.isRead,
+            isStarred: draft.isStarred,
+            deletedAt: draft.deletedAt
+        )
+    }
+
+    static func toDomain(tag: TagSyncTable) -> Tag {
+        Tag(
+            id: tag.id,
+            name: tag.name,
+            colorHex: tag.colorHex,
+            createdAt: tag.createdAt,
+            updatedAt: tag.updatedAt
         )
     }
 

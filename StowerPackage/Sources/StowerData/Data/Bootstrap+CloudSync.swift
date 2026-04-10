@@ -20,6 +20,8 @@ extension StowerDatabase {
             let syncEngine: SyncEngine = try SyncEngine(
                 for: database,
                 tables: SavedItemSyncTable.self,
+                TagSyncTable.self,
+                ItemTagSyncTable.self,
                 containerIdentifier: StowerDatabase.cloudKitContainerID,
                 delegate: delegate
             )
