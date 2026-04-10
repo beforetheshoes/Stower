@@ -25,37 +25,46 @@ public struct LibraryScreen: View {
 
             ForEach(store.filteredItems) { item in
                 Button {
-                    store.send(.openItem(item.id))
+                    store.send(.openItem(item))
                 } label: {
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack(alignment: .firstTextBaseline, spacing: 8) {
-                            Text(item.title)
-                                .font(.headline)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                            processingBadge(item.processingState)
-                        }
+                    HStack(alignment: .top, spacing: 12) {
+                        LibraryItemThumbnail(item: item)
 
-                        if let sourceURL = item.sourceURL {
-                            Text(sourceURL)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                Text(item.title)
+                                    .font(.headline)
+                                    .lineLimit(3)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                processingBadge(item.processingState)
+                            }
 
-                        HStack(spacing: 8) {
-                            if let siteName = item.siteName {
-                                Label(siteName, systemImage: "globe")
+                            if let sourceURL = item.sourceURL,
+                               let host = URL(string: sourceURL)?.host ?? Optional(sourceURL) {
+                                Text(host)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
                             }
-                            if let reading = item.readingTimeMinutes {
-                                Label("\(reading) min", systemImage: "clock")
+
+                            HStack(spacing: 8) {
+                                if let siteName = item.siteName {
+                                    Label(siteName, systemImage: "globe")
+                                }
+                                if let reading = item.readingTimeMinutes {
+                                    Label("\(reading) min", systemImage: "clock")
+                                }
+                                if item.hasRichMedia {
+                                    Label("Rich media", systemImage: "photo.on.rectangle.angled")
+                                }
                             }
-                            if item.hasRichMedia {
-                                Label("Rich media", systemImage: "photo.on.rectangle.angled")
-                            }
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                         }
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
                     }
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .swipeActions {
@@ -72,7 +81,7 @@ public struct LibraryScreen: View {
                 }
                 .contextMenu {
                     Button("Open") {
-                        store.send(.openItem(item.id))
+                        store.send(.openItem(item))
                     }
                     Button("Improve Formatting") {
                         store.send(.reprocessItem(item.id))
@@ -83,6 +92,7 @@ public struct LibraryScreen: View {
                 }
             }
         }
+        .scrollContentBackground(.hidden)
         .navigationTitle("Library")
         .searchable(text: $store.query.sending(\.queryChanged), prompt: "Search")
         .overlay {
@@ -148,5 +158,57 @@ public struct LibraryScreen: View {
         case .extracting: return .blue
         case .queued: return .secondary
         }
+    }
+}
+
+// MARK: - Library Item Thumbnail
+
+private struct LibraryItemThumbnail: View {
+    let item: SavedItem
+
+    private static let size: CGFloat = 72
+
+    var body: some View {
+        Group {
+            if let url = resolvedImageURL {
+                CachedImageView(url: url) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .scaledToFill()
+                    case .failure:
+                        placeholder
+                    default:
+                        placeholder
+                            .overlay { ProgressView().controlSize(.small) }
+                    }
+                }
+            } else {
+                placeholder
+            }
+        }
+        .frame(width: Self.size, height: Self.size)
+        .clipShape(.rect(cornerRadius: 8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.secondary.opacity(0.15), lineWidth: 0.5)
+        }
+    }
+
+    private var placeholder: some View {
+        ZStack {
+            Color.secondary.opacity(0.08)
+            Image(systemName: "doc.text")
+                .font(.title2)
+                .foregroundStyle(.secondary.opacity(0.45))
+        }
+    }
+
+    private var resolvedImageURL: URL? {
+        guard let heroURLString = item.heroImageURL, !heroURLString.isEmpty else {
+            return nil
+        }
+        return URL(string: heroURLString)
     }
 }

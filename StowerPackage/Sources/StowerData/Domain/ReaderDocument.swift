@@ -4,6 +4,7 @@ public enum RenderFormat: String, Codable, Equatable, Sendable {
     case structuredV1
     case htmlFallback
     case plainText
+    case webView
 }
 
 public enum ProcessingState: String, Codable, Equatable, Sendable {
@@ -133,6 +134,8 @@ public struct IngestionResult: Equatable, Sendable {
     public var plainText: String
     public var media: [MediaDescriptor]
     public var embeds: [EmbedDescriptor]
+    /// The raw HTML of the article section (or full page for webView render format).
+    public var sourceHTML: String
 
     public init(
         title: String,
@@ -151,7 +154,8 @@ public struct IngestionResult: Equatable, Sendable {
         document: ReaderDocument,
         plainText: String,
         media: [MediaDescriptor],
-        embeds: [EmbedDescriptor]
+        embeds: [EmbedDescriptor],
+        sourceHTML: String = ""
     ) {
         self.title = title
         self.sourceURL = sourceURL
@@ -170,6 +174,7 @@ public struct IngestionResult: Equatable, Sendable {
         self.plainText = plainText
         self.media = media
         self.embeds = embeds
+        self.sourceHTML = sourceHTML
     }
 
     public static func sharedText(_ text: String) -> IngestionResult {

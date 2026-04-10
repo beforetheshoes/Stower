@@ -8,6 +8,8 @@ public struct SettingsFeature {
     public struct State: Equatable {
         public var settings = ImageDownloadSettings()
         public var errorMessage: String?
+        public var cloudSyncStatus: CloudSyncStatus = .starting
+        public var diagnostics: SyncDiagnostics?
 
         public init() {}
     }
@@ -21,9 +23,12 @@ public struct SettingsFeature {
         case save
         case saveFinished
         case saveFailed(String)
+        case refreshDiagnostics
+        case diagnosticsLoaded(SyncDiagnostics)
     }
 
     @Dependency(\.stowerRepository) var repository
+    @Dependency(\.syncDiagnosticsClient) var syncDiagnosticsClient
 
     public var body: some ReducerOf<Self> {
         Reduce { state, action in
@@ -42,7 +47,7 @@ public struct SettingsFeature {
             case .response(let settings):
                 state.settings = settings
                 state.errorMessage = nil
-                return .none
+                return .send(.refreshDiagnostics)
 
             case .failed(let error):
                 state.errorMessage = error
@@ -72,6 +77,25 @@ public struct SettingsFeature {
                 return .none
 
             case .saveFinished:
+                return .none
+
+            case .refreshDiagnostics:
+                #if DEBUG
+                let client = self.syncDiagnosticsClient
+                return .run { send in
+                    do {
+                        let diagnostics = try await client.load()
+                        await send(.diagnosticsLoaded(diagnostics))
+                    } catch {
+                        // Diagnostics are best-effort.
+                    }
+                }
+                #else
+                return .none
+                #endif
+
+            case .diagnosticsLoaded(let diagnostics):
+                state.diagnostics = diagnostics
                 return .none
             }
         }

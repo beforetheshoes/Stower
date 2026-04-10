@@ -1,15 +1,14 @@
 import Foundation
 import SQLiteData
 
+// MARK: - Synced (CloudKit) Tables
+
 @Table
-public nonisolated struct SavedItemTable: Hashable, Identifiable, Sendable {
+public nonisolated struct SavedItemSyncTable: Hashable, Identifiable, Sendable {
     public let id: UUID
     public var title: String = ""
     public var sourceURL: String?
     public var canonicalURL: String?
-    public var renderFormat: String = "structuredV1"
-    public var documentVersion: Int = 1
-    public var content: String = ""
     public var excerpt: String?
     public var heroImageURL: String?
     public var author: String?
@@ -17,26 +16,38 @@ public nonisolated struct SavedItemTable: Hashable, Identifiable, Sendable {
     public var siteName: String?
     public var readingTimeMinutes: Int?
     public var hasRichMedia: Bool = false
-    public var processingState: String = "queued"
-    public var processingError: String?
     public var createdAt: Date = .now
     public var updatedAt: Date = .now
     public var isArchived: Bool = false
+    /// Index of the top-most visible block the last time this article was read.
+    /// Used to restore scroll position across sessions and devices.
+    /// Nil means the user has never scrolled past the top (or hasn't read it yet).
+    public var lastReadBlockIndex: Int?
 }
 
+// MARK: - Local-Only Tables
+
 @Table
-public nonisolated struct SavedDocumentTable: Hashable, Identifiable, Sendable {
-    public let id: UUID
-    public var itemID: UUID
-    public var json: String = ""
+public nonisolated struct SavedItemContentLocalTable: Hashable, Identifiable, Sendable {
+    @Column(primaryKey: true)
+    public let itemID: UUID
+
+    public var renderFormat: String = "structuredV1"
+    public var documentVersion: Int = 1
     public var plainText: String = ""
+    public var documentJSON: String = ""
     public var sourceHTMLHash: String = ""
+    public var sourceHTML: String = ""
+    public var localStatus: String = "notDownloaded"  // notDownloaded, downloading, available, failed
+    public var localError: String?
     public var createdAt: Date = .now
     public var updatedAt: Date = .now
+
+    public var id: UUID { itemID }
 }
 
 @Table
-public nonisolated struct SavedMediaTable: Hashable, Identifiable, Sendable {
+public nonisolated struct SavedMediaLocalTable: Hashable, Identifiable, Sendable {
     public let id: UUID
     public var itemID: UUID
     public var kind: String = "image"
@@ -54,7 +65,7 @@ public nonisolated struct SavedMediaTable: Hashable, Identifiable, Sendable {
 }
 
 @Table
-public nonisolated struct SavedEmbedTable: Hashable, Identifiable, Sendable {
+public nonisolated struct SavedEmbedLocalTable: Hashable, Identifiable, Sendable {
     public let id: UUID
     public var itemID: UUID
     public var provider: String = ""
@@ -66,7 +77,7 @@ public nonisolated struct SavedEmbedTable: Hashable, Identifiable, Sendable {
 }
 
 @Table
-public nonisolated struct SavedImageRefTable: Hashable, Identifiable, Sendable {
+public nonisolated struct SavedImageRefLocalTable: Hashable, Identifiable, Sendable {
     public let id: UUID
     public var itemID: UUID
     public var sourceURL: String?
@@ -78,7 +89,7 @@ public nonisolated struct SavedImageRefTable: Hashable, Identifiable, Sendable {
 }
 
 @Table
-public nonisolated struct SavedImageAssetTable: Hashable, Identifiable, Sendable {
+public nonisolated struct SavedImageAssetLocalTable: Hashable, Identifiable, Sendable {
     public let id: UUID
     public var itemID: UUID
     public var imageData: Data = Data()
@@ -89,7 +100,7 @@ public nonisolated struct SavedImageAssetTable: Hashable, Identifiable, Sendable
 }
 
 @Table
-public nonisolated struct ImageDownloadSettingsTable: Hashable, Identifiable, Sendable {
+public nonisolated struct ImageDownloadSettingsLocalTable: Hashable, Identifiable, Sendable {
     public let id: UUID
     public var globalAutoDownload: Bool = false
     public var askForNewSources: Bool = true
@@ -97,10 +108,23 @@ public nonisolated struct ImageDownloadSettingsTable: Hashable, Identifiable, Se
 }
 
 @Table
-public nonisolated struct IngestionJobTable: Hashable, Identifiable, Sendable {
+public nonisolated struct ReaderAppearanceSettingsLocalTable: Hashable, Identifiable, Sendable {
+    public let id: UUID
+    public var fontSize: Double = 19
+    public var fontStyle: String = "newYork"
+    public var lineSpacing: Double = 8
+    public var justification: String = "leading"
+    public var theme: String = "white"
+    public var lineWidth: Double = 820
+    public var updatedAt: Date = .now
+}
+
+@Table
+public nonisolated struct IngestionJobLocalTable: Hashable, Identifiable, Sendable {
     public let id: UUID
     public var kind: String = "url"
     public var payload: String = ""
     public var createdAt: Date = .now
     public var processedAt: Date?
 }
+

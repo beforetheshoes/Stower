@@ -52,7 +52,6 @@ struct LibraryFeatureTests {
                 return IngestionResult.sharedText("ok")
             }
             $0.stowerRepository.createItemFromIngestion = { _ in item }
-            $0.stowerRepository.fetchLibrary = { [item] }
         }
 
         await store.send(.sourceURLChanged("example.com/post")) {
@@ -66,14 +65,8 @@ struct LibraryFeatureTests {
             $0.isSaving = false
             $0.saveState = .ready
             $0.sourceURL = ""
-        }
-        await store.receive(.openItem(item.id))
-        await store.receive(.reload) {
-            $0.isLoading = true
-        }
-        await store.receive(.response([item])) {
-            $0.isLoading = false
             $0.items = [item]
         }
+        await store.receive(.openItem(item))
     }
 }

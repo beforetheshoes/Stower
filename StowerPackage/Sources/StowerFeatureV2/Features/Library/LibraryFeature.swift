@@ -35,9 +35,9 @@ public struct LibraryFeature {
         case deleteItem(UUID)
         case deleteFinished
         case deleteFailed(String)
-        case openItem(UUID)
+        case openItem(SavedItem)
         case reprocessItem(UUID)
-        case reprocessFinished
+        case reprocessFinished(SavedItem)
         case sourceURLChanged(String)
         case saveURLTapped
         case saveURLFinished(SavedItem)
@@ -103,18 +103,32 @@ public struct LibraryFeature {
                     do {
                         let result = try await ingestionClient.ingest(url)
                         let item = try await repository.createItemFromIngestion(result)
+
+                        // Archive all external assets for offline WebView rendering.
+                        if result.renderFormat == .webView,
+                           !result.sourceHTML.isEmpty,
+                           let source = result.sourceURL,
+                           let baseURL = URL(string: source) {
+                            await AssetArchiver.archiveAssets(
+                                html: result.sourceHTML,
+                                baseURL: baseURL,
+                                itemID: item.id
+                            )
+                        }
+
                         await send(.saveURLFinished(item))
-                        await send(.openItem(item.id))
-                        await send(.reload)
+                        await send(.openItem(item))
                     } catch {
                         await send(.saveURLFailed(error.localizedDescription))
                     }
                 }
 
-            case .saveURLFinished:
+            case .saveURLFinished(let item):
                 state.isSaving = false
                 state.saveState = .ready
                 state.sourceURL = ""
+                // Insert at the top instead of reloading entire library
+                state.items.insert(item, at: 0)
                 return .none
 
             case .saveURLFailed(let error):
@@ -124,18 +138,24 @@ public struct LibraryFeature {
                 return .none
 
             case .deleteItem(let id):
+                // Optimistic removal — update UI immediately, delete in background
+                state.items.removeAll { $0.id == id }
                 let repository = self.repository
                 return .run { send in
                     do {
                         try await repository.deleteItem(id)
+                        AssetArchiver.deleteArchive(for: id)
                         await send(.deleteFinished)
-                        await send(.reload)
                     } catch {
                         await send(.deleteFailed(error.localizedDescription))
                     }
                 }
 
             case .reprocessItem(let id):
+                // Mark extracting in UI immediately
+                if let idx = state.items.firstIndex(where: { $0.id == id }) {
+                    state.items[idx].processingState = .extracting
+                }
                 let repository = self.repository
                 let ingestionClient = self.ingestionClient
                 return .run { send in
@@ -149,12 +169,25 @@ public struct LibraryFeature {
                         }
 
                         let result = try await ingestionClient.ingest(url)
-                        guard try await repository.updateItemFromIngestion(id, result) != nil else {
+                        guard let updatedItem = try await repository.updateItemFromIngestion(id, result) else {
                             await send(.failed("This item no longer exists."))
                             return
                         }
-                        await send(.reprocessFinished)
-                        await send(.reload)
+
+                        // Re-archive assets for offline WebView rendering.
+                        if result.renderFormat == .webView,
+                           !result.sourceHTML.isEmpty,
+                           let source = result.sourceURL,
+                           let baseURL = URL(string: source) {
+                            AssetArchiver.deleteArchive(for: id)
+                            await AssetArchiver.archiveAssets(
+                                html: result.sourceHTML,
+                                baseURL: baseURL,
+                                itemID: id
+                            )
+                        }
+
+                        await send(.reprocessFinished(updatedItem))
                     } catch {
                         await send(.failed(error.localizedDescription))
                     }
@@ -164,7 +197,13 @@ public struct LibraryFeature {
                 state.errorMessage = error
                 return .none
 
-            case .deleteFinished, .openItem, .reprocessFinished:
+            case .reprocessFinished(let updatedItem):
+                if let idx = state.items.firstIndex(where: { $0.id == updatedItem.id }) {
+                    state.items[idx] = updatedItem
+                }
+                return .none
+
+            case .deleteFinished, .openItem:
                 return .none
             }
         }

@@ -4,5 +4,5 @@
 
 #include "Shared.xcconfig"
 
-// No additional debug-specific overrides needed
-// All debug settings use Xcode project defaults
+// Keep Swift symbols in Debug so LLDB doesn't have to do expensive on-device symbol resolution.
+STRIP_SWIFT_SYMBOLS = NO

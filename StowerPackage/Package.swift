@@ -15,18 +15,26 @@ let package = Package(
     ],
     targets: [
         .target(
+            name: "StowerData",
+            dependencies: [
+                .product(name: "Dependencies", package: "swift-dependencies"),
+                .product(name: "SQLiteData", package: "sqlite-data"),
+            ],
+            path: "Sources/StowerData"
+        ),
+        .target(
             name: "StowerFeature",
             dependencies: [
                 .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
                 .product(name: "Dependencies", package: "swift-dependencies"),
-                .product(name: "SQLiteData", package: "sqlite-data"),
                 .product(name: "SwiftSoup", package: "SwiftSoup"),
+                "StowerData",
             ],
             path: "Sources/StowerFeatureV2"
         ),
         .testTarget(
             name: "StowerFeatureTests",
-            dependencies: ["StowerFeature"],
+            dependencies: ["StowerFeature", "StowerData"],
             path: "Tests/StowerFeatureV2Tests"
         ),
     ]
