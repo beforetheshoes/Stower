@@ -78,6 +78,17 @@ public struct MediaDescriptor: Codable, Equatable, Sendable {
     public var posterURL: String?
     public var caption: String?
     public var altText: String?
+    /// Name of the platform providing the media (e.g. "YouTube"). Used by the
+    /// reader renderer to branch into platform-specific embed layouts.
+    public var providerName: String?
+    /// Canonical video identifier within the provider (e.g. the 11-char YouTube ID).
+    public var providerVideoID: String?
+    /// On-disk path to a cached poster/thumbnail image for this media. When set and
+    /// the file exists, the reader prefers this over the remote `posterURL` so the
+    /// thumbnail is visible offline.
+    public var posterLocalURL: String?
+    /// Author/channel display name for provider-sourced media.
+    public var authorName: String?
 
     public init(
         kind: Kind,
@@ -89,7 +100,11 @@ public struct MediaDescriptor: Codable, Equatable, Sendable {
         durationSeconds: Double? = nil,
         posterURL: String? = nil,
         caption: String? = nil,
-        altText: String? = nil
+        altText: String? = nil,
+        providerName: String? = nil,
+        providerVideoID: String? = nil,
+        posterLocalURL: String? = nil,
+        authorName: String? = nil
     ) {
         self.kind = kind
         self.sourceURL = sourceURL
@@ -101,6 +116,10 @@ public struct MediaDescriptor: Codable, Equatable, Sendable {
         self.posterURL = posterURL
         self.caption = caption
         self.altText = altText
+        self.providerName = providerName
+        self.providerVideoID = providerVideoID
+        self.posterLocalURL = posterLocalURL
+        self.authorName = authorName
     }
 }
 

@@ -50,7 +50,11 @@ public enum ReaderDocumentHTMLBuilder {
         html += "<body>\n"
         html += "<article class=\"stower-article\">\n"
 
-        html += renderHeader(item: item)
+        // For YouTube documents the first body block is already a rich
+        // thumbnail card, so skip the header's banner image to avoid
+        // duplicating the same thumbnail twice in the reader.
+        let suppressHero = isYouTubeDocument(document)
+        html += renderHeader(item: item, suppressHero: suppressHero)
 
         for (index, block) in document.blocks.enumerated() {
             html += renderBlock(block, index: index)
@@ -69,10 +73,22 @@ public enum ReaderDocumentHTMLBuilder {
 
     // MARK: - Header
 
-    private static func renderHeader(item: SavedItem) -> String {
+    /// Returns true when the first body block is a YouTube video card — in
+    /// that case the reader suppresses the header's hero image because the
+    /// card itself shows the same thumbnail at full width.
+    private static func isYouTubeDocument(_ document: ReaderDocument) -> Bool {
+        if case let .video(media) = document.blocks.first,
+           media.providerName == "YouTube" {
+            return true
+        }
+        return false
+    }
+
+    private static func renderHeader(item: SavedItem, suppressHero: Bool = false) -> String {
         var html = "<header class=\"stower-header\" data-block-index=\"-1\">\n"
 
-        if let hero = item.heroImageURL, !hero.isEmpty, isSafeHTTPURL(hero) {
+        if !suppressHero,
+           let hero = item.heroImageURL, !hero.isEmpty, isSafeHTTPURL(hero) {
             html += "  <img class=\"stower-hero\" src=\"\(attrEscape(hero))\" alt=\"\">\n"
         }
 
@@ -176,6 +192,17 @@ public enum ReaderDocumentHTMLBuilder {
     }
 
     private static func renderVideo(media: MediaDescriptor, idAttr: String) -> String {
+        // Platform-specific branch: YouTube videos render as a tappable
+        // thumbnail link card that opens the canonical watch URL in the
+        // YouTube app / Safari via the existing navigation decider. No
+        // inline playback — the read-later reading experience centers on
+        // the title, description, and channel metadata.
+        if media.providerName == "YouTube",
+           let id = media.providerVideoID,
+           YouTubeURLDetector.isValidVideoID(id) {
+            return renderYouTubeCard(id: id, media: media, idAttr: idAttr)
+        }
+
         let src = resolveMediaURL(media)
         guard !src.isEmpty else { return "" }
         var out = "<figure \(idAttr)>"
@@ -189,6 +216,63 @@ public enum ReaderDocumentHTMLBuilder {
         }
         out += "</figure>"
         return out
+    }
+
+    /// Renders a YouTube video as a click-to-load facade. A `<button>` holds
+    /// the cached thumbnail and a play badge; the runtime JS at the bottom of
+    /// the document swaps it for a `youtube-nocookie.com/embed/…` iframe on
+    /// tap so the video plays inline. A `<button>` (not an `<a>`) is used
+    /// deliberately — `ReaderNavigationDecider` intercepts `.linkActivated`
+    /// http(s) navigations and opens them in Safari, which we do NOT want
+    /// here. Iframe subframe loads are not `.linkActivated`, so they fall
+    /// through to `.allow` and play in place.
+    private static func renderYouTubeCard(
+        id: String,
+        media: MediaDescriptor,
+        idAttr: String
+    ) -> String {
+        // Detect shorts so we can render a 9:16 wrapper instead of 16:9.
+        let isShorts: Bool
+        if let sourceURL = URL(string: media.sourceURL),
+           let match = YouTubeURLDetector.match(sourceURL),
+           match.form == .shortsVertical {
+            isShorts = true
+        } else {
+            isShorts = false
+        }
+
+        let figureClass = isShorts ? "stower-yt stower-yt-shorts" : "stower-yt"
+        let poster = resolvePosterURL(media)
+        let title = media.caption ?? "YouTube video"
+
+        var out = "<figure class=\"\(figureClass)\" \(idAttr)>"
+        out += "<div class=\"stower-yt-wrap\">"
+        out += "<button type=\"button\" class=\"stower-yt-facade\""
+        out += " data-yt-id=\"\(attrEscape(id))\""
+        out += " aria-label=\"Play YouTube video: \(attrEscape(title))\">"
+        if !poster.isEmpty {
+            out += "<img class=\"stower-yt-poster\" src=\"\(attrEscape(poster))\" alt=\"\" loading=\"lazy\">"
+        }
+        out += "<span class=\"stower-yt-play\" aria-hidden=\"true\"></span>"
+        out += "</button>"
+        out += "</div>"
+        out += "</figure>"
+        return out
+    }
+
+    /// Returns the best URL for a media item's poster/thumbnail, preferring
+    /// the pre-downloaded local file if it exists. Mirrors `resolveMediaURL`
+    /// but operates on `posterLocalURL` / `posterURL`.
+    private static func resolvePosterURL(_ media: MediaDescriptor) -> String {
+        if let local = media.posterLocalURL,
+           !local.isEmpty,
+           FileManager.default.fileExists(atPath: local) {
+            return URL(fileURLWithPath: local).absoluteString
+        }
+        if let remote = media.posterURL, isSafeHTTPURL(remote) {
+            return remote
+        }
+        return ""
     }
 
     private static func renderEmbed(_ embed: EmbedDescriptor, idAttr: String) -> String {
@@ -378,6 +462,63 @@ public enum ReaderDocumentHTMLBuilder {
     @media (prefers-color-scheme: dark) {
       .stower-highlight { background: rgba(255, 220, 0, 0.2); }
     }
+    .stower-yt { margin: 28px 0; }
+    .stower-yt-wrap {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      border-radius: 12px;
+      overflow: hidden;
+      background: #000;
+    }
+    .stower-yt-shorts .stower-yt-wrap {
+      aspect-ratio: 9 / 16;
+      max-width: 420px;
+      margin: 0 auto;
+    }
+    .stower-yt-wrap iframe,
+    .stower-yt-wrap .stower-yt-facade {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      border: 0;
+    }
+    .stower-yt-facade {
+      padding: 0;
+      margin: 0;
+      background: transparent;
+      cursor: pointer;
+      display: block;
+    }
+    .stower-yt-poster {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+    .stower-yt-play {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 76px;
+      height: 76px;
+      transform: translate(-50%, -50%);
+      border-radius: 50%;
+      background: #ff0000;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
+      pointer-events: none;
+    }
+    .stower-yt-play::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      left: 56%;
+      transform: translate(-50%, -50%);
+      border-style: solid;
+      border-width: 14px 0 14px 22px;
+      border-color: transparent transparent transparent #fff;
+    }
     """
 
     // MARK: - Runtime JS
@@ -436,6 +577,25 @@ public enum ReaderDocumentHTMLBuilder {
         }
         return -1;
       };
+
+      // YouTube facade → iframe swap. Delegated click handler so the swap
+      // works for any facade rendered by the builder. The video ID is
+      // re-validated against the same 11-char charset used at render time
+      // before it is interpolated into the iframe src.
+      document.addEventListener('click', function(e) {
+        var btn = e.target.closest && e.target.closest('.stower-yt-facade');
+        if (!btn) return;
+        e.preventDefault();
+        var id = btn.getAttribute('data-yt-id');
+        if (!id || !/^[A-Za-z0-9_-]{11}$/.test(id)) return;
+        var iframe = document.createElement('iframe');
+        iframe.src = 'https://www.youtube-nocookie.com/embed/' + id + '?autoplay=1&rel=0&modestbranding=1&playsinline=1';
+        iframe.setAttribute('allow', 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen');
+        iframe.setAttribute('allowfullscreen', '');
+        iframe.setAttribute('loading', 'lazy');
+        iframe.setAttribute('referrerpolicy', 'no-referrer-when-downgrade');
+        btn.replaceWith(iframe);
+      });
     })();
     """
 }

@@ -44,8 +44,6 @@ extension StowerRepository {
                         now.timeIntervalSince1970, id.uuidString
                     ]
                 )
-                try SavedMediaLocalTable.where { $0.itemID.eq(id) }.delete().execute(db)
-                try SavedEmbedLocalTable.where { $0.itemID.eq(id) }.delete().execute(db)
                 try persistLocalContentAndCaches(db: db, itemID: id, result: result, now: now, updateLocalStatus: "available")
             }
             scheduleSync()
@@ -62,8 +60,6 @@ extension StowerRepository {
             let now: Date = Date.now
             try await database.write { db -> Void in
                 guard try SavedItemSyncTable.find(id).fetchOne(db) != nil else { return }
-                try SavedMediaLocalTable.where { $0.itemID.eq(id) }.delete().execute(db)
-                try SavedEmbedLocalTable.where { $0.itemID.eq(id) }.delete().execute(db)
                 try persistLocalContentAndCaches(db: db, itemID: id, result: result, now: now, updateLocalStatus: "available")
             }
         }

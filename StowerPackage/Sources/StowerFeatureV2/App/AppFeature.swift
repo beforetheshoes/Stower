@@ -290,24 +290,33 @@ private func processIngestionJobs(
     for job in jobs {
         switch job.kind {
         case .url:
-            let trimmed = job.payload.trimmingCharacters(in: .whitespacesAndNewlines)
-            if let url = URL(string: trimmed) {
-                let result = try await ingestionClient.ingest(url)
-                let item = try await repository.createItemFromIngestion(result)
+            // Wrap the URL ingestion path in a do/catch so a single throwing
+            // ingest (bad host, timeout, YouTube API hiccup) does not abandon
+            // the rest of the queued batch. On failure we fall back to
+            // storing the raw payload as a plaintext item so the user can
+            // still see what they tried to add.
+            do {
+                let trimmed = job.payload.trimmingCharacters(in: .whitespacesAndNewlines)
+                if let url = URL(string: trimmed) {
+                    let result = try await ingestionClient.ingest(url)
+                    let item = try await repository.createItemFromIngestion(result)
 
-                // Archive all external assets for offline WebView rendering.
-                if result.renderFormat == .webView,
-                   !result.sourceHTML.isEmpty,
-                   let source = result.sourceURL,
-                   let baseURL = URL(string: source) {
-                    await AssetArchiver.archiveAssets(
-                        html: result.sourceHTML,
-                        baseURL: baseURL,
-                        itemID: item.id
-                    )
+                    // Archive all external assets for offline WebView rendering.
+                    if result.renderFormat == .webView,
+                       !result.sourceHTML.isEmpty,
+                       let source = result.sourceURL,
+                       let baseURL = URL(string: source) {
+                        await AssetArchiver.archiveAssets(
+                            html: result.sourceHTML,
+                            baseURL: baseURL,
+                            itemID: item.id
+                        )
+                    }
+                } else {
+                    _ = try await repository.createItemFromIngestion(.sharedText(trimmed))
                 }
-            } else {
-                _ = try await repository.createItemFromIngestion(.sharedText(trimmed))
+            } catch {
+                _ = try? await repository.createItemFromIngestion(.sharedText(job.payload))
             }
         case .text:
             _ = try await repository.createItemFromIngestion(.sharedText(job.payload))

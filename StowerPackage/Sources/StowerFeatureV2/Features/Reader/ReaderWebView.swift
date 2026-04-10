@@ -136,17 +136,71 @@ public struct ReaderWebView: View {
                 _ = newPage.load(URLRequest(url: loadURL))
                 self.page = newPage
             } else {
-                // Structured / HTML-fallback path: the HTML is already a
-                // fully-styled document from ReaderDocumentHTMLBuilder.
-                let base = currentSourceURL.flatMap(URL.init(string:)) ?? URL(string: "about:blank")!
-                let newPage = ReaderWebPageFactory.makePage(
-                    openExternalURL: { [openURL] url in openURL(url) },
-                    openInlineEmbed: { openEmbed($0) }
-                )
-                _ = newPage.load(html: currentHTML, baseURL: base)
-                self.page = newPage
+                // Structured / HTML-fallback path.
+                //
+                // YouTube-card documents contain an iframe that loads
+                // youtube-nocookie.com/embed/…. If we hand WKWebView the HTML
+                // via `load(html:baseURL:)` with the item's sourceURL as the
+                // base, the document's origin becomes youtube.com — and
+                // YouTube's embed player rejects what then looks like a
+                // youtube.com page embedding its own videos (error 152-4).
+                // Serving the HTML through the same `LocalArchiveServer` used
+                // for archived pages gives the document a legitimate
+                // `http://localhost:PORT` origin, and the embed player
+                // accepts it. Non-YouTube structured articles go through the
+                // same path too for consistency — the server startup cost is
+                // ~10ms, well below perceivable latency.
+                if let (loadURL, server) = await Self.prepareStructuredServer(
+                    html: currentHTML,
+                    itemID: currentItemID
+                ) {
+                    let newPage = ReaderWebPageFactory.makePage(
+                        openExternalURL: { [openURL] url in openURL(url) },
+                        openInlineEmbed: { openEmbed($0) }
+                    )
+                    self.archiveServer = server
+                    _ = newPage.load(URLRequest(url: loadURL))
+                    self.page = newPage
+                } else {
+                    // Fallback: if the scratch dir write or server start fails,
+                    // fall back to the original in-memory load so the reader
+                    // still shows content (the only thing we lose is YouTube
+                    // embed playback on that particular open).
+                    let base = currentSourceURL.flatMap(URL.init(string:)) ?? URL(string: "about:blank")!
+                    let newPage = ReaderWebPageFactory.makePage(
+                        openExternalURL: { [openURL] url in openURL(url) },
+                        openInlineEmbed: { openEmbed($0) }
+                    )
+                    _ = newPage.load(html: currentHTML, baseURL: base)
+                    self.page = newPage
+                }
             }
         }
+    }
+
+    /// Writes the structured reader HTML into a per-item scratch directory and
+    /// starts a `LocalArchiveServer` pointing at it. The returned URL is what
+    /// the WebView should load; the returned server must be retained for the
+    /// lifetime of the reader view and stopped on dismiss.
+    private nonisolated static func prepareStructuredServer(
+        html: String,
+        itemID: UUID
+    ) async -> (URL, LocalArchiveServer)? {
+        let scratchDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("StowerReader", isDirectory: true)
+            .appendingPathComponent(itemID.uuidString, isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: scratchDir, withIntermediateDirectories: true)
+            let indexURL = scratchDir.appendingPathComponent("index.html")
+            try Data(html.utf8).write(to: indexURL, options: .atomic)
+        } catch {
+            return nil
+        }
+
+        let server = LocalArchiveServer(archiveDir: scratchDir, articlePath: "/", originURL: nil)
+        guard let port = try? await server.start() else { return nil }
+        let loadURL = URL(string: "http://localhost:\(port)/")!
+        return (loadURL, server)
     }
 
     /// Prepares archive content off the main actor: patches HTML, injects CSS, starts server.

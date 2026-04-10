@@ -157,6 +157,25 @@ extension StowerRepository {
             return try await baseUpdateFromIngestion(id, result)
         }
 
+        // `createItemFromIngestion` uses `stableItemID(from: url)` to derive a
+        // deterministic item UUID — re-ingesting the same URL writes a fresh
+        // document under the same key. The reader's in-memory cache must be
+        // invalidated for that key BEFORE the create runs, otherwise a stale
+        // document from a prior open of the same item silently overrides the
+        // new content. Same applies to hydration of CloudKit-synced items.
+        let baseCreateFromIngestion = _createItemFromIngestion(database: database, scheduleSync: scheduleSyncAndNotify)
+        let cachedCreateFromIngestion: @Sendable (IngestionResult) async throws -> SavedItem = { result in
+            let id = stableItemID(from: result.canonicalURL ?? result.sourceURL)
+            documentCache.invalidate(id)
+            return try await baseCreateFromIngestion(result)
+        }
+
+        let baseHydrateItemContent = _hydrateItemContent(database: database)
+        let cachedHydrateItemContent: @Sendable (UUID, IngestionResult) async throws -> Void = { id, result in
+            documentCache.invalidate(id)
+            try await baseHydrateItemContent(id, result)
+        }
+
         // `deleteItem` now soft-deletes. The document cache stays valid
         // because the item may be restored from trash before being purged.
         let softDelete = _softDeleteItem(database: database, scheduleSync: scheduleSyncAndNotify)
@@ -175,11 +194,11 @@ extension StowerRepository {
             fetchLibrary: _fetchLibraryFiltered(database: database),
             loadItem: _loadItem(database: database),
             createItemFromIngestion: _createItemFromIngestionWithNotify(
-                base: _createItemFromIngestion(database: database, scheduleSync: scheduleSyncAndNotify),
+                base: cachedCreateFromIngestion,
                 broadcast: changeBroadcast
             ),
             updateItemFromIngestion: cachedUpdateFromIngestion,
-            hydrateItemContent: _hydrateItemContent(database: database),
+            hydrateItemContent: cachedHydrateItemContent,
             updateLocalContentStatus: _updateLocalContentStatus(database: database),
             loadReaderDocument: cachedLoadDocument,
             saveReaderDocument: cachedSaveDocument,

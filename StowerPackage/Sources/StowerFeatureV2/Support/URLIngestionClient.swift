@@ -14,6 +14,14 @@ public struct URLIngestionClient: Sendable {
     }
 
     public static let live = URLIngestionClient { url in
+        // Short-circuit for YouTube URLs. The watch page is a JS shell with no
+        // article-extractable content, so we bypass the HTML fetch entirely
+        // and build the ingestion result from oEmbed metadata + a cached
+        // thumbnail. See YouTubeIngestionClient for details.
+        if let match = YouTubeURLDetector.match(url) {
+            return try await YouTubeIngestionClient.live.ingest(match, url)
+        }
+
         var request = URLRequest(url: url)
         request.timeoutInterval = 30
         request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData

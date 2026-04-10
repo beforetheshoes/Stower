@@ -142,6 +142,14 @@ extension StowerRepository {
             }.execute(db)
         }
 
+        // Media and embed rows have a UNIQUE constraint on (itemID, sourceURL)
+        // / (itemID, embedURL). Clear any prior rows before re-inserting so
+        // this helper is idempotent — callers hit it on create, update,
+        // hydrate, and re-add after soft delete, and all of them would
+        // otherwise need their own cleanup step.
+        try SavedMediaLocalTable.where { $0.itemID.eq(itemID) }.delete().execute(db)
+        try SavedEmbedLocalTable.where { $0.itemID.eq(itemID) }.delete().execute(db)
+
         for descriptor in result.media {
             try SavedMediaLocalTable.insert {
                 SavedMediaLocalTable.Draft(
