@@ -12,13 +12,13 @@
 	
 	<key>com.apple.developer.icloud-container-identifiers</key>
 	<array>
-		<string>iCloud.com.ryanleewilliams.stower</string>
+		<string>iCloud.Stower</string>
 	</array>
-	
+
 	<!-- App Groups for data sharing with main app -->
 	<key>com.apple.security.application-groups</key>
 	<array>
-		<string>group.com.ryanleewilliams.stower</string>
+		<string>group.com.Stower</string>
 	</array>
 	
 	<!-- Keychain sharing -->

@@ -63,10 +63,16 @@ struct ReaderFeatureTests {
         let store = TestStore(initialState: ReaderFeature.State(itemID: itemID)) {
             ReaderFeature()
         } withDependencies: {
+            $0.continuousClock = TestClock()
+            $0.readerProgressClient = .noop
             $0.stowerRepository.loadItem = { _ in item }
             $0.stowerRepository.loadReaderDocument = { _ in document }
             $0.stowerRepository.loadSourceHTML = { _ in nil }
         }
+        // `.loaded` kicks off a long-running progress-polling effect that
+        // this test isn't verifying. Turn off exhaustive effect assertion
+        // so TCA doesn't flag the still-running poll loop at teardown.
+        store.exhaustivity = .off(showSkippedAssertions: false)
 
         await store.send(.load) {
             $0.isLoading = true
@@ -166,10 +172,13 @@ struct ReaderFeatureTests {
         let store = TestStore(initialState: ReaderFeature.State(itemID: itemID)) {
             ReaderFeature()
         } withDependencies: {
+            $0.continuousClock = TestClock()
+            $0.readerProgressClient = .noop
             $0.stowerRepository.loadItem = { _ in item }
             $0.stowerRepository.loadReaderDocument = { _ in document }
             $0.stowerRepository.loadSourceHTML = { _ in nil }
         }
+        store.exhaustivity = .off(showSkippedAssertions: false)
 
         #expect(store.state.appearance == ReaderAppearanceSettings())
 

@@ -3,25 +3,42 @@ import SwiftUI
 
 public struct LibraryScreen: View {
     @Bindable var store: StoreOf<LibraryFeature>
+    /// Invoked when the user taps the settings gear in the iOS toolbar.
+    /// nil on macOS (the sidebar already has its own settings button).
+    private let onOpenSettings: (() -> Void)?
+    @State private var isAddURLPresented = false
 
-    public init(store: StoreOf<LibraryFeature>) {
+    public init(
+        store: StoreOf<LibraryFeature>,
+        onOpenSettings: (() -> Void)? = nil
+    ) {
         self.store = store
+        self.onOpenSettings = onOpenSettings
     }
 
     public var body: some View {
         List {
+            #if os(macOS)
+            // On macOS the inline composer lives at the top of the list
+            // because the window is wide enough that it doesn't crowd the
+            // article rows. iOS moves it into a sheet triggered by the
+            // toolbar "+" button so the list is clean.
             Section {
                 urlComposer
+                    .listRowBackground(Color.clear)
                 if store.saveState == .failed, let error = store.errorMessage {
                     Text(error)
                         .font(.caption)
                         .foregroundStyle(.red)
+                        .listRowBackground(Color.clear)
                 }
             }
             if let error = store.errorMessage, store.saveState != .failed {
                 Text(error)
                     .foregroundStyle(.red)
+                    .listRowBackground(Color.clear)
             }
+            #endif
 
             ForEach(store.filteredItems) { item in
                 Button {
@@ -143,6 +160,12 @@ public struct LibraryScreen: View {
                         }
                     }
                 }
+                // `List` gives every row its own opaque platter background
+                // (white in light mode, near-black in dark mode) regardless
+                // of `.scrollContentBackground(.hidden)` on the List itself.
+                // Clearing the row background lets the parent's theme color
+                // show through for Sepia/Dark/White reader themes.
+                .listRowBackground(Color.clear)
             }
         }
         .scrollContentBackground(.hidden)
@@ -153,10 +176,98 @@ public struct LibraryScreen: View {
                 ProgressView()
             }
         }
+        #if os(iOS)
+        .toolbar {
+            if let onOpenSettings {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        onOpenSettings()
+                    } label: {
+                        Label("Settings", systemImage: "gearshape")
+                    }
+                }
+            }
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    // Clear any stale error so the sheet starts clean.
+                    if store.saveState == .failed {
+                        store.send(.sourceURLChanged(""))
+                    }
+                    isAddURLPresented = true
+                } label: {
+                    Label("Add URL", systemImage: "plus")
+                }
+            }
+        }
+        .sheet(isPresented: $isAddURLPresented) {
+            addURLSheet
+        }
+        // Auto-dismiss the "Add URL" sheet the moment a save succeeds.
+        // `saveURLFinished` transitions `saveState` to `.ready` and clears
+        // `sourceURL`, which is our cue that the new item is in the list.
+        .onChange(of: store.saveState) { _, newValue in
+            if isAddURLPresented, newValue == .ready, store.sourceURL.isEmpty {
+                isAddURLPresented = false
+            }
+        }
+        #endif
         .task {
             store.send(.onAppear)
         }
     }
+
+    #if os(iOS)
+    /// Modal URL-entry form shown when the user taps the toolbar "+".
+    @ViewBuilder
+    private var addURLSheet: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField(
+                        "https://example.com/article",
+                        text: $store.sourceURL.sending(\.sourceURLChanged)
+                    )
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                    .keyboardType(.URL)
+                    .submitLabel(.go)
+                    .onSubmit { store.send(.saveURLTapped) }
+                } header: {
+                    Text("URL")
+                } footer: {
+                    if store.saveState == .failed, let error = store.errorMessage {
+                        Text(error).foregroundStyle(.red)
+                    } else {
+                        Text("Paste any article URL. Stower will fetch and archive it for offline reading.")
+                    }
+                }
+            }
+            .navigationTitle("Add URL")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        isAddURLPresented = false
+                    }
+                    .disabled(store.isSaving)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    if store.isSaving {
+                        ProgressView()
+                    } else {
+                        Button("Add") {
+                            store.send(.saveURLTapped)
+                        }
+                        .disabled(store.sourceURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                }
+            }
+            .interactiveDismissDisabled(store.isSaving)
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+    }
+    #endif
 
     @ViewBuilder
     private func tagsSubmenu(for item: SavedItem) -> some View {
@@ -199,6 +310,13 @@ public struct LibraryScreen: View {
         HStack(spacing: 10) {
             TextField("Paste Source URL", text: $store.sourceURL.sending(\.sourceURLChanged))
                 .autocorrectionDisabled()
+                #if os(iOS)
+                // iOS TextField defaults to `.sentences` which capitalizes
+                // the first character. Without this modifier "https://…"
+                // becomes "Https://…" and downstream parsers silently fail.
+                .textInputAutocapitalization(.never)
+                .keyboardType(.URL)
+                #endif
                 .textFieldStyle(.plain)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 7)

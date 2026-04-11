@@ -53,6 +53,7 @@ public struct AppFeature {
 
     public enum Action: Equatable {
         case onAppear
+        case sceneDidBecomeActive
         case startupFinished
         case startupFailed(String)
         case readerAppearanceLoaded(ReaderAppearanceSettings)
@@ -166,6 +167,28 @@ public struct AppFeature {
                 state.startupErrorMessage = message
                 return .none
 
+            case .sceneDidBecomeActive:
+                // The share extension enqueues ingestion jobs into the shared
+                // App Group database but has no way to notify the running main
+                // app. When the user returns to Stower after sharing a URL,
+                // drain the queue and reload the library so newly-saved items
+                // show up immediately without requiring a cold launch.
+                //
+                // Startup already drains the queue once, so this is a no-op on
+                // the very first activation — `processIngestionJobs` marks
+                // jobs as processed and skips them on subsequent calls.
+                guard state.startupFinished else { return .none }
+                let repository = self.repository
+                let ingestionClient = self.ingestionClient
+                return .run { send in
+                    try? await processIngestionJobs(
+                        repository: repository,
+                        ingestionClient: ingestionClient
+                    )
+                    await send(.library(.reload))
+                    await send(.sidebar(.reload))
+                }
+
             case .readerAppearanceLoaded(let appearance):
                 state.cachedAppearance = appearance
                 state.readerTheme = appearance.theme
@@ -248,6 +271,16 @@ public struct AppFeature {
                 return .none
 
             case .library(.openItem(let item)):
+                // Re-tapping the same row must NOT rebuild `state.reader` —
+                // a fresh `ReaderFeature.State` wipes `document`/`sourceHTML`
+                // back to nil, and `ReaderScreen`'s `.task(id: store.itemID)`
+                // only re-fires when the item ID *changes*, so `.load` would
+                // never run again and the view would fall through its
+                // else-if chain to "Item not found". Leaving the existing
+                // state in place keeps the already-loaded document visible.
+                if state.reader?.itemID == item.id {
+                    return .none
+                }
                 state.reader = ReaderFeature.State(
                     item: item,
                     appearance: state.cachedAppearance

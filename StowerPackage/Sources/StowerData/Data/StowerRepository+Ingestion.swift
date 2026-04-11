@@ -3,6 +3,20 @@ import Foundation
 import SQLiteData
 
 extension StowerRepository {
+    /// Maps an `IngestionResult.processingState` to the string value stored
+    /// in `savedItemContentLocalTables.localStatus`. Previously all call
+    /// sites hardcoded `"available"`, which meant a parse that came back
+    /// with zero content still got persisted as "ready to read" — leaving
+    /// the reader on a blank screen for anything that couldn't be extracted.
+    private static func localStatus(for state: ProcessingState) -> String {
+        switch state {
+        case .ready, .partial: return "available"
+        case .failed: return "failed"
+        case .extracting: return "downloading"
+        case .queued: return "notDownloaded"
+        }
+    }
+
     static func _createItemFromIngestion(
         database: any DatabaseWriter,
         scheduleSync: @escaping @Sendable () -> Void
@@ -13,8 +27,14 @@ extension StowerRepository {
                 let itemID: UUID = stableItemID(from: result.canonicalURL ?? result.sourceURL)
                 let syncDraft: SavedItemSyncTable.Draft = makeSyncDraft(id: itemID, result: result, now: now)
                 try SavedItemSyncTable.upsert { syncDraft }.execute(db)
-                try persistLocalContentAndCaches(db: db, itemID: itemID, result: result, now: now, updateLocalStatus: "available")
-                return toDomain(from: syncDraft, local: nil, inferredContent: result.plainText)
+                try persistLocalContentAndCaches(db: db, itemID: itemID, result: result, now: now, updateLocalStatus: localStatus(for: result.processingState))
+                // Read back the just-written local row so the returned
+                // SavedItem carries the correct processingState (.ready)
+                // instead of defaulting to .queued from a nil local. Without
+                // this, the library card stays on "Queued" until the
+                // sidebar re-queries the DB.
+                let local = try SavedItemContentLocalTable.find(itemID).fetchOne(db)
+                return toDomain(from: syncDraft, local: local, inferredContent: result.plainText)
             }
             scheduleSync()
             return item
@@ -44,7 +64,7 @@ extension StowerRepository {
                         now.timeIntervalSince1970, id.uuidString
                     ]
                 )
-                try persistLocalContentAndCaches(db: db, itemID: id, result: result, now: now, updateLocalStatus: "available")
+                try persistLocalContentAndCaches(db: db, itemID: id, result: result, now: now, updateLocalStatus: localStatus(for: result.processingState))
             }
             scheduleSync()
             return try await database.read { db -> SavedItem? in
@@ -60,7 +80,7 @@ extension StowerRepository {
             let now: Date = Date.now
             try await database.write { db -> Void in
                 guard try SavedItemSyncTable.find(id).fetchOne(db) != nil else { return }
-                try persistLocalContentAndCaches(db: db, itemID: id, result: result, now: now, updateLocalStatus: "available")
+                try persistLocalContentAndCaches(db: db, itemID: id, result: result, now: now, updateLocalStatus: localStatus(for: result.processingState))
             }
         }
     }

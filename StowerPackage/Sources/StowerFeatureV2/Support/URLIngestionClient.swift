@@ -2,6 +2,17 @@ import Dependencies
 import Foundation
 import SwiftSoup
 
+public enum URLIngestionError: Error, LocalizedError {
+    case noExtractableContent
+
+    public var errorDescription: String? {
+        switch self {
+        case .noExtractableContent:
+            return "Couldn't extract any readable content from this page. It may require a login, rely on client-side rendering, or be blocked by a bot check."
+        }
+    }
+}
+
 public struct URLIngestionClient: Sendable {
     public var ingest: @Sendable (URL) async throws -> IngestionResult
 
@@ -83,6 +94,16 @@ public struct ExtractionPipelineClient: Sendable {
 
         let oEmbeds = try discoverOEmbeds(document: document)
         let allEmbeds = dedupeEmbeds(parsed.embeds + oEmbeds)
+
+        // If the parser came back with nothing at all — no blocks, no plain
+        // text, and no interactive content — the fetch either hit a JS shell
+        // we can't see into, a bot wall, or a genuinely empty page. Either
+        // way there's nothing to show in the reader, so surface it as a
+        // failure instead of storing an "available" row with an empty body
+        // (which would land the user on an empty white screen).
+        if finalBlocks.isEmpty && plainText.isEmpty && !hasInteractiveContent {
+            throw URLIngestionError.noExtractableContent
+        }
 
         let confidence = confidenceScore(blockCount: parsed.blocks.count, textLength: plainText.count)
         let processingState: ProcessingState = confidence >= 0.7 ? .ready : .partial
@@ -247,31 +268,45 @@ extension DependencyValues {
 
 /// Returns true if the document contains interactive SVGs, canvas elements, or
 /// known data-visualization libraries that require JavaScript to render correctly.
+///
+/// The goal is to only flag pages that meaningfully break when rendered as
+/// stripped structured text (interactive charts, animated SVGs, <canvas>
+/// simulations). UI frameworks like React/Vue/Svelte don't count — they're
+/// used by practically every modern website and "React = interactive" would
+/// route every article through the raw-HTML WebView path, which is almost
+/// never what the reader wants.
 func detectInteractiveContent(document: Document) -> Bool {
     // Canvas elements always require JS.
     let canvasCount = (try? document.select("canvas").array().count) ?? 0
     if canvasCount > 0 { return true }
 
-    // SVGs that contain child elements (not just simple decorative icons).
+    // SVGs that carry real interactivity: embedded <script>, SMIL animation,
+    // or <foreignObject>. Child-count alone is a bad heuristic because
+    // icon SVGs commonly have dozens of <path> children.
     let svgs = (try? document.select("svg").array()) ?? []
     for svg in svgs {
-        if svg.children().count > 3 { return true }
+        if (try? svg.select("script, animate, animateTransform, animateMotion, set, foreignObject").first()) != nil {
+            return true
+        }
     }
 
-    // Scripts that reference known visualization/interactive libraries.
+    // Scripts that reference known data-visualization libraries. Restrict to
+    // actual charting/viz toolkits — UI frameworks are intentionally excluded.
     let scripts = (try? document.select("script[src]").array()) ?? []
-    let vizPatterns = ["d3", "chart.js", "chartjs", "highcharts", "plotly", "vega", "observable", "react", "vue", "svelte"]
+    let vizPatterns = ["d3.js", "d3.min.js", "/d3/", "chart.js", "chartjs", "highcharts", "plotly", "vega", "observablehq"]
     for script in scripts {
         let src = ((try? script.attr("src")) ?? "").lowercased()
         if vizPatterns.contains(where: src.contains) { return true }
     }
 
-    // Inline scripts that suggest dynamic SVG manipulation.
+    // Inline scripts that construct charts or drive SVG animations. Match on
+    // distinctive API calls instead of bare DOM primitives — `setAttribute`
+    // and `appendChild` appear in practically any modern site's bundled JS.
     let inlineScripts = (try? document.select("script:not([src])").array()) ?? []
-    let svgJSPatterns = ["createElementNS", "setAttribute", "appendChild", ".svg", "d3.", "Chart("]
+    let vizCallPatterns = ["d3.select(", "new Chart(", "Highcharts.chart(", "Plotly.newPlot(", "vega.embed(", "createElementNS(\"http://www.w3.org/2000/svg\""]
     for script in inlineScripts {
         let content = (try? script.html()) ?? ""
-        if svgJSPatterns.contains(where: content.contains) { return true }
+        if vizCallPatterns.contains(where: content.contains) { return true }
     }
 
     return false

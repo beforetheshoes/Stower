@@ -3,6 +3,7 @@ import SwiftUI
 
 public struct ContentView: View {
     let store: StoreOf<AppFeature>
+    @Environment(\.scenePhase) private var scenePhase
 
     public init(store: StoreOf<AppFeature>) {
         self.store = store
@@ -11,12 +12,28 @@ public struct ContentView: View {
     public var body: some View {
         AppView(store: store)
             .task { store.send(.onAppear) }
+            .onChange(of: scenePhase) { _, newPhase in
+                // When the user returns to Stower after sharing a URL from
+                // Safari (or any other app), the share extension has already
+                // enqueued an ingestion job to the shared App Group database,
+                // but the main app has no other way to discover it. Re-drain
+                // the queue and reload the library whenever the scene becomes
+                // active. `AppFeature` guards against running before startup
+                // has finished, so this is a safe no-op on the very first
+                // activation after launch.
+                if newPhase == .active {
+                    store.send(.sceneDidBecomeActive)
+                }
+            }
     }
 }
 
 public struct AppView: View {
     @Bindable var store: StoreOf<AppFeature>
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    #endif
 
     public init(store: StoreOf<AppFeature>) {
         self.store = store
@@ -25,6 +42,68 @@ public struct AppView: View {
     public var body: some View {
         let theme = store.readerTheme
 
+        navigationContainer(theme: theme)
+            #if os(macOS)
+            .toolbarBackground(theme.toolbarBackground, for: .windowToolbar)
+            .toolbarBackgroundVisibility(.visible, for: .windowToolbar)
+            #else
+            .toolbarBackground(theme.toolbarBackground, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+            #endif
+            .preferredColorScheme(theme.colorScheme)
+            .alert($store.scope(state: \.resetAlert, action: \.resetAlert))
+            .sheet(
+                isPresented: Binding(
+                    get: { store.isSettingsPresented },
+                    set: { if !$0 { store.send(.closeSettings) } }
+                )
+            ) {
+                NavigationStack {
+                    SettingsScreen(store: store.scope(state: \.settings, action: \.settings))
+                        .toolbar {
+                            ToolbarItem(placement: .cancellationAction) {
+                                Button("Done") { store.send(.closeSettings) }
+                            }
+                        }
+                }
+            }
+    }
+
+    @ViewBuilder
+    private func navigationContainer(theme: ReaderTheme) -> some View {
+        #if os(iOS)
+        // On iPhone (compact), NavigationSplitView's detail column does not
+        // reliably push when an `if let` swap toggles its content — taps on
+        // library rows mutate `state.reader` but the screen never advances.
+        // Use a single NavigationStack with the library as the root and the
+        // reader as a binding-driven `.navigationDestination`, which pushes
+        // and pops correctly and auto-clears `state.reader` on pop.
+        if horizontalSizeClass == .compact {
+            NavigationStack {
+                LibraryScreen(
+                    store: store.scope(state: \.library, action: \.library),
+                    onOpenSettings: { store.send(.openSettings) }
+                )
+                    .scrollContentBackground(.hidden)
+                    .background(theme.sidebarBackground)
+                    .navigationDestination(
+                        item: $store.scope(state: \.reader, action: \.reader)
+                    ) { readerStore in
+                        ReaderScreen(store: readerStore)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .background(theme.readerBackground)
+                    }
+            }
+        } else {
+            splitNavigationView(theme: theme)
+        }
+        #else
+        splitNavigationView(theme: theme)
+        #endif
+    }
+
+    @ViewBuilder
+    private func splitNavigationView(theme: ReaderTheme) -> some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
             SidebarScreen(
                 store: store.scope(state: \.sidebar, action: \.sidebar),
@@ -59,30 +138,6 @@ public struct AppView: View {
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(theme.readerBackground)
-            }
-        }
-        #if os(macOS)
-        .toolbarBackground(theme.toolbarBackground, for: .windowToolbar)
-        .toolbarBackgroundVisibility(.visible, for: .windowToolbar)
-        #else
-        .toolbarBackground(theme.toolbarBackground, for: .navigationBar)
-        .toolbarBackground(.visible, for: .navigationBar)
-        #endif
-        .preferredColorScheme(theme.colorScheme)
-        .alert($store.scope(state: \.resetAlert, action: \.resetAlert))
-        .sheet(
-            isPresented: Binding(
-                get: { store.isSettingsPresented },
-                set: { if !$0 { store.send(.closeSettings) } }
-            )
-        ) {
-            NavigationStack {
-                SettingsScreen(store: store.scope(state: \.settings, action: \.settings))
-                    .toolbar {
-                        ToolbarItem(placement: .cancellationAction) {
-                            Button("Done") { store.send(.closeSettings) }
-                        }
-                    }
             }
         }
     }

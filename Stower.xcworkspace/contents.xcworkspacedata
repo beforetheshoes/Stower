@@ -7,7 +7,4 @@
    <FileRef
       location = "container:Stower.xcodeproj">
    </FileRef>
-   <FileRef
-      location = "container:StowerMac.xcodeproj">
-   </FileRef>
 </Workspace>

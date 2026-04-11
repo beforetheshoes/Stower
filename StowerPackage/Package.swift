@@ -6,6 +6,7 @@ let package = Package(
     platforms: [.iOS("26.0"), .macOS("26.0")],
     products: [
         .library(name: "StowerFeature", targets: ["StowerFeature"]),
+        .library(name: "StowerData", targets: ["StowerData"]),
     ],
     dependencies: [
         .package(url: "https://github.com/pointfreeco/swift-composable-architecture.git", from: "1.23.0"),

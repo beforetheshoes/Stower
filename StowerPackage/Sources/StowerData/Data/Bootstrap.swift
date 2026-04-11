@@ -78,8 +78,19 @@ public struct CloudSyncClient: Sendable {
 // MARK: - Database Setup & Migrations
 
 public enum StowerDatabase {
-    public static let appGroupID = "group.com.ryanleewilliams.stower"
-    public static let cloudKitContainerID = "iCloud.com.ryanleewilliams.stower"
+    public static let appGroupID = "group.com.Stower"
+    public static let cloudKitContainerID = "iCloud.Stower"
+
+    public enum DatabaseError: Error, LocalizedError {
+        case appGroupContainerUnavailable(groupID: String)
+
+        public var errorDescription: String? {
+            switch self {
+            case .appGroupContainerUnavailable(let groupID):
+                return "App Group container '\(groupID)' is not available. Confirm both the main app and the share extension declare it in their entitlements and that the App Group is provisioned in the developer portal."
+            }
+        }
+    }
 
     public static func makeDatabase() throws -> any DatabaseWriter {
         var configuration = Configuration()
@@ -91,9 +102,79 @@ public enum StowerDatabase {
                 #endif
             }
         }
-        let db = try SQLiteData.defaultDatabase(configuration: configuration)
+
+        // In .live, the database lives in the App Group container so the share
+        // extension and the main app can both read and write the same file.
+        // In .preview / .test, SQLiteData ignores `path` and uses a tempfile.
+        let resolvedPath: String?
+        @Dependency(\.context) var context
+        if context == .live {
+            let url = try resolveAppGroupDatabaseURL()
+            try migrateLegacySandboxDatabaseIfNeeded(to: url)
+            resolvedPath = url.path
+        } else {
+            resolvedPath = nil
+        }
+
+        let db = try SQLiteData.defaultDatabase(path: resolvedPath, configuration: configuration)
         try migrate(database: db)
         return db
+    }
+
+    private static func resolveAppGroupDatabaseURL() throws -> URL {
+        guard let containerURL = FileManager.default
+            .containerURL(forSecurityApplicationGroupIdentifier: appGroupID)
+        else {
+            throw DatabaseError.appGroupContainerUnavailable(groupID: appGroupID)
+        }
+        let directory = containerURL.appendingPathComponent("Database", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory.appendingPathComponent("stower.sqlite")
+    }
+
+    /// One-time migration: if a sandbox-located database from before the App
+    /// Group move exists, copy it (and its WAL/SHM sidecars) into the App Group
+    /// container so existing data isn't lost. The legacy file is left in place
+    /// as a recovery copy and can be deleted by the user later.
+    private static func migrateLegacySandboxDatabaseIfNeeded(to destination: URL) throws {
+        guard !FileManager.default.fileExists(atPath: destination.path) else {
+            return
+        }
+        guard let legacyURL = try legacyDefaultDatabaseURL() else { return }
+        guard FileManager.default.fileExists(atPath: legacyURL.path) else { return }
+
+        try FileManager.default.copyItem(at: legacyURL, to: destination)
+
+        let legacyWAL = legacyURL.appendingPathExtension("wal")
+        if FileManager.default.fileExists(atPath: legacyWAL.path) {
+            try? FileManager.default.copyItem(
+                at: legacyWAL,
+                to: destination.appendingPathExtension("wal")
+            )
+        }
+        let legacySHM = legacyURL.appendingPathExtension("shm")
+        if FileManager.default.fileExists(atPath: legacySHM.path) {
+            try? FileManager.default.copyItem(
+                at: legacySHM,
+                to: destination.appendingPathExtension("shm")
+            )
+        }
+
+        #if DEBUG
+        print("ℹ️ Migrated legacy Stower database from \(legacyURL.path) to \(destination.path)")
+        #endif
+    }
+
+    /// Mirrors `SQLiteData.defaultDatabase`'s `.live` default path so we can
+    /// detect a pre-existing sandbox database during the App Group migration.
+    private static func legacyDefaultDatabaseURL() throws -> URL? {
+        let applicationSupport = try FileManager.default.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: false
+        )
+        return applicationSupport.appendingPathComponent("SQLiteData.db")
     }
 
     private static func migrate(database: any DatabaseWriter) throws {
@@ -104,6 +185,7 @@ public enum StowerDatabase {
         migrator.registerMigration("add-source-html-to-content") { db in try migration_v3(db) }
         migrator.registerMigration("add-last-read-block-index") { db in try migration_v4(db) }
         migrator.registerMigration("add-isread-isstarred-softdelete-and-tags") { db in try migration_v5(db) }
+        migrator.registerMigration("drop-unique-indexes-from-sync-tables") { db in try migration_v6(db) }
         try migrator.migrate(database)
     }
 
@@ -375,6 +457,30 @@ public enum StowerDatabase {
         try db.execute(sql: #"CREATE UNIQUE INDEX IF NOT EXISTS idx_itemTagSyncTables_item_tag ON "itemTagSyncTables"("itemID","tagID")"#)
         try db.execute(sql: #"CREATE INDEX IF NOT EXISTS idx_itemTagSyncTables_itemID ON "itemTagSyncTables"("itemID")"#)
         try db.execute(sql: #"CREATE INDEX IF NOT EXISTS idx_itemTagSyncTables_tagID ON "itemTagSyncTables"("tagID")"#)
+    }
+
+    /// SQLiteData's `SyncEngine` rejects any CloudKit-synchronized table that
+    /// carries a `UNIQUE` constraint outside of the primary key. It refuses
+    /// to even start, throwing `SchemaError(.uniquenessConstraint)`, because
+    /// two devices could concurrently insert rows that only collide on the
+    /// unique column — there's no safe reconciliation on the CloudKit side.
+    ///
+    /// `migration_v5` created two such indexes on synced tables:
+    ///   • `idx_tagSyncTables_name`        on `LOWER(name)`
+    ///   • `idx_itemTagSyncTables_item_tag` on `(itemID, tagID)`
+    ///
+    /// Both were pure defense-in-depth — the repository layer already does
+    /// case-insensitive tag-name deduplication in `_createTag` and junction
+    /// deduplication in `_addTag` before inserting — so dropping them has no
+    /// behavioral impact besides letting the SyncEngine finally start.
+    ///
+    /// We replace them with non-unique indexes so case-insensitive tag name
+    /// lookups and junction reads stay fast.
+    private static func migration_v6(_ db: Database) throws {
+        try db.execute(sql: #"DROP INDEX IF EXISTS idx_tagSyncTables_name"#)
+        try db.execute(sql: #"DROP INDEX IF EXISTS idx_itemTagSyncTables_item_tag"#)
+        try db.execute(sql: #"CREATE INDEX IF NOT EXISTS idx_tagSyncTables_name_lower ON "tagSyncTables"(LOWER("name"))"#)
+        try db.execute(sql: #"CREATE INDEX IF NOT EXISTS idx_itemTagSyncTables_item_tag_pair ON "itemTagSyncTables"("itemID","tagID")"#)
     }
 }
 

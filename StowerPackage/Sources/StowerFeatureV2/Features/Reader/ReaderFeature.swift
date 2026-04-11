@@ -90,11 +90,13 @@ public struct ReaderFeature {
     private enum CancelID {
         case appearanceSave
         case readingProgressSave
+        case progressPoll
     }
 
     @Dependency(\.stowerRepository) var repository
     @Dependency(\.urlIngestionClient) var ingestionClient
     @Dependency(\.continuousClock) var continuousClock
+    @Dependency(\.readerProgressClient) var readerProgressClient
 
     public var body: some ReducerOf<Self> {
         Scope(state: \.speech, action: \.speech) {
@@ -139,7 +141,10 @@ public struct ReaderFeature {
                 if let item { state.item = item }
                 state.document = document
                 state.sourceHTML = sourceHTML
-                return archiveIfNeeded(item: state.item, sourceHTML: sourceHTML)
+                return .merge(
+                    archiveIfNeeded(item: state.item, sourceHTML: sourceHTML),
+                    startProgressPollingEffect()
+                )
 
             case .failed(let error):
                 state.isLoading = false
@@ -327,6 +332,32 @@ public struct ReaderFeature {
                 itemID: itemID
             )
         }
+    }
+
+    /// Polls the currently registered reader `WebPage` every 1.5 seconds for
+    /// the topmost visible block index and emits `scrollProgressChanged`
+    /// actions when it changes. Runs as a child effect so `ifLet` cancels it
+    /// atomically with presentation dismissal — unlike the previous manual
+    /// `Task` inside `ReaderWebView`, which kept firing during the window
+    /// between `navigationDestination`'s state nil-ification and the view's
+    /// `.onDisappear`, and tripped a noisy TCA runtime warning on every pop.
+    private func startProgressPollingEffect() -> Effect<Action> {
+        let client = self.readerProgressClient
+        let clock = self.continuousClock
+        return .run { send in
+            var lastReported: Int?
+            while !Task.isCancelled {
+                try? await clock.sleep(for: .seconds(1.5))
+                if Task.isCancelled { return }
+                guard let top = await client.topBlockIndex() else { continue }
+                if Task.isCancelled { return }
+                if top != lastReported {
+                    lastReported = top
+                    await send(.scrollProgressChanged(top), animation: nil)
+                }
+            }
+        }
+        .cancellable(id: CancelID.progressPoll, cancelInFlight: true)
     }
 }
 

@@ -23,13 +23,11 @@ public struct ReaderWebView: View {
     let isWebViewFormat: Bool
     let highlightedBlockIndex: Int?
     let restoreBlockIndex: Int?
-    let onReadingProgress: ((Int) -> Void)?
     let onOpenInlineEmbed: ((String) -> Void)?
 
     @State private var page: WebPage?
     @State private var archiveServer: LocalArchiveServer?
     @State private var hasRestoredPosition = false
-    @State private var progressTimerTask: Task<Void, Never>?
     @Environment(\.openURL) private var openURL
 
     public init(
@@ -40,7 +38,6 @@ public struct ReaderWebView: View {
         isWebViewFormat: Bool = false,
         highlightedBlockIndex: Int? = nil,
         restoreBlockIndex: Int? = nil,
-        onReadingProgress: ((Int) -> Void)? = nil,
         onOpenInlineEmbed: ((String) -> Void)? = nil
     ) {
         self.html = html
@@ -50,7 +47,6 @@ public struct ReaderWebView: View {
         self.isWebViewFormat = isWebViewFormat
         self.highlightedBlockIndex = highlightedBlockIndex
         self.restoreBlockIndex = restoreBlockIndex
-        self.onReadingProgress = onReadingProgress
         self.onOpenInlineEmbed = onOpenInlineEmbed
     }
 
@@ -79,19 +75,23 @@ public struct ReaderWebView: View {
         .onChange(of: page?.isLoading) { _, isLoading in
             if isLoading == false {
                 // Re-apply CSS in case appearance settings loaded after
-                // the initial HTML was composed, then restore scroll and
-                // start the reading-progress poll loop.
+                // the initial HTML was composed, then restore scroll, and
+                // hand the page off to the shared progress coordinator so
+                // `ReaderFeature`'s polling effect can start reading from
+                // it. Registration lives here (and not in `loadContent`)
+                // because `page.isLoading == false` is the first moment
+                // at which `stowerGetTopBlockIndex()` is guaranteed to
+                // exist on the JS side.
                 updateCSS(appearance)
                 maybeRestorePosition()
-                startProgressPolling()
+                ReaderProgressCoordinator.shared.register(page)
             }
         }
         .onChange(of: highlightedBlockIndex) { _, newValue in
             runHighlight(newValue)
         }
         .onDisappear {
-            progressTimerTask?.cancel()
-            progressTimerTask = nil
+            ReaderProgressCoordinator.shared.register(nil)
             archiveServer?.stop()
             archiveServer = nil
         }
@@ -102,8 +102,7 @@ public struct ReaderWebView: View {
     @MainActor
     private func loadContent() {
         // Clean up previous state.
-        progressTimerTask?.cancel()
-        progressTimerTask = nil
+        ReaderProgressCoordinator.shared.register(nil)
         archiveServer?.stop()
         archiveServer = nil
         page = nil
@@ -299,25 +298,4 @@ public struct ReaderWebView: View {
         }
     }
 
-    // MARK: - Progress polling
-
-    @MainActor
-    private func startProgressPolling() {
-        progressTimerTask?.cancel()
-        guard onReadingProgress != nil else { return }
-
-        progressTimerTask = Task { [page] in
-            guard let page else { return }
-            while !Task.isCancelled {
-                // Poll once every 1.5 seconds. Cheap enough for 0.7% CPU per
-                // update on large documents because `stowerGetTopBlockIndex`
-                // only walks blocks until the first visible one.
-                try? await Task.sleep(nanoseconds: 1_500_000_000)
-                if Task.isCancelled { break }
-                if let top = await ReaderWebPageFactory.fetchTopBlockIndex(on: page) {
-                    await MainActor.run { onReadingProgress?(top) }
-                }
-            }
-        }
-    }
 }

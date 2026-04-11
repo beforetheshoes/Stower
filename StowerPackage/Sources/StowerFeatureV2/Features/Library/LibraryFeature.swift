@@ -375,8 +375,14 @@ private func normalizeSourceURL(_ value: String) -> String? {
     let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return nil }
 
-    if trimmed.contains("://") {
-        return trimmed
+    // If the user typed a scheme (or pasted one), lowercase it so we don't
+    // end up with "Https://…" from iOS autocapitalization. URL schemes are
+    // case-insensitive per RFC 3986, but `URL(string:)` and third-party
+    // parsers have a habit of being picky about the canonical form.
+    if let schemeRange = trimmed.range(of: "://") {
+        let scheme = trimmed[trimmed.startIndex..<schemeRange.lowerBound].lowercased()
+        let rest = trimmed[schemeRange.lowerBound...]
+        return scheme + rest
     }
 
     if trimmed.contains(".") {

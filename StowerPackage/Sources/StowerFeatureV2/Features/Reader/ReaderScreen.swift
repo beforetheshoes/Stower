@@ -79,7 +79,6 @@ public struct ReaderScreen: View {
                 isWebViewFormat: store.effectiveRenderFormat == .webView,
                 highlightedBlockIndex: store.speech.currentBlockIndex,
                 restoreBlockIndex: item.lastReadBlockIndex,
-                onReadingProgress: { index in store.send(.scrollProgressChanged(index)) },
                 onOpenInlineEmbed: { urlString in store.send(.openInlineWebEmbed(urlString)) }
             )
             .safeAreaInset(edge: .bottom, spacing: 0) {

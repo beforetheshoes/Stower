@@ -11,9 +11,7 @@ public struct SettingsScreen: View {
     public var body: some View {
         Form {
             Section("Sync") {
-                HStack {
-                    Text("iCloud Sync")
-                    Spacer()
+                LabeledContent("iCloud Sync") {
                     Text(syncSummary(store.cloudSyncStatus))
                         .foregroundStyle(.secondary)
                 }
@@ -22,6 +20,7 @@ public struct SettingsScreen: View {
                     Text(detail)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
 
@@ -45,6 +44,7 @@ public struct SettingsScreen: View {
                         Text("Latest synced items")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                         ForEach(diagnostics.sampleItems) { item in
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(item.title)
@@ -53,29 +53,44 @@ public struct SettingsScreen: View {
                                     Text(url)
                                         .font(.caption2)
                                         .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
                                 }
                             }
+                            .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
                 }
             }
 #endif
 
-            Toggle(
-                "Automatically download images",
-                isOn: $store.settings.globalAutoDownload.sending(\.globalAutoDownloadChanged)
-            )
-            Toggle(
-                "Ask before new source downloads",
-                isOn: $store.settings.askForNewSources.sending(\.askForNewSourcesChanged)
-            )
+            Section {
+                Toggle(
+                    "Automatically download images",
+                    isOn: $store.settings.globalAutoDownload.sending(\.globalAutoDownloadChanged)
+                )
+                Toggle(
+                    "Ask before new source downloads",
+                    isOn: $store.settings.askForNewSources.sending(\.askForNewSourcesChanged)
+                )
+            }
 
             if let error = store.errorMessage {
                 Text(error)
                     .foregroundStyle(.red)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
+        .formStyle(.grouped)
         .navigationTitle("Settings")
+        #if os(macOS)
+        // macOS sheets auto-size to their content, but `Form` produces a
+        // two-column layout whose label column has no minimum width — the
+        // sheet ends up narrower than the labels need, and the labels
+        // escape the dialog's visible area. Pinning the screen to a
+        // reasonable minimum keeps every row inside the sheet.
+        .frame(minWidth: 520, idealWidth: 600, minHeight: 480, idealHeight: 560)
+        #endif
         .task {
             store.send(.load)
         }
