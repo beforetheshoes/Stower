@@ -5,13 +5,19 @@ public struct SidebarScreen: View {
     @Bindable var store: StoreOf<SidebarFeature>
     /// Optional hook so the parent (AppFeature) can present Settings on demand.
     public var onOpenSettings: (() -> Void)? = nil
+    /// When non-nil, rows render as Buttons instead of NavigationLinks. Used
+    /// by the iPhone filter sheet, where the sidebar is presented modally and
+    /// row selection should dismiss the sheet rather than push a column.
+    public var onSelect: ((LibraryFilter) -> Void)? = nil
 
     public init(
         store: StoreOf<SidebarFeature>,
-        onOpenSettings: (() -> Void)? = nil
+        onOpenSettings: (() -> Void)? = nil,
+        onSelect: ((LibraryFilter) -> Void)? = nil
     ) {
         self.store = store
         self.onOpenSettings = onOpenSettings
+        self.onSelect = onSelect
     }
 
     public var body: some View {
@@ -100,25 +106,68 @@ public struct SidebarScreen: View {
         systemImage: String,
         count: Int
     ) -> some View {
-        NavigationLink(value: filter) {
-            Label(label, systemImage: systemImage)
+        if onSelect != nil {
+            // Sheet mode: dispatch and notify the host so it can dismiss.
+            // The List(selection:) binding does not fire from Button taps,
+            // so we mark the active filter with a trailing checkmark.
+            Button {
+                store.send(.selectList(filter))
+                onSelect?(filter)
+            } label: {
+                HStack {
+                    Label(label, systemImage: systemImage)
+                    Spacer()
+                    if store.selection == filter {
+                        Image(systemName: "checkmark")
+                            .foregroundStyle(.tint)
+                    }
+                }
+            }
+            .badge(count)
+        } else {
+            NavigationLink(value: filter) {
+                Label(label, systemImage: systemImage)
+            }
+            .badge(count)
+            .tag(filter)
         }
-        .badge(count)
-        .tag(filter)
     }
 
     @ViewBuilder
     private func tagRow(_ tag: Tag) -> some View {
-        NavigationLink(value: LibraryFilter.tag(tag.id)) {
-            HStack(spacing: 8) {
-                Circle()
-                    .fill(tagColor(tag.colorHex))
-                    .frame(width: 10, height: 10)
-                Text(tag.name)
+        let filter = LibraryFilter.tag(tag.id)
+        Group {
+            if onSelect != nil {
+                Button {
+                    store.send(.selectList(filter))
+                    onSelect?(filter)
+                } label: {
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(tagColor(tag.colorHex))
+                            .frame(width: 10, height: 10)
+                        Text(tag.name)
+                        Spacer()
+                        if store.selection == filter {
+                            Image(systemName: "checkmark")
+                                .foregroundStyle(.tint)
+                        }
+                    }
+                }
+                .badge(store.counts.byTag[tag.id] ?? 0)
+            } else {
+                NavigationLink(value: filter) {
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(tagColor(tag.colorHex))
+                            .frame(width: 10, height: 10)
+                        Text(tag.name)
+                    }
+                }
+                .badge(store.counts.byTag[tag.id] ?? 0)
+                .tag(filter)
             }
         }
-        .badge(store.counts.byTag[tag.id] ?? 0)
-        .tag(LibraryFilter.tag(tag.id))
         .contextMenu {
             Button("Rename") { store.send(.renameTagTapped(tag)) }
             Button("Delete", role: .destructive) { store.send(.deleteTagTapped(tag.id)) }

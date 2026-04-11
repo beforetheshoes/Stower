@@ -6,14 +6,20 @@ public struct LibraryScreen: View {
     /// Invoked when the user taps the settings gear in the iOS toolbar.
     /// nil on macOS (the sidebar already has its own settings button).
     private let onOpenSettings: (() -> Void)?
+    /// Invoked when the user taps the filter button in the iOS toolbar.
+    /// nil on macOS / iPad split-view where the sidebar column is always
+    /// visible. Set on iPhone compact to surface the filter sheet.
+    private let onOpenFilters: (() -> Void)?
     @State private var isAddURLPresented = false
 
     public init(
         store: StoreOf<LibraryFeature>,
-        onOpenSettings: (() -> Void)? = nil
+        onOpenSettings: (() -> Void)? = nil,
+        onOpenFilters: (() -> Void)? = nil
     ) {
         self.store = store
         self.onOpenSettings = onOpenSettings
+        self.onOpenFilters = onOpenFilters
     }
 
     public var body: some View {
@@ -178,6 +184,15 @@ public struct LibraryScreen: View {
         }
         #if os(iOS)
         .toolbar {
+            if let onOpenFilters {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        onOpenFilters()
+                    } label: {
+                        Label("Filters", systemImage: "line.3.horizontal.decrease.circle")
+                    }
+                }
+            }
             if let onOpenSettings {
                 ToolbarItem(placement: .topBarLeading) {
                     Button {
@@ -301,7 +316,8 @@ public struct LibraryScreen: View {
         case .starred: return "Starred"
         case .untagged: return "Untagged"
         case .recentlyDeleted: return "Recently Deleted"
-        case .tag: return "Tag"
+        case .tag(let id):
+            return store.availableTags.first(where: { $0.id == id })?.name ?? "Tag"
         }
     }
 

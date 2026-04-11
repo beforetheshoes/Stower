@@ -33,6 +33,7 @@ public struct AppView: View {
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @State private var isFilterSheetPresented = false
     #endif
 
     public init(store: StoreOf<AppFeature>) {
@@ -82,7 +83,7 @@ public struct AppView: View {
             NavigationStack {
                 LibraryScreen(
                     store: store.scope(state: \.library, action: \.library),
-                    onOpenSettings: { store.send(.openSettings) }
+                    onOpenFilters: { isFilterSheetPresented = true }
                 )
                     .scrollContentBackground(.hidden)
                     .background(theme.sidebarBackground)
@@ -94,6 +95,9 @@ public struct AppView: View {
                             .background(theme.readerBackground)
                     }
             }
+            .sheet(isPresented: $isFilterSheetPresented) {
+                filterSheet(theme: theme)
+            }
         } else {
             splitNavigationView(theme: theme)
         }
@@ -101,6 +105,36 @@ public struct AppView: View {
         splitNavigationView(theme: theme)
         #endif
     }
+
+    #if os(iOS)
+    /// Modal sidebar presented from the iPhone library toolbar. Reuses the
+    /// shared `SidebarScreen`, but rows are wired to dismiss the sheet via
+    /// the `onSelect` closure rather than push a NavigationSplitView column.
+    @ViewBuilder
+    private func filterSheet(theme: ReaderTheme) -> some View {
+        NavigationStack {
+            SidebarScreen(
+                store: store.scope(state: \.sidebar, action: \.sidebar),
+                onOpenSettings: {
+                    isFilterSheetPresented = false
+                    store.send(.openSettings)
+                },
+                onSelect: { _ in
+                    isFilterSheetPresented = false
+                }
+            )
+            .scrollContentBackground(.hidden)
+            .background(theme.sidebarBackground)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { isFilterSheetPresented = false }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+    }
+    #endif
 
     @ViewBuilder
     private func splitNavigationView(theme: ReaderTheme) -> some View {
