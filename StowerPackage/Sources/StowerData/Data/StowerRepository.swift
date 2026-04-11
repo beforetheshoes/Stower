@@ -59,6 +59,10 @@ public struct StowerRepository: Sendable {
     public var markIngestionJobProcessed: @Sendable (UUID) async throws -> Void
 
     public var enqueueHydrationJobsForMissingContent: @Sendable () async throws -> Int
+    /// Populates the local content table for PDF items that arrived via
+    /// CloudKit sync. See `_hydratePDFItemsFromSyncedContent` for details.
+    /// Returns the number of items hydrated.
+    public var hydratePDFItemsFromSyncedContent: @Sendable () async throws -> Int
 }
 
 private enum StowerRepositoryKey: DependencyKey {
@@ -117,7 +121,8 @@ extension StowerRepository {
             enqueueIngestionJob: { _, _ in },
             fetchPendingIngestionJobs: { [] },
             markIngestionJobProcessed: { _ in },
-            enqueueHydrationJobsForMissingContent: { 0 }
+            enqueueHydrationJobsForMissingContent: { 0 },
+            hydratePDFItemsFromSyncedContent: { 0 }
         )
     }()
 }
@@ -237,7 +242,8 @@ extension StowerRepository {
             enqueueIngestionJob: _enqueueIngestionJob(database: database),
             fetchPendingIngestionJobs: _fetchPendingIngestionJobs(database: database),
             markIngestionJobProcessed: _markIngestionJobProcessed(database: database),
-            enqueueHydrationJobsForMissingContent: _enqueueHydrationJobsForMissingContent(database: database)
+            enqueueHydrationJobsForMissingContent: _enqueueHydrationJobsForMissingContent(database: database),
+            hydratePDFItemsFromSyncedContent: _hydratePDFItemsFromSyncedContent(database: database)
         )
     }
 

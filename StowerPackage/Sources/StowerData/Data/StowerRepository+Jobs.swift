@@ -43,6 +43,66 @@ extension StowerRepository {
         }
     }
 
+    /// Hydrates the local content table for PDF items on devices that received
+    /// them via CloudKit sync. Unlike URL items (which rehydrate by re-fetching
+    /// the source URL through `enqueueHydrationJobsForMissingContent`), PDFs
+    /// carry their extracted text in a dedicated CloudKit-synced table so the
+    /// second device can render the structured-text view without the raw PDF
+    /// bytes (which never sync). This walks rows in `SavedPDFContentSyncTable`
+    /// whose matching `SavedItemContentLocalTable` row is missing or empty
+    /// and copies the extracted `documentJSON`/`plainText` across.
+    static func _hydratePDFItemsFromSyncedContent(database: any DatabaseWriter) -> @Sendable () async throws -> Int {
+        { () async throws -> Int in
+            let now: Date = Date.now
+            return try await database.write { db -> Int in
+                let pdfRows: [SavedPDFContentSyncTable] = try SavedPDFContentSyncTable.fetchAll(db)
+                var hydrated = 0
+                for pdfRow in pdfRows {
+                    let existing: SavedItemContentLocalTable? = try SavedItemContentLocalTable
+                        .find(pdfRow.id)
+                        .fetchOne(db)
+
+                    // Only populate when there is nothing to render — we do
+                    // not clobber a device's locally-ingested copy if it
+                    // already has one.
+                    if let existing, !existing.documentJSON.isEmpty {
+                        continue
+                    }
+
+                    if existing != nil {
+                        try SavedItemContentLocalTable.find(pdfRow.id).update {
+                            $0.renderFormat = RenderFormat.pdf.rawValue
+                            $0.documentVersion = 1
+                            $0.plainText = pdfRow.plainText
+                            $0.documentJSON = pdfRow.documentJSON
+                            $0.localStatus = "available"
+                            $0.localError = nil as String?
+                            $0.updatedAt = now
+                        }.execute(db)
+                    } else {
+                        try SavedItemContentLocalTable.insert {
+                            SavedItemContentLocalTable.Draft(
+                                itemID: pdfRow.id,
+                                renderFormat: RenderFormat.pdf.rawValue,
+                                documentVersion: 1,
+                                plainText: pdfRow.plainText,
+                                documentJSON: pdfRow.documentJSON,
+                                sourceHTMLHash: "",
+                                sourceHTML: "",
+                                localStatus: "available",
+                                localError: nil,
+                                createdAt: now,
+                                updatedAt: now
+                            )
+                        }.execute(db)
+                    }
+                    hydrated += 1
+                }
+                return hydrated
+            }
+        }
+    }
+
     static func _enqueueHydrationJobsForMissingContent(database: any DatabaseWriter) -> @Sendable () async throws -> Int {
         { () async throws -> Int in
             let now: Date = Date.now

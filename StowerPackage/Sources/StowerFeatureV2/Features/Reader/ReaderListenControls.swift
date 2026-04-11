@@ -13,6 +13,8 @@ struct ReaderListenControls: View {
     let onPause: () -> Void
     let onResume: () -> Void
     let onStop: () -> Void
+    let onSkipBackward: () -> Void
+    let onSkipForward: () -> Void
     let onRateChanged: (Float) -> Void
     let onVoiceChanged: (String?) -> Void
 
@@ -43,10 +45,42 @@ struct ReaderListenControls: View {
 
     // MARK: - Playback
 
+    /// Whether the currently-speaking sentence is the first queued
+    /// unit. Used to dim the skip-backward button so it doesn't pretend
+    /// to do something it can't. Uses `sequence` rather than
+    /// `blockIndex` because a single document block expands into many
+    /// sentences that all share an index.
+    private var isAtFirstBlock: Bool {
+        guard let current = speech.currentSequence,
+              let first = speech.currentBlocks.first?.sequence else {
+            return true
+        }
+        return current <= first
+    }
+
+    /// Whether the currently-speaking sentence is the last queued unit.
+    private var isAtLastBlock: Bool {
+        guard let current = speech.currentSequence,
+              let last = speech.currentBlocks.last?.sequence else {
+            return true
+        }
+        return current >= last
+    }
+
     @ViewBuilder
     private var playbackRow: some View {
         HStack(spacing: 10) {
             if speech.isSpeaking {
+                Button(action: onSkipBackward) {
+                    Image(systemName: "backward.fill")
+                        .frame(minWidth: 28)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+                .disabled(isAtFirstBlock)
+                .accessibilityLabel("Previous section")
+                .help("Previous section")
+
                 Button {
                     if speech.isPaused {
                         onResume()
@@ -62,6 +96,16 @@ struct ReaderListenControls: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
+
+                Button(action: onSkipForward) {
+                    Image(systemName: "forward.fill")
+                        .frame(minWidth: 28)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+                .disabled(isAtLastBlock)
+                .accessibilityLabel("Next section")
+                .help("Next section")
 
                 Button(role: .destructive) {
                     onStop()

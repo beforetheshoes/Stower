@@ -66,7 +66,14 @@ public struct ReaderWebView: View {
                     .webViewContentBackground(.hidden)
             }
         }
-        .task(id: itemID) {
+        // Keyed on both `itemID` and the HTML byte count so that in-place
+        // document updates (e.g. re-running PDF OCR on the currently-open
+        // item) re-fire `loadContent()` and swap the WebPage for one
+        // loading the freshly-produced HTML. Without the byte-count
+        // component the task was only keyed on itemID, which never
+        // changes during an in-place update, so the WKWebView kept
+        // showing the old content.
+        .task(id: ContentReloadKey(itemID: itemID, htmlBytes: html.utf8.count)) {
             loadContent()
         }
         .onChange(of: appearance) { _, newAppearance in
@@ -95,6 +102,17 @@ public struct ReaderWebView: View {
             archiveServer?.stop()
             archiveServer = nil
         }
+    }
+
+    /// Identity for the reload task. Changes whenever the item swaps or
+    /// the HTML content for the current item is replaced in place (e.g.
+    /// after a PDF is re-OCRed). Using `utf8.count` keeps the equality
+    /// check O(1); a collision (identical byte count after reprocessing)
+    /// would be extraordinarily unlikely given that re-extraction shifts
+    /// paragraph/table content around.
+    private struct ContentReloadKey: Hashable {
+        let itemID: UUID
+        let htmlBytes: Int
     }
 
     // MARK: - Loading
@@ -181,6 +199,15 @@ public struct ReaderWebView: View {
     /// starts a `LocalArchiveServer` pointing at it. The returned URL is what
     /// the WebView should load; the returned server must be retained for the
     /// lifetime of the reader view and stopped on dismiss.
+    ///
+    /// For PDF items, also symlinks every `pdf-page-N.jpg` from the
+    /// permanent archive directory (`StowerArchive/{itemID}/`) into the
+    /// scratch dir so the local server can serve them as relative-path
+    /// assets alongside `index.html`. The PDF ingestion pipeline emits
+    /// `<img src="pdf-page-N.jpg">` as relative URLs specifically because
+    /// WKWebView blocks `file://` asset loads from documents loaded over
+    /// HTTP — the symlinks keep the page images in the same origin as
+    /// the HTML.
     private nonisolated static func prepareStructuredServer(
         html: String,
         itemID: UUID
@@ -194,6 +221,18 @@ public struct ReaderWebView: View {
             try Data(html.utf8).write(to: indexURL, options: .atomic)
         } catch {
             return nil
+        }
+
+        // Symlink PDF page images from the archive into the scratch dir.
+        // Idempotent: if a symlink already exists from a previous load,
+        // `removeItem` clears it so the fresh one points at the current
+        // archive file. Safe to fail silently — if symlinks can't be
+        // created the HTML just renders with broken images, which is no
+        // worse than the pre-PDF-page baseline.
+        for source in PDFArchiver.pageImageURLs(for: itemID) {
+            let link = scratchDir.appendingPathComponent(source.lastPathComponent)
+            try? FileManager.default.removeItem(at: link)
+            try? FileManager.default.createSymbolicLink(at: link, withDestinationURL: source)
         }
 
         let server = LocalArchiveServer(archiveDir: scratchDir, articlePath: "/", originURL: nil)

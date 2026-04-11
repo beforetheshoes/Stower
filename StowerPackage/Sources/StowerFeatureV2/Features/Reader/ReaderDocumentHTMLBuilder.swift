@@ -62,6 +62,25 @@ public enum ReaderDocumentHTMLBuilder {
         }
 
         html += "</article>\n"
+
+        // Hidden plain-text dump so WKWebView's find-in-page can match
+        // words inside documents whose visible content is non-textual —
+        // primarily PDF items rendered as `.figure` blocks, where the
+        // `<img>` tags carry no searchable text. The dump lives inside
+        // the DOM (so it's findable) but is positioned outside the
+        // viewport via `clip-path` and marked `aria-hidden` + `tabindex`
+        // so screen readers and keyboard navigation skip it.
+        if documentHasOnlyFigureBlocks(document),
+           !item.content.isEmpty {
+            html += "<div class=\"stower-search-index\" aria-hidden=\"true\" tabindex=\"-1\">\n"
+            for paragraph in item.content.components(separatedBy: "\n\n") {
+                let trimmed = paragraph.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { continue }
+                html += "<p>\(escapeHTML(trimmed))</p>\n"
+            }
+            html += "</div>\n"
+        }
+
         html += "<script>\n"
         html += runtimeJS
         html += "\n</script>\n"
@@ -69,6 +88,17 @@ public enum ReaderDocumentHTMLBuilder {
         html += "</html>\n"
 
         return html
+    }
+
+    /// Returns true when every block in the document is a `.figure` —
+    /// i.e. the reader's visible content is entirely non-textual.
+    /// Currently only PDF items produce this shape.
+    private static func documentHasOnlyFigureBlocks(_ document: ReaderDocument) -> Bool {
+        guard !document.blocks.isEmpty else { return false }
+        return document.blocks.allSatisfy { block in
+            if case .figure = block { return true }
+            return false
+        }
     }
 
     // MARK: - Header
@@ -160,9 +190,7 @@ public enum ReaderDocumentHTMLBuilder {
             return renderEmbed(embed, idAttr: idAttr)
 
         case .table(let markdown):
-            // Proper GFM table parsing is a follow-up. For now, emit the raw
-            // markdown in a preformatted block so it's legible.
-            return "<div class=\"stower-table-markdown\" \(idAttr)><pre>\(escapeHTML(markdown))</pre></div>"
+            return renderMarkdownTable(markdown, idAttr: idAttr)
 
         case .horizontalRule:
             return "<hr \(idAttr)>"
@@ -176,6 +204,65 @@ public enum ReaderDocumentHTMLBuilder {
             out += "</aside>"
             return out
         }
+    }
+
+    /// Parses a GFM-style pipe table and emits an HTML `<table>`. Expected
+    /// input is the format produced by `PDFIngestionClient`'s OCR pipeline:
+    /// a header row, a separator row (`| --- | --- |`), and zero or more
+    /// body rows. Any line that doesn't start with `|` is skipped.
+    private static func renderMarkdownTable(_ markdown: String, idAttr: String) -> String {
+        let rawLines = markdown
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { String($0).trimmingCharacters(in: .whitespaces) }
+            .filter { $0.hasPrefix("|") }
+
+        guard !rawLines.isEmpty else {
+            return "<div \(idAttr)></div>"
+        }
+
+        func parseRow(_ line: String) -> [String] {
+            var trimmed = line
+            if trimmed.hasPrefix("|") { trimmed.removeFirst() }
+            if trimmed.hasSuffix("|") { trimmed.removeLast() }
+            return trimmed
+                .split(separator: "|", omittingEmptySubsequences: false)
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+        }
+
+        func isSeparator(_ cells: [String]) -> Bool {
+            guard !cells.isEmpty else { return false }
+            return cells.allSatisfy { cell in
+                let t = cell.replacingOccurrences(of: ":", with: "")
+                return !t.isEmpty && t.allSatisfy { $0 == "-" }
+            }
+        }
+
+        var rows = rawLines.map(parseRow)
+        guard !rows.isEmpty else { return "<div \(idAttr)></div>" }
+
+        // The header row is the first line; the separator (if present)
+        // immediately follows and is skipped.
+        let header = rows.removeFirst()
+        if let first = rows.first, isSeparator(first) {
+            rows.removeFirst()
+        }
+
+        var html = "<table class=\"stower-table\" \(idAttr)>"
+        html += "<thead><tr>"
+        for cell in header {
+            html += "<th>\(escapeHTML(cell))</th>"
+        }
+        html += "</tr></thead>"
+        html += "<tbody>"
+        for row in rows {
+            html += "<tr>"
+            for cell in row {
+                html += "<td>\(escapeHTML(cell))</td>"
+            }
+            html += "</tr>"
+        }
+        html += "</tbody></table>"
+        return html
     }
 
     private static func renderFigure(media: MediaDescriptor, idAttr: String) -> String {
@@ -331,9 +418,23 @@ public enum ReaderDocumentHTMLBuilder {
     // MARK: - Helpers
 
     /// Returns the best URL string for a media descriptor, preferring the
-    /// pre-downloaded local file if it exists. When served through a local
-    /// HTTP archive server the `file://` URL is translated server-side.
+    /// pre-downloaded local file if it exists.
+    ///
+    /// Special case: PDF page images emitted by `PDFIngestionClient` use a
+    /// `stower://pdf-page/N` marker in their `sourceURL`. For these we
+    /// return the bare filename (e.g. `"pdf-page-3.jpg"`), which renders
+    /// as a **relative** `<img src="pdf-page-3.jpg">` in the HTML. The
+    /// reader's structured-HTML `LocalArchiveServer` serves that path out
+    /// of its per-view scratch directory, which has symlinks pointing at
+    /// the real images in `StowerArchive/{itemID}/`. This keeps the PDF
+    /// page images inside the HTML's same-origin context — loading
+    /// `file://` URLs from an `http://localhost` document is blocked by
+    /// WKWebView, so the relative-URL indirection is load-bearing.
     private static func resolveMediaURL(_ media: MediaDescriptor) -> String {
+        if media.sourceURL.hasPrefix("stower://pdf-page/"),
+           let local = media.localURL, !local.isEmpty {
+            return URL(fileURLWithPath: local).lastPathComponent
+        }
         if let local = media.localURL, !local.isEmpty, FileManager.default.fileExists(atPath: local) {
             return URL(fileURLWithPath: local).absoluteString
         }
@@ -417,6 +518,51 @@ public enum ReaderDocumentHTMLBuilder {
       margin-bottom: 0;
     }
     figure { margin: 28px 0; }
+    /* PDF page image figures — rasterized pages rendered inline. One
+       <figure> per page. Tighter vertical margin than article figures
+       so adjacent pages read as a contiguous document, and a subtle
+       1px border so each page is visually bounded against the reader's
+       background. The figcaption ("Page N of M") is present for
+       accessibility but visually hidden — real PDF pages already
+       carry their own page numbering. */
+    figure:has(img[src^="pdf-page-"]) {
+      margin: 16px 0;
+    }
+    figure img[src^="pdf-page-"] {
+      width: 100%;
+      height: auto;
+      border-radius: 4px;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+    }
+    figure:has(img[src^="pdf-page-"]) figcaption {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip: rect(0 0 0 0);
+    }
+    /* Hidden text index for WKWebView find-in-page on PDF items.
+       Content lives in the normal document flow (which is the only
+       reliable way WebKit's find-in-page picks up text — anything
+       with display:none, visibility:hidden, or an off-viewport
+       absolute position is excluded from the find index). Visual
+       invisibility comes from transparent color + 1px font + 0
+       line-height, so the block collapses to near-zero height
+       without WebKit thinking it's hidden. Marked aria-hidden so
+       screen readers skip the duplicate content, and user-select:none
+       so rubber-band selection doesn't accidentally grab it. */
+    .stower-search-index {
+      color: transparent;
+      font-size: 1px;
+      line-height: 0;
+      user-select: none;
+      -webkit-user-select: none;
+      pointer-events: none;
+    }
+    .stower-search-index p {
+      margin: 0;
+      padding: 0;
+    }
     figure img, figure video {
       display: block;
       max-width: 100%;
@@ -443,6 +589,27 @@ public enum ReaderDocumentHTMLBuilder {
     .stower-table-markdown pre {
       white-space: pre-wrap;
       word-break: break-word;
+    }
+    table.stower-table {
+      border-collapse: collapse;
+      width: 100%;
+      margin: 20px 0;
+      font-size: 0.92em;
+    }
+    table.stower-table th,
+    table.stower-table td {
+      border: 1px solid currentColor;
+      padding: 8px 12px;
+      text-align: left;
+      vertical-align: top;
+      opacity: 0.92;
+    }
+    table.stower-table thead th {
+      font-weight: 600;
+      background: rgba(128, 128, 128, 0.12);
+    }
+    table.stower-table tbody tr:nth-child(even) td {
+      background: rgba(128, 128, 128, 0.06);
     }
     hr {
       border: none;

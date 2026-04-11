@@ -1,5 +1,6 @@
 import ComposableArchitecture
 import SwiftUI
+import UniformTypeIdentifiers
 
 public struct LibraryScreen: View {
     @Bindable var store: StoreOf<LibraryFeature>
@@ -11,6 +12,7 @@ public struct LibraryScreen: View {
     /// visible. Set on iPhone compact to surface the filter sheet.
     private let onOpenFilters: (() -> Void)?
     @State private var isAddURLPresented = false
+    @State private var isPDFPickerPresented = false
 
     public init(
         store: StoreOf<LibraryFeature>,
@@ -55,7 +57,7 @@ public struct LibraryScreen: View {
 
                         VStack(alignment: .leading, spacing: 6) {
                             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                                Text(item.title)
+                                Text(LibrarySearchHighlight.highlighted(item.title, query: store.query))
                                     .font(.headline)
                                     .lineLimit(3)
                                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -67,6 +69,22 @@ public struct LibraryScreen: View {
                                 if shouldShowBadge(for: item.processingState) {
                                     processingBadge(item.processingState)
                                 }
+                            }
+
+                            // When the query matches body text (not title),
+                            // surface the hit as a snippet so the user can
+                            // tell why the row showed up in results. Nil
+                            // when the title already contains the match —
+                            // no need to duplicate the context.
+                            if let snippet = LibrarySearchHighlight.bodySnippet(
+                                item: item,
+                                query: store.query
+                            ) {
+                                Text(snippet)
+                                    .font(.caption)
+                                    .foregroundStyle(.primary.opacity(0.85))
+                                    .lineLimit(2)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
                             }
 
                             if let sourceURL = item.sourceURL,
@@ -207,14 +225,22 @@ public struct LibraryScreen: View {
                 }
             }
             ToolbarItem(placement: .primaryAction) {
-                Button {
-                    // Clear any stale error so the sheet starts clean.
-                    if store.saveState == .failed {
-                        store.send(.sourceURLChanged(""))
+                Menu {
+                    Button {
+                        if store.saveState == .failed {
+                            store.send(.sourceURLChanged(""))
+                        }
+                        isAddURLPresented = true
+                    } label: {
+                        Label("Add URL…", systemImage: "link")
                     }
-                    isAddURLPresented = true
+                    Button {
+                        isPDFPickerPresented = true
+                    } label: {
+                        Label("Import PDF…", systemImage: "doc.richtext")
+                    }
                 } label: {
-                    Label("Add URL", systemImage: "plus")
+                    Label("Add", systemImage: "plus")
                 }
             }
         }
@@ -230,8 +256,55 @@ public struct LibraryScreen: View {
             }
         }
         #endif
+        .fileImporter(
+            isPresented: $isPDFPickerPresented,
+            allowedContentTypes: [.pdf]
+        ) { result in
+            handlePDFImport(result)
+        }
         .task {
             store.send(.onAppear)
+        }
+    }
+
+    /// Handles the result of the SwiftUI `.fileImporter` PDF picker. The
+    /// picked URL is security-scoped — we must start/stop access around the
+    /// copy, and we copy to a plain temp file so the reducer can consume a
+    /// URL with no lifetime restrictions.
+    private func handlePDFImport(_ result: Result<URL, Error>) {
+        switch result {
+        case .success(let pickedURL):
+            let accessed = pickedURL.startAccessingSecurityScopedResource()
+            defer {
+                if accessed { pickedURL.stopAccessingSecurityScopedResource() }
+            }
+            do {
+                // Copy into a unique temp subdirectory so we can preserve
+                // the picked file's original name. PDFIngestionClient uses
+                // the URL's `lastPathComponent` as the title fallback — if
+                // we named the scratch file `{uuid}.pdf` the resulting item
+                // would show up in the library titled with a raw UUID.
+                let scratchDir = FileManager.default.temporaryDirectory
+                    .appendingPathComponent(UUID().uuidString, isDirectory: true)
+                try FileManager.default.createDirectory(
+                    at: scratchDir,
+                    withIntermediateDirectories: true
+                )
+                let scratch = scratchDir.appendingPathComponent(pickedURL.lastPathComponent)
+                try FileManager.default.copyItem(at: pickedURL, to: scratch)
+                store.send(.importPDFSelected(scratch))
+            } catch {
+                store.send(.saveURLFailed("Couldn't read PDF: \(error.localizedDescription)"))
+            }
+        case .failure(let error):
+            // User cancellation shows up here as NSError cancelled — treat
+            // anything that isn't a real failure as a silent dismiss. The
+            // fileImporter modifier does not distinguish cancel from error,
+            // so we only surface errors that carry a message.
+            let ns = error as NSError
+            if ns.code != NSUserCancelledError {
+                store.send(.saveURLFailed("PDF import failed: \(error.localizedDescription)"))
+            }
         }
     }
 
@@ -363,6 +436,13 @@ public struct LibraryScreen: View {
             #if os(macOS)
             .buttonStyle(.borderedProminent)
             #endif
+
+            Button {
+                isPDFPickerPresented = true
+            } label: {
+                Label("Import PDF", systemImage: "doc.richtext")
+            }
+            .disabled(store.isSaving)
         }
     }
 

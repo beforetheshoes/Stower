@@ -184,6 +184,7 @@ public struct IngestionJob: Equatable, Identifiable, Sendable {
         case url
         case text
         case hydrate
+        case pdf
     }
 
     public let id: UUID

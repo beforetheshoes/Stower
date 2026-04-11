@@ -187,6 +187,7 @@ public enum StowerDatabase {
         migrator.registerMigration("add-isread-isstarred-softdelete-and-tags") { db in try migration_v5(db) }
         migrator.registerMigration("drop-unique-indexes-from-sync-tables") { db in try migration_v6(db) }
         migrator.registerMigration("add-ai-summary-columns") { db in try migration_v7(db) }
+        migrator.registerMigration("add-pdf-support") { db in try migration_v8(db) }
         try migrator.migrate(database)
     }
 
@@ -490,6 +491,26 @@ public enum StowerDatabase {
     private static func migration_v7(_ db: Database) throws {
         try db.execute(sql: #"ALTER TABLE "savedItemContentLocalTables" ADD COLUMN "summary" TEXT"#)
         try db.execute(sql: #"ALTER TABLE "savedItemContentLocalTables" ADD COLUMN "summaryGeneratedAt" TEXT"#)
+    }
+
+    /// Adds PDF ingestion support:
+    ///   • `pdfSHA256` column on the local content table — used for dedup and
+    ///     to find the staged PDF file in temp during post-create placement.
+    ///   • A new `savedPDFContentSyncTables` table — CloudKit-synced, carries
+    ///     the extracted `documentJSON`/`plainText` for PDF items so a second
+    ///     device can hydrate the structured-text view without having the PDF
+    ///     bytes (which never sync). Only populated for PDF items.
+    private static func migration_v8(_ db: Database) throws {
+        try db.execute(sql: #"ALTER TABLE "savedItemContentLocalTables" ADD COLUMN "pdfSHA256" TEXT"#)
+        try db.execute(sql: """
+            CREATE TABLE IF NOT EXISTS "savedPDFContentSyncTables" (
+              "id" TEXT PRIMARY KEY NOT NULL,
+              "documentJSON" TEXT NOT NULL DEFAULT '',
+              "plainText" TEXT NOT NULL DEFAULT '',
+              "createdAt" TEXT NOT NULL,
+              "updatedAt" TEXT NOT NULL
+            ) STRICT
+            """)
     }
 }
 

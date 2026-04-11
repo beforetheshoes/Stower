@@ -77,6 +77,7 @@ public struct AppFeature {
     @Dependency(\.cloudSyncClient) var cloudSyncClient
     @Dependency(\.stowerRepository) var repository
     @Dependency(\.urlIngestionClient) var ingestionClient
+    @Dependency(\.pdfIngestionClient) var pdfIngestionClient
     @Dependency(\.defaultDatabase) var database
     @Dependency(\.defaultSyncEngine) var syncEngine
     @Dependency(\.continuousClock) var clock
@@ -102,6 +103,7 @@ public struct AppFeature {
                 let cloudSyncClient = self.cloudSyncClient
                 let repository = self.repository
                 let ingestionClient = self.ingestionClient
+                let pdfIngestionClient = self.pdfIngestionClient
                 let clock = self.clock
                 let periodicSync: Effect<Action> =
                     context == .live
@@ -144,7 +146,8 @@ public struct AppFeature {
                             _ = try await repository.enqueueHydrationJobsForMissingContent()
                             try await processIngestionJobs(
                                 repository: repository,
-                                ingestionClient: ingestionClient
+                                ingestionClient: ingestionClient,
+                                pdfIngestionClient: pdfIngestionClient
                             )
                             try await cloudSyncClient.sendChanges()
                             await send(.startupFinished)
@@ -180,10 +183,12 @@ public struct AppFeature {
                 guard state.startupFinished else { return .none }
                 let repository = self.repository
                 let ingestionClient = self.ingestionClient
+                let pdfIngestionClient = self.pdfIngestionClient
                 return .run { send in
                     try? await processIngestionJobs(
                         repository: repository,
-                        ingestionClient: ingestionClient
+                        ingestionClient: ingestionClient,
+                        pdfIngestionClient: pdfIngestionClient
                     )
                     await send(.library(.reload))
                     await send(.sidebar(.reload))
@@ -221,9 +226,15 @@ public struct AppFeature {
                 if status.lastSyncSuccess != nil, status.lastSyncSuccess != previous.lastSyncSuccess {
                     let repository = self.repository
                     let ingestionClient = self.ingestionClient
+                    let pdfIngestionClient = self.pdfIngestionClient
                     return .run { send in
                         _ = try? await repository.enqueueHydrationJobsForMissingContent()
-                        try? await processIngestionJobs(repository: repository, ingestionClient: ingestionClient)
+                        _ = try? await repository.hydratePDFItemsFromSyncedContent()
+                        try? await processIngestionJobs(
+                            repository: repository,
+                            ingestionClient: ingestionClient,
+                            pdfIngestionClient: pdfIngestionClient
+                        )
                         await send(.library(.reload))
                         await send(.sidebar(.reload))
                     }
@@ -317,7 +328,8 @@ public struct AppFeature {
 
 private func processIngestionJobs(
     repository: StowerRepository,
-    ingestionClient: URLIngestionClient
+    ingestionClient: URLIngestionClient,
+    pdfIngestionClient: PDFIngestionClient
 ) async throws {
     let jobs = try await repository.fetchPendingIngestionJobs()
     for job in jobs {
@@ -345,11 +357,44 @@ private func processIngestionJobs(
                             itemID: item.id
                         )
                     }
+
+                    // If the URL ingester short-circuited into the PDF path,
+                    // the bytes are staged in `tmp/stower-pdf-stage-{hash}.pdf`.
+                    // Move them into the archive directory now that we have
+                    // an item ID.
+                    if result.renderFormat == .pdf, let hash = result.pdfSHA256 {
+                        let staged = FileManager.default.temporaryDirectory
+                            .appendingPathComponent("stower-pdf-stage-\(hash).pdf")
+                        if FileManager.default.fileExists(atPath: staged.path) {
+                            try? PDFArchiver.archivePDF(from: staged, itemID: item.id)
+                            try? FileManager.default.removeItem(at: staged)
+                        }
+                    }
                 } else {
                     _ = try await repository.createItemFromIngestion(.sharedText(trimmed))
                 }
             } catch {
                 _ = try? await repository.createItemFromIngestion(.sharedText(job.payload))
+            }
+        case .pdf:
+            // Payload is the absolute path of a PDF file that the share
+            // extension or in-app picker copied into the shared App Group
+            // container. The file lives inside a UUID-named subdirectory
+            // (so the original filename is preserved for title fallback);
+            // clean up the whole subdir once ingestion is done.
+            let pdfURL = URL(fileURLWithPath: job.payload)
+            let scratchDir = pdfURL.deletingLastPathComponent()
+            do {
+                let result = try await pdfIngestionClient.ingest(pdfURL)
+                let item = try await repository.createItemFromIngestion(result)
+                try? PDFArchiver.archivePDF(from: pdfURL, itemID: item.id)
+                try? FileManager.default.removeItem(at: scratchDir)
+            } catch {
+                let fallback = pdfURL.deletingPathExtension().lastPathComponent
+                _ = try? await repository.createItemFromIngestion(
+                    .sharedText("Failed to ingest PDF: \(fallback)\n\n\(error.localizedDescription)")
+                )
+                try? FileManager.default.removeItem(at: scratchDir)
             }
         case .text:
             _ = try await repository.createItemFromIngestion(.sharedText(job.payload))

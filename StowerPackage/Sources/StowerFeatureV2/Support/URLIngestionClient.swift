@@ -33,6 +33,15 @@ public struct URLIngestionClient: Sendable {
             return try await YouTubeIngestionClient.live.ingest(match, url)
         }
 
+        // If the URL resolves to a PDF (via Content-Type or a body sniff),
+        // route through PDFIngestionClient instead of the HTML pipeline. The
+        // staged file path is handed downstream via `pdfSHA256` so
+        // `processIngestionJobs` can place the file in the archive after the
+        // item ID is assigned.
+        if let pdfResult = try await maybeIngestAsPDF(url: url) {
+            return pdfResult
+        }
+
         var request = URLRequest(url: url)
         request.timeoutInterval = 30
         request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
@@ -262,6 +271,111 @@ extension DependencyValues {
         get { self[ReaderRenderClientKey.self] }
         set { self[ReaderRenderClientKey.self] = newValue }
     }
+}
+
+// MARK: - PDF URL detection
+
+/// Attempts to short-circuit URL ingestion through the PDF pipeline when the
+/// URL resolves to `application/pdf`. Sends a lightweight HEAD first to avoid
+/// downloading the body when the URL is plainly an HTML article; if HEAD is
+/// unhelpful, falls back to a GET and sniffs the first few bytes for `%PDF-`.
+///
+/// Returns nil when the resource is not a PDF (caller continues with the HTML
+/// pipeline). Returns a fully-populated `IngestionResult` when the resource
+/// is a PDF, with its `sourceURL`/`canonicalURL` overridden to the original
+/// URL so URL-based dedup still works. Writes the PDF bytes to a deterministic
+/// staging path in the temp directory so `processIngestionJobs` can place the
+/// file into `StowerArchive/{itemID}/` after the item ID is assigned.
+private func maybeIngestAsPDF(url: URL) async throws -> IngestionResult? {
+    guard let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else {
+        return nil
+    }
+
+    // Step 1 — HEAD check.
+    var headRequest = URLRequest(url: url)
+    headRequest.httpMethod = "HEAD"
+    headRequest.timeoutInterval = 15
+    headRequest.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+    headRequest.setValue(
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 (KHTML, like Gecko)",
+        forHTTPHeaderField: "User-Agent"
+    )
+
+    var isPDFFromHead = false
+    if let (_, response) = try? await URLSession.shared.data(for: headRequest),
+       let http = response as? HTTPURLResponse {
+        let mime = (http.mimeType ?? "").lowercased()
+        let contentType = (http.value(forHTTPHeaderField: "Content-Type") ?? "").lowercased()
+        if mime == "application/pdf" || contentType.hasPrefix("application/pdf") {
+            isPDFFromHead = true
+        }
+    }
+
+    // Step 2 — if HEAD said yes, or the URL path ends in .pdf and HEAD was
+    // unhelpful, GET the body. Otherwise return nil to let the HTML pipeline
+    // handle it.
+    let pathLooksLikePDF = url.path.lowercased().hasSuffix(".pdf")
+    guard isPDFFromHead || pathLooksLikePDF else {
+        return nil
+    }
+
+    var getRequest = URLRequest(url: url)
+    getRequest.timeoutInterval = 60
+    getRequest.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+    getRequest.setValue(
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 (KHTML, like Gecko)",
+        forHTTPHeaderField: "User-Agent"
+    )
+    let (data, response) = try await URLSession.shared.data(for: getRequest)
+
+    // Sniff: a real PDF starts with `%PDF-`. Guards against servers that
+    // lie in Content-Type or that 200-OK with an HTML error page when the
+    // URL ends in `.pdf`.
+    let header = data.prefix(5)
+    let looksLikePDF: Bool = {
+        if isPDFFromHead { return true }
+        guard header.count == 5 else { return false }
+        return header[header.startIndex] == 0x25    // %
+            && header[header.startIndex + 1] == 0x50 // P
+            && header[header.startIndex + 2] == 0x44 // D
+            && header[header.startIndex + 3] == 0x46 // F
+            && header[header.startIndex + 4] == 0x2D // -
+    }()
+    guard looksLikePDF else { return nil }
+
+    // Also catch the case where the server reported `application/pdf`
+    // via GET but HEAD wasn't definitive.
+    if let http = response as? HTTPURLResponse,
+       let mime = http.mimeType?.lowercased(),
+       mime != "application/pdf" && !looksLikePDF {
+        return nil
+    }
+
+    // Step 3 — write to temp and hand to the PDF pipeline.
+    let tempDir = FileManager.default.temporaryDirectory
+    let scratch = tempDir.appendingPathComponent("\(UUID().uuidString).pdf")
+    try data.write(to: scratch, options: .atomic)
+    defer { try? FileManager.default.removeItem(at: scratch) }
+
+    var result = try await PDFIngestionClient.live.ingest(scratch)
+
+    // Override source/canonical to the real URL so URL-based dedup and
+    // hydrate-on-second-device both work. The pdfSHA256 stays on the result
+    // so AppFeature.processIngestionJobs can locate the staged file below.
+    result.sourceURL = url.absoluteString
+    result.canonicalURL = url.absoluteString
+    result.document.sourceURL = url.absoluteString
+    result.document.canonicalURL = url.absoluteString
+
+    // Move the scratch file to a deterministic staging path keyed on the
+    // SHA-256 so `processIngestionJobs` can find and archive it after it
+    // calls createItemFromIngestion. The `defer` above is then a no-op.
+    if let hash = result.pdfSHA256 {
+        let staged = tempDir.appendingPathComponent("stower-pdf-stage-\(hash).pdf")
+        try? FileManager.default.removeItem(at: staged)
+        try? FileManager.default.moveItem(at: scratch, to: staged)
+    }
+    return result
 }
 
 // MARK: - Interactive Content Detection

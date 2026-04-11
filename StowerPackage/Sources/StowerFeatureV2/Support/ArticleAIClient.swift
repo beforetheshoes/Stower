@@ -118,6 +118,25 @@ extension ArticleAIClient {
             """
     }
 
+    /// Shared `SystemLanguageModel` instance configured with permissive
+    /// content-transformation guardrails. Read-later content frequently
+    /// trips the default guardrails as false positives — security course
+    /// material, benefits summaries, medical articles, historical texts,
+    /// legal documents, etc. all contain words that Apple's default
+    /// guardrail flags as "unsafe," producing `guardrailViolation` errors
+    /// on perfectly innocent inputs. `permissiveContentTransformations`
+    /// (iOS 26+) is the designated opt-out: the framework still filters
+    /// outright harmful generation, but allows text transformation
+    /// (summarization, Q&A) over content that isn't itself being asked
+    /// to cause harm. That's exactly the transformation surface this
+    /// client operates on.
+    fileprivate static let permissiveModel: SystemLanguageModel = {
+        SystemLanguageModel(
+            useCase: .general,
+            guardrails: .permissiveContentTransformations
+        )
+    }()
+
     public static let live: ArticleAIClient = {
         ArticleAIClient(
             availability: { liveAvailability() },
@@ -287,7 +306,10 @@ extension ArticleAIClient {
             // "section" without leaking into the final summary.
             continuation.yield(.stage("Summarizing section \(offset + 1) of \(chunks.count)"))
 
-            let sectionSession = LanguageModelSession(instructions: Instructions.sectionSummary)
+            let sectionSession = LanguageModelSession(
+                model: permissiveModel,
+                instructions: Instructions.sectionSummary
+            )
             // Raw chunk text only — no "Section 1 of 2:" preamble, which
             // would otherwise bleed into the section summary output and
             // then into the final reduce pass.
@@ -309,7 +331,10 @@ extension ArticleAIClient {
         // of 2" framing because we stopped emitting that above.
         let concatenatedFallback = combinedInput
 
-        let reduceSession = LanguageModelSession(instructions: Instructions.reduceSummary)
+        let reduceSession = LanguageModelSession(
+            model: permissiveModel,
+            instructions: Instructions.reduceSummary
+        )
         let reducePrompt = combinedInput
 
         do {
@@ -337,7 +362,10 @@ extension ArticleAIClient {
         plainText: String,
         continuation: AsyncThrowingStream<SummaryEvent, Error>.Continuation
     ) async throws {
-        let session = LanguageModelSession(instructions: Instructions.singleShotSummary)
+        let session = LanguageModelSession(
+            model: permissiveModel,
+            instructions: Instructions.singleShotSummary
+        )
         let prompt = "Summarize this article:\n\n\(plainText)"
 
         var lastContent = ""
@@ -433,7 +461,10 @@ extension ArticleAIClient {
         question: String,
         continuation: AsyncThrowingStream<AnswerEvent, Error>.Continuation
     ) async throws {
-        let session = LanguageModelSession(instructions: Instructions.stuffedAnswer)
+        let session = LanguageModelSession(
+            model: permissiveModel,
+            instructions: Instructions.stuffedAnswer
+        )
         let prompt = """
             Here is the full article:
 
@@ -458,7 +489,10 @@ extension ArticleAIClient {
         question: String,
         continuation: AsyncThrowingStream<AnswerEvent, Error>.Continuation
     ) async throws {
-        let session = LanguageModelSession(instructions: Instructions.retrievalAnswer)
+        let session = LanguageModelSession(
+            model: permissiveModel,
+            instructions: Instructions.retrievalAnswer
+        )
         let prompt = """
             Relevant passages from the article:
 

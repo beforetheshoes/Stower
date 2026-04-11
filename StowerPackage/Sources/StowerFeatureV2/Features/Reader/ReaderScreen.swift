@@ -15,6 +15,8 @@ public struct ReaderScreen: View {
     @State private var isAppearancePanelPresented = false
     @State private var isListenPanelPresented = false
     @State private var isAIPanelPresented = false
+    @State private var isPDFViewerPresented = false
+    @State private var isFindNavigatorPresented = false
 
     public init(store: StoreOf<ReaderFeature>) {
         self.store = store
@@ -23,12 +25,41 @@ public struct ReaderScreen: View {
     public var body: some View {
         content
             .background(store.appearance.backgroundColor)
+            // Enables WKWebView's built-in find UI (iOS 26+ / macOS 26+).
+            // Binding lets us toggle from the toolbar button below; the
+            // system also binds this to its own Find menu item and the
+            // Cmd+F keyboard shortcut, so both entry points dismiss the
+            // same navigator.
+            .findNavigator(isPresented: $isFindNavigatorPresented)
             .navigationTitle("Reader")
             .toolbar {
                 if store.hasInteractiveContent {
                     ToolbarItem(placement: .automatic) {
                         switchModeButton
                     }
+                }
+                if store.item?.renderFormat == .pdf {
+                    ToolbarItem(placement: .automatic) {
+                        Button {
+                            isPDFViewerPresented = true
+                        } label: {
+                            Label("Original PDF", systemImage: "doc.richtext")
+                        }
+                        .help("Show the original PDF in PDFKit")
+                    }
+                }
+                ToolbarItem(placement: .automatic) {
+                    Button {
+                        isFindNavigatorPresented.toggle()
+                    } label: {
+                        Label("Find", systemImage: "magnifyingglass")
+                    }
+                    // ⌘F — standard macOS find shortcut. The system's
+                    // own Edit → Find menu item binds to the same
+                    // state via the `findNavigator` modifier above, so
+                    // either entry point toggles the find UI.
+                    .keyboardShortcut("f", modifiers: .command)
+                    .help("Find in reader")
                 }
                 ToolbarItem(placement: .automatic) {
                     listenToolbarButton
@@ -71,6 +102,13 @@ public struct ReaderScreen: View {
                 NavigationStack {
                     InlineEmbedScreen(store: embedStore)
                 }
+            }
+            .sheet(isPresented: $isPDFViewerPresented) {
+                PDFReaderSheet(
+                    itemID: store.itemID,
+                    title: store.item?.title ?? "PDF",
+                    onDismiss: { isPDFViewerPresented = false }
+                )
             }
     }
 
@@ -206,10 +244,18 @@ extension ReaderScreen {
 
     @ViewBuilder
     fileprivate var listenPanelContent: some View {
-        let speechBlocks = ReaderSpeechTextBuilder.speechBlocks(
+        // Start from block-level speech output (one unit per paragraph /
+        // heading / list / etc.) and then expand each block into
+        // sentence-level units so the Listen skip buttons move by
+        // sentence instead of by paragraph. Sentences inherit their
+        // parent block's `index` (for scroll / highlight) but get a
+        // fresh monotonic `sequence` the feature uses for skip
+        // filtering.
+        let blockLevel = ReaderSpeechTextBuilder.speechBlocks(
             item: store.item,
             document: store.document
         )
+        let speechBlocks = ReaderSpeechTextBuilder.sentenceSplit(blockLevel)
         ReaderListenControls(
             speech: store.speech,
             speechBlocks: speechBlocks,
@@ -217,6 +263,8 @@ extension ReaderScreen {
             onPause: { store.send(.speech(.pauseTapped)) },
             onResume: { store.send(.speech(.resumeTapped)) },
             onStop: { store.send(.speech(.stopTapped)) },
+            onSkipBackward: { store.send(.speech(.skipBackwardTapped)) },
+            onSkipForward: { store.send(.speech(.skipForwardTapped)) },
             onRateChanged: { store.send(.speech(.rateChanged($0))) },
             onVoiceChanged: { store.send(.speech(.voiceChanged($0))) }
         )

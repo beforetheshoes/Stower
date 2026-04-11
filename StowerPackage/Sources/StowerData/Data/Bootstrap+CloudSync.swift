@@ -25,6 +25,7 @@ extension StowerDatabase {
                 tables: SavedItemSyncTable.self,
                 TagSyncTable.self,
                 ItemTagSyncTable.self,
+                SavedPDFContentSyncTable.self,
                 containerIdentifier: StowerDatabase.cloudKitContainerID,
                 delegate: delegate
             )

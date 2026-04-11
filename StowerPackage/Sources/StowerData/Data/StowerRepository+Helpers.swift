@@ -123,6 +123,9 @@ extension StowerRepository {
                 $0.localStatus = updateLocalStatus
                 $0.localError = #bind(result.processingError)
                 $0.updatedAt = now
+                if let pdfHash = result.pdfSHA256 {
+                    $0.pdfSHA256 = #bind(pdfHash)
+                }
             }.execute(db)
         } else {
             try SavedItemContentLocalTable.insert {
@@ -136,6 +139,22 @@ extension StowerRepository {
                     sourceHTML: result.sourceHTML,
                     localStatus: updateLocalStatus,
                     localError: result.processingError,
+                    createdAt: now,
+                    updatedAt: now,
+                    pdfSHA256: result.pdfSHA256
+                )
+            }.execute(db)
+        }
+
+        // For PDF items, also mirror the extracted document into the
+        // CloudKit-synced table so the second device can render the structured
+        // text view without having the PDF bytes (which never sync).
+        if result.renderFormat == .pdf {
+            try SavedPDFContentSyncTable.upsert {
+                SavedPDFContentSyncTable.Draft(
+                    id: itemID,
+                    documentJSON: documentJSON,
+                    plainText: result.plainText,
                     createdAt: now,
                     updatedAt: now
                 )
@@ -196,7 +215,12 @@ extension StowerRepository {
         return digest.map { String(format: "%02x", $0) }.joined()
     }
 
-    static func stableItemID(from urlString: String?) -> UUID {
+    /// Derives the deterministic UUID Stower uses as the primary key for a
+    /// saved item, given its canonical URL. Public so that ingestion
+    /// clients can pre-compute the item ID before `createItemFromIngestion`
+    /// runs — e.g. PDF ingestion needs to know where on disk to write
+    /// rasterized page images, and that path is rooted at the item ID.
+    public static func stableItemID(from urlString: String?) -> UUID {
         guard let key = normalizedURLKey(urlString) else { return UUID() }
         let digest = SHA256.hash(data: Data(key.utf8))
         let bytes = Array(digest)

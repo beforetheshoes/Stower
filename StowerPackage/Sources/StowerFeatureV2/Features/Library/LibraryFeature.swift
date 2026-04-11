@@ -20,12 +20,25 @@ public struct LibraryFeature {
         /// library row context menu. Refreshed lazily via observeLibraryChanges.
         public var availableTags: [Tag] = []
 
+        /// Library search matches against title, URL, site name, author,
+        /// excerpt, AND full body text (`item.content`). The body-text
+        /// component is what makes search work for PDFs rendered as page
+        /// images — their visible content is `<img>` tags, so the only
+        /// way to find a word inside a benefits summary from the library
+        /// bar is to match against the extracted plainText that lives on
+        /// the `SavedItem`. This is a linear scan over the visible
+        /// library window, which is fine at typical library sizes; a
+        /// future optimization could push this into a SQLite FTS5 index.
         public var filteredItems: [SavedItem] {
             guard !query.isEmpty else { return items }
-            return items.filter {
-                $0.title.localizedStandardContains(query)
-                || ($0.sourceURL?.localizedStandardContains(query) ?? false)
-                || ($0.siteName?.localizedStandardContains(query) ?? false)
+            return items.filter { item in
+                if item.title.localizedStandardContains(query) { return true }
+                if let url = item.sourceURL, url.localizedStandardContains(query) { return true }
+                if let site = item.siteName, site.localizedStandardContains(query) { return true }
+                if let author = item.author, author.localizedStandardContains(query) { return true }
+                if let excerpt = item.excerpt, excerpt.localizedStandardContains(query) { return true }
+                if !item.content.isEmpty, item.content.localizedStandardContains(query) { return true }
+                return false
             }
         }
 
@@ -53,6 +66,7 @@ public struct LibraryFeature {
         case saveURLTapped
         case saveURLFinished(SavedItem)
         case saveURLFailed(String)
+        case importPDFSelected(URL)
 
         // Tag assignment
         case reloadTags
@@ -67,6 +81,7 @@ public struct LibraryFeature {
 
     @Dependency(\.stowerRepository) var repository
     @Dependency(\.urlIngestionClient) var ingestionClient
+    @Dependency(\.pdfIngestionClient) var pdfIngestionClient
 
     public var body: some ReducerOf<Self> {
         Reduce { state, action in
@@ -239,6 +254,45 @@ public struct LibraryFeature {
                 state.errorMessage = error
                 return .none
 
+            case .importPDFSelected(let pickedURL):
+                // Foreground import via `UIDocumentPicker` / SwiftUI
+                // `fileImporter`. Bypasses the ingestion queue — we have the
+                // main app's full memory budget and can run PDFKit + Vision
+                // inline. The picked URL is inside a security-scoped
+                // resource; the caller (LibraryScreen) starts/stops access
+                // and copies the file into a temp scratch before dispatching
+                // this action, so by the time we see the URL it's a plain
+                // temp file we own.
+                state.isSaving = true
+                state.saveState = .extracting
+                state.errorMessage = nil
+                let repository = self.repository
+                let pdfIngestionClient = self.pdfIngestionClient
+                return .run { send in
+                    // The screen copies the picked file into a UUID-named
+                    // scratch subdirectory inside the temp dir so the
+                    // original filename is preserved for title fallback.
+                    // Clean up the whole subdir when we're done, but guard
+                    // against ever removing the temp dir itself.
+                    defer {
+                        let parent = pickedURL.deletingLastPathComponent()
+                        if parent.path != FileManager.default.temporaryDirectory.path {
+                            try? FileManager.default.removeItem(at: parent)
+                        } else {
+                            try? FileManager.default.removeItem(at: pickedURL)
+                        }
+                    }
+                    do {
+                        let result = try await pdfIngestionClient.ingest(pickedURL)
+                        let item = try await repository.createItemFromIngestion(result)
+                        try? PDFArchiver.archivePDF(from: pickedURL, itemID: item.id)
+                        await send(.saveURLFinished(item))
+                        await send(.openItem(item))
+                    } catch {
+                        await send(.saveURLFailed(error.localizedDescription))
+                    }
+                }
+
             case .deleteItem(let id):
                 // Soft delete. If we're already looking at the trash, keep the
                 // row visible — it's now the current list.
@@ -262,6 +316,7 @@ public struct LibraryFeature {
                     do {
                         try await repository.permanentlyDelete(id)
                         AssetArchiver.deleteArchive(for: id)
+                        PDFArchiver.deletePDF(for: id)
                         await send(.deleteFinished)
                     } catch {
                         await send(.deleteFailed(error.localizedDescription))

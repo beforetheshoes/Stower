@@ -16,6 +16,25 @@ public struct ReaderSpeechFeature {
         var currentBlockIndex: Int?
         var currentRangeInBlockUTF16: NSRange?
 
+        /// Monotonic sequence number of the speech unit currently being
+        /// spoken. Set from `didStart` / `willSpeak` events. Distinct
+        /// from `currentBlockIndex` because a single document block can
+        /// be broken into many sentence-level speech units that all
+        /// share the same block index but have different sequence
+        /// numbers — the skip buttons iterate sequences so you can
+        /// advance one sentence at a time inside a long paragraph.
+        var currentSequence: Int?
+
+        /// The speech units currently queued for playback, captured
+        /// from the most recent `listenTapped`. Used to restart
+        /// playback in-place when the rate or voice changes mid-session
+        /// and to compute skip forward/backward targets. Sentence-split
+        /// by the caller — one `SpeechBlock` per sentence in the
+        /// typical case, so filter operations use `sequence` for
+        /// identity rather than `index` (which is non-unique across
+        /// sentences of the same block).
+        var currentBlocks: [SpeechBlock] = []
+
         var errorMessage: String?
     }
 
@@ -27,6 +46,8 @@ public struct ReaderSpeechFeature {
         case pauseTapped
         case resumeTapped
         case stopTapped
+        case skipBackwardTapped
+        case skipForwardTapped
 
         case speechEvent(ReaderSpeechClient.Event)
         case speechFailed(String)
@@ -68,6 +89,8 @@ public struct ReaderSpeechFeature {
                 state.isPaused = false
                 state.currentBlockIndex = nil
                 state.currentRangeInBlockUTF16 = nil
+                state.currentSequence = nil
+                state.currentBlocks = blocks
 
                 // If the user hasn't picked a specific voice, resolve the best
                 // installed Premium/Enhanced voice for their preferred language
@@ -108,37 +131,120 @@ public struct ReaderSpeechFeature {
                 state.isPaused = false
                 state.currentBlockIndex = nil
                 state.currentRangeInBlockUTF16 = nil
+                state.currentSequence = nil
+                state.currentBlocks = []
                 let speechClient = self.speechClient
                 return .run { _ in
                     await speechClient.stop()
                 }
                 .concatenate(with: .cancel(id: CancelID.speech))
 
+            case .skipBackwardTapped:
+                // Restart playback from the sentence immediately before
+                // the one currently being spoken. `AVSpeechSynthesizer`
+                // has no native seek API — the only way to "skip" is
+                // stop, re-queue from the target unit, start again.
+                // Filter by `sequence` (not `index`) so sentences from
+                // the same paragraph are treated as distinct units.
+                guard state.isSpeaking, !state.currentBlocks.isEmpty else {
+                    return .none
+                }
+                let reference = state.currentSequence
+                    ?? state.currentBlocks.first?.sequence
+                    ?? 0
+                let previous = state.currentBlocks.last(where: { $0.sequence < reference })
+                let targetSequence = previous?.sequence
+                    ?? state.currentBlocks.first?.sequence
+                    ?? reference
+                let remaining = state.currentBlocks.filter { $0.sequence >= targetSequence }
+                guard !remaining.isEmpty else { return .none }
+                return .send(.listenTapped(blocks: remaining))
+
+            case .skipForwardTapped:
+                // Same mechanism as skipBackward but jumping to the
+                // sentence immediately after the current one. If we're
+                // already on the last sentence, drop into the normal
+                // finish path via stopTapped — otherwise you'd end up
+                // re-queuing the same sentence and hearing it repeat.
+                guard state.isSpeaking, !state.currentBlocks.isEmpty else {
+                    return .none
+                }
+                let reference = state.currentSequence
+                    ?? state.currentBlocks.first?.sequence
+                    ?? 0
+                if let next = state.currentBlocks.first(where: { $0.sequence > reference }) {
+                    let remaining = state.currentBlocks.filter { $0.sequence >= next.sequence }
+                    return .send(.listenTapped(blocks: remaining))
+                }
+                return .send(.stopTapped)
+
             case .rateChanged(let value):
                 state.rate = max(0.2, min(value, 2.0))
                 let preferencesClient = self.preferencesClient
                 let snapshot = ReaderSpeechPreferences(voiceID: state.selectedVoiceID, rate: state.rate)
-                return .run { _ in
+                let saveEffect: Effect<Action> = .run { _ in
                     preferencesClient.save(snapshot)
                 }
+
+                // If playback is already underway, restart from the
+                // currently-speaking sentence with the new rate. Queued
+                // `AVSpeechUtterance`s bake their rate in at construction
+                // time — there's no way to retune a utterance already in
+                // the synthesizer's queue. Stop + re-queue is the only
+                // path that actually lets the user hear the new rate.
+                //
+                // Restart from the current sentence so the listener
+                // doesn't get thrown back to the top of the document
+                // whenever they tap a speed button.
+                if state.isSpeaking, !state.currentBlocks.isEmpty {
+                    let resumeFrom = state.currentSequence
+                        ?? state.currentBlocks.first?.sequence
+                        ?? 0
+                    let remaining = state.currentBlocks.filter { $0.sequence >= resumeFrom }
+                    let blocksToReplay = remaining.isEmpty ? state.currentBlocks : remaining
+                    return .merge(
+                        saveEffect,
+                        .send(.listenTapped(blocks: blocksToReplay))
+                    )
+                }
+                return saveEffect
 
             case .voiceChanged(let id):
                 state.selectedVoiceID = id
                 let preferencesClient = self.preferencesClient
                 let snapshot = ReaderSpeechPreferences(voiceID: state.selectedVoiceID, rate: state.rate)
-                return .run { _ in
+                let saveEffect: Effect<Action> = .run { _ in
                     preferencesClient.save(snapshot)
                 }
 
+                // Same live-update rationale as `.rateChanged` — the new
+                // voice only takes effect on utterances queued after it
+                // changes, so mid-session voice swaps require stop +
+                // re-queue from the current sentence.
+                if state.isSpeaking, !state.currentBlocks.isEmpty {
+                    let resumeFrom = state.currentSequence
+                        ?? state.currentBlocks.first?.sequence
+                        ?? 0
+                    let remaining = state.currentBlocks.filter { $0.sequence >= resumeFrom }
+                    let blocksToReplay = remaining.isEmpty ? state.currentBlocks : remaining
+                    return .merge(
+                        saveEffect,
+                        .send(.listenTapped(blocks: blocksToReplay))
+                    )
+                }
+                return saveEffect
+
             case .speechEvent(let event):
                 switch event {
-                case .didStart(let blockIndex):
+                case .didStart(let blockIndex, let sequence):
                     state.currentBlockIndex = blockIndex
+                    state.currentSequence = sequence
                     state.currentRangeInBlockUTF16 = nil
                     return .none
 
-                case .willSpeak(let blockIndex, let range):
+                case .willSpeak(let blockIndex, let sequence, let range):
                     state.currentBlockIndex = blockIndex
+                    state.currentSequence = sequence
                     state.currentRangeInBlockUTF16 = range
                     return .none
 
@@ -146,6 +252,7 @@ public struct ReaderSpeechFeature {
                     state.isSpeaking = false
                     state.isPaused = false
                     state.currentBlockIndex = nil
+                    state.currentSequence = nil
                     state.currentRangeInBlockUTF16 = nil
                     return .cancel(id: CancelID.speech)
 
@@ -153,6 +260,7 @@ public struct ReaderSpeechFeature {
                     state.isSpeaking = false
                     state.isPaused = false
                     state.currentBlockIndex = nil
+                    state.currentSequence = nil
                     state.currentRangeInBlockUTF16 = nil
                     return .cancel(id: CancelID.speech)
                 }
@@ -162,6 +270,7 @@ public struct ReaderSpeechFeature {
                 state.isPaused = false
                 state.errorMessage = message
                 state.currentBlockIndex = nil
+                state.currentSequence = nil
                 state.currentRangeInBlockUTF16 = nil
                 return .cancel(id: CancelID.speech)
             }

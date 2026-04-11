@@ -102,9 +102,19 @@ public struct ArticleChunker {
     /// paragraph-splits `plainText` as a fallback. Reuses the same block
     /// walking logic as `ReaderSpeechTextBuilder` so the chunker stays in sync
     /// with the set of blocks TTS considers "readable."
+    ///
+    /// For PDF items rendered as page images, the document's blocks are
+    /// all `.figure`s (which `ReaderSpeechTextBuilder` intentionally
+    /// excludes), so the block walk returns an empty list. We fall through
+    /// to paragraph-splitting `plainText` in that case — the PDF
+    /// ingestion pipeline joins per-page text with `\n\n`, so the fallback
+    /// naturally produces one chunk candidate per page.
     private static func blockTexts(document: ReaderDocument?, plainText: String) -> [String] {
         if let document {
-            return ReaderSpeechTextBuilder.speechBlocks(document: document).map { $0.text }
+            let blocks = ReaderSpeechTextBuilder.speechBlocks(document: document).map { $0.text }
+            if !blocks.isEmpty {
+                return blocks
+            }
         }
         let paragraphs = plainText
             .components(separatedBy: "\n\n")

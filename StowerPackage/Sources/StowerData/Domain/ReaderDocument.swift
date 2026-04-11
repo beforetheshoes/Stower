@@ -5,6 +5,7 @@ public enum RenderFormat: String, Codable, Equatable, Sendable {
     case htmlFallback
     case plainText
     case webView
+    case pdf
 }
 
 public enum ProcessingState: String, Codable, Equatable, Sendable {
@@ -155,6 +156,11 @@ public struct IngestionResult: Equatable, Sendable {
     public var embeds: [EmbedDescriptor]
     /// The raw HTML of the article section (or full page for webView render format).
     public var sourceHTML: String
+    /// SHA-256 hex digest of the original PDF bytes. Only populated for
+    /// `renderFormat == .pdf`. Used by the ingestion pipeline to find the
+    /// staged PDF file in temp so it can be moved into the archive directory
+    /// after the item ID is assigned.
+    public var pdfSHA256: String?
 
     public init(
         title: String,
@@ -174,7 +180,8 @@ public struct IngestionResult: Equatable, Sendable {
         plainText: String,
         media: [MediaDescriptor],
         embeds: [EmbedDescriptor],
-        sourceHTML: String = ""
+        sourceHTML: String = "",
+        pdfSHA256: String? = nil
     ) {
         self.title = title
         self.sourceURL = sourceURL
@@ -194,6 +201,7 @@ public struct IngestionResult: Equatable, Sendable {
         self.media = media
         self.embeds = embeds
         self.sourceHTML = sourceHTML
+        self.pdfSHA256 = pdfSHA256
     }
 
     public static func sharedText(_ text: String) -> IngestionResult {

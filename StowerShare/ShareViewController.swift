@@ -137,6 +137,14 @@ final class ShareViewController: UIViewController {
         for inputItem in inputItems {
             guard let attachments = inputItem.attachments else { continue }
             for attachment in attachments {
+                // PDF must be checked BEFORE url/text — Safari-shared PDFs
+                // often carry a companion URL attachment for the page where
+                // the PDF was found, which would otherwise misroute into the
+                // URL path and try to HTML-scrape an `about:blank` target.
+                if attachment.hasItemConformingToTypeIdentifier(UTType.pdf.identifier) {
+                    processPDFAttachment(attachment)
+                    return
+                }
                 if attachment.hasItemConformingToTypeIdentifier(UTType.url.identifier) {
                     processURLAttachment(attachment)
                     return
@@ -148,7 +156,40 @@ final class ShareViewController: UIViewController {
             }
         }
 
-        finish(with: .failure("No URL or text in the share."))
+        finish(with: .failure("No URL, text, or PDF in the share."))
+    }
+
+    /// Share extensions have a ~120 MB memory ceiling. `loadItem` can return
+    /// a fully-materialized `Data` blob (which blows the budget on anything
+    /// larger than ~15 MB); `loadFileRepresentation` hands us a short-lived
+    /// file URL instead. We copy that file into our own temp scratch before
+    /// returning from the callback (the URL becomes invalid immediately
+    /// after) and hand the scratch off to `ShareIngestionClient.enqueuePDF`,
+    /// which copies again into the shared App Group container so the main
+    /// app can find it when it drains the ingestion queue.
+    private func processPDFAttachment(_ attachment: NSItemProvider) {
+        attachment.loadFileRepresentation(forTypeIdentifier: UTType.pdf.identifier) { [weak self] url, error in
+            guard let self else { return }
+            if let error {
+                self.reportFailureOnMain("Share load failed: \(error.localizedDescription)")
+                return
+            }
+            guard let url else {
+                self.reportFailureOnMain("Shared item isn't a PDF file.")
+                return
+            }
+            do {
+                let scratch = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("\(UUID().uuidString).pdf")
+                try FileManager.default.copyItem(at: url, to: scratch)
+                self.enqueueOnBackground {
+                    defer { try? FileManager.default.removeItem(at: scratch) }
+                    try ShareIngestionClient.enqueuePDF(scratch)
+                }
+            } catch {
+                self.reportFailureOnMain("Couldn't copy PDF: \(error.localizedDescription)")
+            }
+        }
     }
 
     private func processURLAttachment(_ attachment: NSItemProvider) {

@@ -76,8 +76,25 @@ public nonisolated struct SavedItemContentLocalTable: Hashable, Identifiable, Se
     public var summary: String?
     /// Timestamp of the most recent summary generation. Nil iff `summary` is nil.
     public var summaryGeneratedAt: Date?
+    /// SHA-256 hex digest of the original PDF bytes for items with
+    /// `renderFormat == "pdf"`. Nil for URL/text items. Used for dedup and
+    /// to recognize a locally-stored PDF on subsequent shares.
+    public var pdfSHA256: String?
 
     public var id: UUID { itemID }
+}
+
+/// CloudKit-synced extracted text for PDF items. Populated when a PDF is
+/// ingested on any device; the second device reads this row to hydrate the
+/// local content table without re-fetching the (unavailable) PDF bytes.
+/// Never populated for URL/text items — those hydrate from the source URL.
+@Table
+public nonisolated struct SavedPDFContentSyncTable: Hashable, Identifiable, Sendable {
+    public let id: UUID
+    public var documentJSON: String = ""
+    public var plainText: String = ""
+    public var createdAt: Date = .now
+    public var updatedAt: Date = .now
 }
 
 @Table
