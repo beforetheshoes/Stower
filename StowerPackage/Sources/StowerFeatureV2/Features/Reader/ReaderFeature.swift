@@ -113,28 +113,31 @@ public struct ReaderFeature {
                 if state.document != nil,
                    state.item?.id == state.itemID {
                     state.isLoading = false
-                    return .none
+                    return .send(.speech(.loadPreferences))
                 }
 
                 state.isLoading = true
                 state.errorMessage = nil
                 let repository = self.repository
                 let needsItem = state.item == nil
-                return .run { [id = state.itemID] send in
-                    do {
-                        // Only load item from DB if not already provided
-                        let loadedItem: SavedItem? = needsItem
-                            ? try await repository.loadItem(id)
-                            : nil
-                        async let document = repository.loadReaderDocument(id)
-                        async let sourceHTML = repository.loadSourceHTML(id)
-                        let loadedDoc = try await document
-                        let loadedHTML = try await sourceHTML
-                        await send(.loaded(loadedItem, loadedDoc, loadedHTML))
-                    } catch {
-                        await send(.failed(error.localizedDescription))
+                return .merge(
+                    .send(.speech(.loadPreferences)),
+                    .run { [id = state.itemID] send in
+                        do {
+                            // Only load item from DB if not already provided
+                            let loadedItem: SavedItem? = needsItem
+                                ? try await repository.loadItem(id)
+                                : nil
+                            async let document = repository.loadReaderDocument(id)
+                            async let sourceHTML = repository.loadSourceHTML(id)
+                            let loadedDoc = try await document
+                            let loadedHTML = try await sourceHTML
+                            await send(.loaded(loadedItem, loadedDoc, loadedHTML))
+                        } catch {
+                            await send(.failed(error.localizedDescription))
+                        }
                     }
-                }
+                )
 
             case .loaded(let item, let document, let sourceHTML):
                 state.isLoading = false

@@ -13,6 +13,7 @@ import WebKit
 public struct ReaderScreen: View {
     @Bindable var store: StoreOf<ReaderFeature>
     @State private var isAppearancePanelPresented = false
+    @State private var isListenPanelPresented = false
 
     public init(store: StoreOf<ReaderFeature>) {
         self.store = store
@@ -27,6 +28,9 @@ public struct ReaderScreen: View {
                     ToolbarItem(placement: .automatic) {
                         switchModeButton
                     }
+                }
+                ToolbarItem(placement: .automatic) {
+                    listenToolbarButton
                 }
                 ToolbarItem(placement: .automatic) {
                     Button {
@@ -81,9 +85,6 @@ public struct ReaderScreen: View {
                 restoreBlockIndex: item.lastReadBlockIndex,
                 onOpenInlineEmbed: { urlString in store.send(.openInlineWebEmbed(urlString)) }
             )
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                ReaderBottomBar(store: store)
-            }
         } else if let item = store.item, item.content.isEmpty {
             downloadPrompt(item: item)
         } else if store.isLoading {
@@ -173,12 +174,34 @@ public struct ReaderScreen: View {
     }
 }
 
-// MARK: - Bottom Bar (Listen Controls)
+// MARK: - Listen toolbar button
 
-private struct ReaderBottomBar: View {
-    @Bindable var store: StoreOf<ReaderFeature>
+extension ReaderScreen {
+    @ViewBuilder
+    fileprivate var listenToolbarButton: some View {
+        Button {
+            isListenPanelPresented.toggle()
+        } label: {
+            Label("Listen", systemImage: listenButtonSymbol)
+        }
+        .tint(store.speech.isSpeaking && !store.speech.isPaused ? .accentColor : nil)
+        .popover(isPresented: $isListenPanelPresented, arrowEdge: .top) {
+            listenPanelContent
+                .frame(width: 320)
+                .padding(16)
+                .presentationCompactAdaptation(.popover)
+        }
+    }
 
-    var body: some View {
+    fileprivate var listenButtonSymbol: String {
+        if store.speech.isSpeaking {
+            return store.speech.isPaused ? "speaker.slash" : "speaker.wave.2.fill"
+        }
+        return "speaker.wave.2"
+    }
+
+    @ViewBuilder
+    fileprivate var listenPanelContent: some View {
         let speechBlocks = ReaderSpeechTextBuilder.speechBlocks(
             item: store.item,
             document: store.document
@@ -191,13 +214,8 @@ private struct ReaderBottomBar: View {
             onResume: { store.send(.speech(.resumeTapped)) },
             onStop: { store.send(.speech(.stopTapped)) },
             onRateChanged: { store.send(.speech(.rateChanged($0))) },
-            onVoiceChanged: { store.send(.speech(.voiceChanged($0))) },
-            surfaceColor: store.appearance.surfaceColor,
-            secondaryTextColor: store.appearance.secondaryTextColor
+            onVoiceChanged: { store.send(.speech(.voiceChanged($0))) }
         )
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(store.appearance.surfaceColor)
     }
 }
 

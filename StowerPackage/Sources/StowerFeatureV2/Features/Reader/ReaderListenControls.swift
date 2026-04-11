@@ -1,7 +1,11 @@
 import AVFoundation
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
 
-// Isolated into its own file to keep ReaderScreen type-check times under control.
+// Rendered as the contents of a popover anchored to the Reader toolbar's Listen
+// button. Kept in its own file to keep ReaderScreen type-check times under control.
 struct ReaderListenControls: View {
     let speech: ReaderSpeechFeature.State
     let speechBlocks: [SpeechBlock]
@@ -11,98 +15,210 @@ struct ReaderListenControls: View {
     let onStop: () -> Void
     let onRateChanged: (Float) -> Void
     let onVoiceChanged: (String?) -> Void
-    let surfaceColor: Color
-    let secondaryTextColor: Color
 
-    private struct VoiceOption: Identifiable, Equatable {
-        var id: String
-        var title: String
-        var voiceID: String
-    }
-
-    private var voiceOptions: [VoiceOption] {
-        AVSpeechSynthesisVoice.speechVoices()
-            .sorted { ($0.language, $0.name) < ($1.language, $1.name) }
-            .map { voice in
-                VoiceOption(
-                    id: voice.identifier,
-                    title: "\(voice.name) (\(voice.language))",
-                    voiceID: voice.identifier
-                )
-            }
-    }
+    @State private var catalog: ReaderSpeechVoiceCatalog.Catalog = ReaderSpeechVoiceCatalog.Catalog(
+        preferredGroups: [],
+        otherGroups: [],
+        onlyDefaultQualityForPreferred: false
+    )
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                playbackButtons
+        VStack(alignment: .leading, spacing: 16) {
+            playbackRow
+            speedSection
+            voiceSection
 
-                Menu {
-                    Button("0.8x") { onRateChanged(0.8) }
-                    Button("1.0x") { onRateChanged(1.0) }
-                    Button("1.2x") { onRateChanged(1.2) }
-                } label: {
-                    Label("Speed", systemImage: "speedometer")
-                }
+            #if os(iOS)
+            if catalog.onlyDefaultQualityForPreferred {
+                downloadVoicesRow
+            }
+            #endif
 
-                Menu {
-                    Button("Default") { onVoiceChanged(nil) }
-                    Divider()
-                    ForEach(voiceOptions) { option in
-                        Button(option.title) { onVoiceChanged(option.voiceID) }
+            footerMessages
+        }
+        .task {
+            catalog = ReaderSpeechVoiceCatalog.loadCatalog()
+        }
+    }
+
+    // MARK: - Playback
+
+    @ViewBuilder
+    private var playbackRow: some View {
+        HStack(spacing: 10) {
+            if speech.isSpeaking {
+                Button {
+                    if speech.isPaused {
+                        onResume()
+                    } else {
+                        onPause()
                     }
                 } label: {
-                    Label("Voice", systemImage: "waveform")
+                    Label(
+                        speech.isPaused ? "Resume" : "Pause",
+                        systemImage: speech.isPaused ? "play.fill" : "pause.fill"
+                    )
+                    .frame(maxWidth: .infinity)
                 }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
 
-                Spacer()
-            }
-
-            if let error = speech.errorMessage {
-                Text(error)
-                    .font(.caption)
-                    .foregroundStyle(.red)
-            } else if speechBlocks.isEmpty {
-                Text("No readable text found.")
-                    .font(.caption)
-                    .foregroundStyle(secondaryTextColor)
+                Button(role: .destructive) {
+                    onStop()
+                } label: {
+                    Image(systemName: "stop.fill")
+                        .frame(minWidth: 28)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+                .accessibilityLabel("Stop")
+            } else {
+                Button {
+                    onListen()
+                } label: {
+                    Label("Listen", systemImage: "play.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .disabled(speechBlocks.isEmpty)
             }
         }
-        .padding(12)
-        .background(surfaceColor, in: .rect(cornerRadius: 12))
+    }
+
+    // MARK: - Speed
+
+    private var speedBinding: Binding<Float> {
+        Binding(
+            get: { roundedSpeedBucket(for: speech.rate) },
+            set: { onRateChanged($0) }
+        )
     }
 
     @ViewBuilder
-    private var playbackButtons: some View {
-        if speech.isSpeaking {
-            Button {
-                if speech.isPaused {
-                    onResume()
-                } else {
-                    onPause()
-                }
-            } label: {
-                Label(
-                    speech.isPaused ? "Resume" : "Pause",
-                    systemImage: speech.isPaused ? "play.fill" : "pause.fill"
-                )
+    private var speedSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Speed")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Picker("Speed", selection: speedBinding) {
+                Text("0.8×").tag(Float(0.8))
+                Text("1×").tag(Float(1.0))
+                Text("1.2×").tag(Float(1.2))
+                Text("1.5×").tag(Float(1.5))
             }
-            .buttonStyle(.borderedProminent)
+            .pickerStyle(.segmented)
+            .labelsHidden()
+        }
+    }
 
-            Button {
-                onStop()
+    /// Snap the feature's stored rate to one of the picker buckets so the
+    /// segmented control always shows a selection even if older state held
+    /// a value that's no longer in the bucket list.
+    private func roundedSpeedBucket(for rate: Float) -> Float {
+        let buckets: [Float] = [0.8, 1.0, 1.2, 1.5]
+        return buckets.min(by: { abs($0 - rate) < abs($1 - rate) }) ?? 1.0
+    }
+
+    // MARK: - Voice
+
+    @ViewBuilder
+    private var voiceSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Voice")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Menu {
+                voiceMenuContents
             } label: {
-                Label("Stop", systemImage: "stop.fill")
+                HStack(spacing: 8) {
+                    Image(systemName: "waveform")
+                        .foregroundStyle(.secondary)
+                    Text(currentVoiceLabel)
+                        .lineLimit(1)
+                        .foregroundStyle(.primary)
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.quaternary, in: .rect(cornerRadius: 8))
+                .contentShape(.rect)
             }
-            .buttonStyle(.bordered)
-        } else {
-            Button {
-                onListen()
-            } label: {
-                Label("Listen", systemImage: "speaker.wave.2.fill")
+            .buttonStyle(.plain)
+        }
+    }
+
+    @ViewBuilder
+    private var voiceMenuContents: some View {
+        Button("Automatic") { onVoiceChanged(nil) }
+        Divider()
+        ForEach(catalog.preferredGroups) { group in
+            voiceGroupMenu(group)
+        }
+        if !catalog.otherGroups.isEmpty {
+            Menu("More languages") {
+                ForEach(catalog.otherGroups) { group in
+                    voiceGroupMenu(group)
+                }
             }
-            .buttonStyle(.borderedProminent)
-            .disabled(speechBlocks.isEmpty)
+        }
+    }
+
+    @ViewBuilder
+    private func voiceGroupMenu(_ group: ReaderSpeechVoiceCatalog.LanguageGroup) -> some View {
+        Menu(group.displayName) {
+            ForEach(group.voices) { voice in
+                Button(voice.displayName) { onVoiceChanged(voice.id) }
+            }
+        }
+    }
+
+    private var currentVoiceLabel: String {
+        guard let id = speech.selectedVoiceID else { return "Automatic" }
+        let all = catalog.preferredGroups.flatMap(\.voices) + catalog.otherGroups.flatMap(\.voices)
+        return all.first(where: { $0.id == id })?.displayName ?? "Automatic"
+    }
+
+    // MARK: - Download voices footer
+
+    #if os(iOS)
+    @ViewBuilder
+    private var downloadVoicesRow: some View {
+        Button {
+            openVoiceSettings()
+        } label: {
+            Label("Download better voices…", systemImage: "arrow.down.circle")
+                .font(.footnote)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.tint)
+    }
+
+    private func openVoiceSettings() {
+        #if canImport(UIKit)
+        if let url = URL(string: UIApplication.openSettingsURLString) {
+            UIApplication.shared.open(url)
+        }
+        #endif
+    }
+    #endif
+
+    // MARK: - Footer messages
+
+    @ViewBuilder
+    private var footerMessages: some View {
+        if let error = speech.errorMessage {
+            Text(error)
+                .font(.caption)
+                .foregroundStyle(.red)
+        } else if speechBlocks.isEmpty {
+            Text("No readable text found.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 }

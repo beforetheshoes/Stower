@@ -20,6 +20,9 @@ public struct ReaderSpeechFeature {
     }
 
     public enum Action: Equatable {
+        case loadPreferences
+        case preferencesLoaded(ReaderSpeechPreferences)
+
         case listenTapped(blocks: [SpeechBlock])
         case pauseTapped
         case resumeTapped
@@ -37,10 +40,23 @@ public struct ReaderSpeechFeature {
     }
 
     @Dependency(\.readerSpeechClient) var speechClient
+    @Dependency(\.readerSpeechPreferencesClient) var preferencesClient
 
     public var body: some ReducerOf<Self> {
         Reduce { state, action in
             switch action {
+            case .loadPreferences:
+                let preferencesClient = self.preferencesClient
+                return .run { send in
+                    let prefs = preferencesClient.load()
+                    await send(.preferencesLoaded(prefs))
+                }
+
+            case .preferencesLoaded(let prefs):
+                state.selectedVoiceID = prefs.voiceID
+                state.rate = max(0.2, min(prefs.rate, 2.0))
+                return .none
+
             case .listenTapped(let blocks):
                 guard !blocks.isEmpty else {
                     state.errorMessage = "Nothing to read."
@@ -53,7 +69,14 @@ public struct ReaderSpeechFeature {
                 state.currentBlockIndex = nil
                 state.currentRangeInBlockUTF16 = nil
 
-                let config = ReaderSpeechClient.Config(voiceID: state.selectedVoiceID, rate: state.rate)
+                // If the user hasn't picked a specific voice, resolve the best
+                // installed Premium/Enhanced voice for their preferred language
+                // each time. We don't store this back into state — keeping
+                // `selectedVoiceID == nil` means "automatic" so a newly
+                // downloaded better voice will be picked up next time.
+                let resolvedVoiceID = state.selectedVoiceID ?? ReaderSpeechVoiceCatalog.bestDefaultVoiceID()
+
+                let config = ReaderSpeechClient.Config(voiceID: resolvedVoiceID, rate: state.rate)
                 let speechClient = self.speechClient
                 return .run { send in
                     do {
@@ -93,11 +116,19 @@ public struct ReaderSpeechFeature {
 
             case .rateChanged(let value):
                 state.rate = max(0.2, min(value, 2.0))
-                return .none
+                let preferencesClient = self.preferencesClient
+                let snapshot = ReaderSpeechPreferences(voiceID: state.selectedVoiceID, rate: state.rate)
+                return .run { _ in
+                    preferencesClient.save(snapshot)
+                }
 
             case .voiceChanged(let id):
                 state.selectedVoiceID = id
-                return .none
+                let preferencesClient = self.preferencesClient
+                let snapshot = ReaderSpeechPreferences(voiceID: state.selectedVoiceID, rate: state.rate)
+                return .run { _ in
+                    preferencesClient.save(snapshot)
+                }
 
             case .speechEvent(let event):
                 switch event {
