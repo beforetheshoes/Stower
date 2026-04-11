@@ -70,6 +70,12 @@ public nonisolated struct SavedItemContentLocalTable: Hashable, Identifiable, Se
     public var localError: String?
     public var createdAt: Date = .now
     public var updatedAt: Date = .now
+    /// On-device AI summary generated via Foundation Models.
+    /// Nil until the user first requests a summary. Local-only (not synced
+    /// via CloudKit) — summaries are regenerated per device on demand.
+    public var summary: String?
+    /// Timestamp of the most recent summary generation. Nil iff `summary` is nil.
+    public var summaryGeneratedAt: Date?
 
     public var id: UUID { itemID }
 }

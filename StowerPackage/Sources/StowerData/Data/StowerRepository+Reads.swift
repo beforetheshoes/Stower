@@ -37,6 +37,16 @@ extension StowerRepository {
         }
     }
 
+    static func _loadSummary(database: any DatabaseWriter) -> @Sendable (UUID) async throws -> CachedSummary? {
+        { (id: UUID) async throws -> CachedSummary? in
+            try await database.read { db -> CachedSummary? in
+                guard let row: SavedItemContentLocalTable = try SavedItemContentLocalTable.find(id).fetchOne(db) else { return nil }
+                guard let text = row.summary, !text.isEmpty, let generatedAt = row.summaryGeneratedAt else { return nil }
+                return CachedSummary(text: text, generatedAt: generatedAt)
+            }
+        }
+    }
+
     // The old `_deleteItem` hard-delete has been replaced by the soft-delete
     // path in StowerRepository+Filters.swift (`_softDeleteItem`). The public
     // `deleteItem` closure on the repository struct now routes to that

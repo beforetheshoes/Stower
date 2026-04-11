@@ -81,6 +81,18 @@ public struct SavedItem: Equatable, Identifiable, Sendable {
     }
 }
 
+/// A cached on-device AI summary for an article. Persisted in the local-only
+/// content table; never synced via CloudKit.
+public struct CachedSummary: Equatable, Sendable {
+    public let text: String
+    public let generatedAt: Date
+
+    public init(text: String, generatedAt: Date) {
+        self.text = text
+        self.generatedAt = generatedAt
+    }
+}
+
 public struct ImageDownloadSettings: Equatable, Sendable {
     public var globalAutoDownload: Bool
     public var askForNewSources: Bool

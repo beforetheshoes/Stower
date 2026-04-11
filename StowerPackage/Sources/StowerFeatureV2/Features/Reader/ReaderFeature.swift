@@ -13,6 +13,7 @@ public struct ReaderFeature {
         public var sourceHTML: String?
         public var appearance: ReaderAppearanceSettings
         var speech = ReaderSpeechFeature.State()
+        var ai = ReaderAIFeature.State()
         public var isLoading = false
         public var errorMessage: String?
         @Presents public var inlineEmbedURL: InlineEmbedFeature.State?
@@ -61,6 +62,7 @@ public struct ReaderFeature {
         case failed(String)
 
         case speech(ReaderSpeechFeature.Action)
+        case ai(ReaderAIFeature.Action)
 
         case fontSizeChanged(Double)
         case fontStyleChanged(ReaderFontStyle)
@@ -101,6 +103,9 @@ public struct ReaderFeature {
     public var body: some ReducerOf<Self> {
         Scope(state: \.speech, action: \.speech) {
             ReaderSpeechFeature()
+        }
+        Scope(state: \.ai, action: \.ai) {
+            ReaderAIFeature()
         }
         Reduce { state, action in
             switch action {
@@ -146,7 +151,8 @@ public struct ReaderFeature {
                 state.sourceHTML = sourceHTML
                 return .merge(
                     archiveIfNeeded(item: state.item, sourceHTML: sourceHTML),
-                    startProgressPollingEffect()
+                    startProgressPollingEffect(),
+                    .send(.ai(.appeared(itemID: state.itemID)))
                 )
 
             case .failed(let error):
@@ -310,6 +316,9 @@ public struct ReaderFeature {
                 return .run { _ in try? await repo.setReadStatus(id, newValue) }
 
             case .speech:
+                return .none
+
+            case .ai:
                 return .none
             }
         }

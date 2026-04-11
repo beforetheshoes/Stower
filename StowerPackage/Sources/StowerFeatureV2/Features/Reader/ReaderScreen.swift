@@ -14,6 +14,7 @@ public struct ReaderScreen: View {
     @Bindable var store: StoreOf<ReaderFeature>
     @State private var isAppearancePanelPresented = false
     @State private var isListenPanelPresented = false
+    @State private var isAIPanelPresented = false
 
     public init(store: StoreOf<ReaderFeature>) {
         self.store = store
@@ -31,6 +32,9 @@ public struct ReaderScreen: View {
                 }
                 ToolbarItem(placement: .automatic) {
                     listenToolbarButton
+                }
+                ToolbarItem(placement: .automatic) {
+                    aiToolbarButton
                 }
                 ToolbarItem(placement: .automatic) {
                     Button {
@@ -216,6 +220,62 @@ extension ReaderScreen {
             onRateChanged: { store.send(.speech(.rateChanged($0))) },
             onVoiceChanged: { store.send(.speech(.voiceChanged($0))) }
         )
+    }
+}
+
+// MARK: - AI toolbar button
+
+extension ReaderScreen {
+    @ViewBuilder
+    fileprivate var aiToolbarButton: some View {
+        Button {
+            isAIPanelPresented.toggle()
+        } label: {
+            Label("AI tools", systemImage: aiButtonSymbol)
+        }
+        .tint(store.ai.isSummarizing || store.ai.isAnswering ? .accentColor : nil)
+        .popover(isPresented: $isAIPanelPresented, arrowEdge: .top) {
+            ReaderAIControls(
+                store: store.scope(state: \.ai, action: \.ai),
+                document: store.document,
+                plainText: resolvedAIPlainText
+            )
+            // `idealWidth`/`idealHeight` is a hint, not a constraint — on
+            // macOS popovers SwiftUI will collapse the content to its
+            // intrinsic minimum (which for a ScrollView is zero). Pin a
+            // real minimum so the summary is actually readable.
+            .frame(
+                minWidth: 380,
+                idealWidth: 420,
+                minHeight: 480,
+                idealHeight: 520
+            )
+            .presentationCompactAdaptation(.popover)
+            .onDisappear { store.send(.ai(.cancelAll)) }
+        }
+    }
+
+    fileprivate var aiButtonSymbol: String {
+        if store.ai.isSummarizing || store.ai.isAnswering {
+            return "sparkles.rectangle.stack"
+        }
+        return "sparkles"
+    }
+
+    /// Article text fed into the AI client. Prefers text derived from
+    /// structured `ReaderDocument` blocks — the same source of truth the
+    /// reader uses for rendering and TTS — because `SavedItem.content` can
+    /// be empty for articles that were ingested without persisting a
+    /// plain-text copy (webView items, older ingestions). Falls back to
+    /// `item.content` so plain-text notes still work.
+    fileprivate var resolvedAIPlainText: String {
+        if let document = store.document {
+            let blocks = ReaderSpeechTextBuilder.speechBlocks(document: document)
+            if !blocks.isEmpty {
+                return blocks.map(\.text).joined(separator: "\n\n")
+            }
+        }
+        return store.item?.content ?? ""
     }
 }
 

@@ -14,6 +14,12 @@ public struct StowerRepository: Sendable {
     public var saveReaderDocument: @Sendable (UUID, ReaderDocument, String) async throws -> Void
     public var loadSourceHTML: @Sendable (UUID) async throws -> String?
     public var upsertMedia: @Sendable ([MediaDescriptor], UUID) async throws -> Void
+    /// Loads the cached AI summary for an item, if one has been generated. Nil
+    /// means no summary has been persisted yet (or the item isn't in the DB).
+    public var loadSummary: @Sendable (UUID) async throws -> CachedSummary?
+    /// Persists an AI summary to the local-only content table. Overwrites any
+    /// prior summary for the same item.
+    public var saveSummary: @Sendable (_ itemID: UUID, _ text: String) async throws -> Void
     /// Soft-deletes an item (moves it to the Recently Deleted list).
     /// Retained for backwards compatibility with all existing call sites.
     public var deleteItem: @Sendable (UUID) async throws -> Void
@@ -86,6 +92,8 @@ extension StowerRepository {
             saveReaderDocument: { _, _, _ in },
             loadSourceHTML: { _ in nil },
             upsertMedia: { _, _ in },
+            loadSummary: { _ in nil },
+            saveSummary: { _, _ in },
             deleteItem: { _ in },
             saveReadingProgress: { _, _ in },
             setReadStatus: { _, _ in },
@@ -204,6 +212,8 @@ extension StowerRepository {
             saveReaderDocument: cachedSaveDocument,
             loadSourceHTML: _loadSourceHTML(database: database),
             upsertMedia: _upsertMedia(database: database),
+            loadSummary: _loadSummary(database: database),
+            saveSummary: _saveSummary(database: database),
             deleteItem: cachedDeleteItem,
             saveReadingProgress: _saveReadingProgress(database: database, scheduleSync: scheduleSync),
             setReadStatus: _setReadStatus(database: database, scheduleSync: scheduleSyncAndNotify),

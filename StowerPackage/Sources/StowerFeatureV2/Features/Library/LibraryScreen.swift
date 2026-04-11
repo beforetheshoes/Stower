@@ -59,7 +59,14 @@ public struct LibraryScreen: View {
                                     .font(.headline)
                                     .lineLimit(3)
                                     .frame(maxWidth: .infinity, alignment: .leading)
-                                processingBadge(item.processingState)
+                                // Pill is only shown for states the user
+                                // might want to act on. `.ready` and
+                                // `.queued` are just noise in the common
+                                // case where every row in the list is
+                                // already ready to read.
+                                if shouldShowBadge(for: item.processingState) {
+                                    processingBadge(item.processingState)
+                                }
                             }
 
                             if let sourceURL = item.sourceURL,
@@ -77,9 +84,6 @@ public struct LibraryScreen: View {
                                 }
                                 if let reading = item.readingTimeMinutes {
                                     Label("\(reading) min", systemImage: "clock")
-                                }
-                                if item.hasRichMedia {
-                                    Label("Rich media", systemImage: "photo.on.rectangle.angled")
                                 }
                             }
                             .font(.caption2)
@@ -362,6 +366,18 @@ public struct LibraryScreen: View {
         }
     }
 
+    /// The pill is purely for states the user might want to act on:
+    /// extraction in progress, partial content, or outright failure.
+    /// `.ready` and `.queued` are suppressed because they add no signal
+    /// in the common case — every row in a healthy library is one or
+    /// the other.
+    private func shouldShowBadge(for state: ProcessingState) -> Bool {
+        switch state {
+        case .ready, .queued: return false
+        case .extracting, .partial, .failed: return true
+        }
+    }
+
     private func processingBadge(_ state: ProcessingState) -> some View {
         Text(state.rawValue.capitalized)
             .font(.caption2.weight(.semibold))
@@ -398,15 +414,21 @@ private struct LibraryItemThumbnail: View {
     let item: SavedItem
 
     private static let size: CGFloat = 72
+    /// Max pixel dimension to downsample to. 4× the point size gives
+    /// enough headroom for 3× Retina displays without wasting memory
+    /// on unused resolution (the thumbnail cell is 72pt square).
+    private static let targetPixelSize: CGFloat = size * 4
 
     var body: some View {
         Group {
             if let url = resolvedImageURL {
-                CachedImageView(url: url) { phase in
+                CachedImageView(url: url, targetPixelSize: Self.targetPixelSize) { phase in
                     switch phase {
                     case .success(let image):
                         image
                             .resizable()
+                            .interpolation(.high)
+                            .antialiased(true)
                             .scaledToFill()
                     case .failure:
                         placeholder

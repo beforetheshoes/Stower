@@ -39,6 +39,24 @@ extension StowerRepository {
         }
     }
 
+    static func _saveSummary(database: any DatabaseWriter) -> @Sendable (UUID, String) async throws -> Void {
+        { (id: UUID, text: String) async throws -> Void in
+            let now: Date = Date.now
+            try await database.write { db -> Void in
+                // The content row is created during ingestion; if it's missing
+                // we silently drop the write rather than synthesizing a half-
+                // populated row. A missing row means the item itself isn't
+                // persisted, which is an upstream bug the summary cache can't fix.
+                guard try SavedItemContentLocalTable.find(id).fetchOne(db) != nil else { return }
+                try SavedItemContentLocalTable.find(id).update {
+                    $0.summary = #bind(text)
+                    $0.summaryGeneratedAt = #bind(now)
+                    $0.updatedAt = now
+                }.execute(db)
+            }
+        }
+    }
+
     static func _upsertMedia(database: any DatabaseWriter) -> @Sendable ([MediaDescriptor], UUID) async throws -> Void {
         { (media: [MediaDescriptor], itemID: UUID) async throws -> Void in
             let now: Date = Date.now

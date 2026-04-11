@@ -186,6 +186,7 @@ public enum StowerDatabase {
         migrator.registerMigration("add-last-read-block-index") { db in try migration_v4(db) }
         migrator.registerMigration("add-isread-isstarred-softdelete-and-tags") { db in try migration_v5(db) }
         migrator.registerMigration("drop-unique-indexes-from-sync-tables") { db in try migration_v6(db) }
+        migrator.registerMigration("add-ai-summary-columns") { db in try migration_v7(db) }
         try migrator.migrate(database)
     }
 
@@ -481,6 +482,14 @@ public enum StowerDatabase {
         try db.execute(sql: #"DROP INDEX IF EXISTS idx_itemTagSyncTables_item_tag"#)
         try db.execute(sql: #"CREATE INDEX IF NOT EXISTS idx_tagSyncTables_name_lower ON "tagSyncTables"(LOWER("name"))"#)
         try db.execute(sql: #"CREATE INDEX IF NOT EXISTS idx_itemTagSyncTables_item_tag_pair ON "itemTagSyncTables"("itemID","tagID")"#)
+    }
+
+    /// Adds cache columns for on-device AI summaries. Both columns are local-
+    /// only (the table is not CloudKit-synced) and nullable; summaries stay
+    /// nil until the user first requests one in the reader's AI popover.
+    private static func migration_v7(_ db: Database) throws {
+        try db.execute(sql: #"ALTER TABLE "savedItemContentLocalTables" ADD COLUMN "summary" TEXT"#)
+        try db.execute(sql: #"ALTER TABLE "savedItemContentLocalTables" ADD COLUMN "summaryGeneratedAt" TEXT"#)
     }
 }
 
