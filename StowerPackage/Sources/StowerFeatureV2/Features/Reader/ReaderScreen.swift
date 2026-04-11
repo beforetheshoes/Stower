@@ -18,6 +18,12 @@ public struct ReaderScreen: View {
     @State private var isPDFViewerPresented = false
     @State private var isFindNavigatorPresented = false
 
+    /// Shorthand for the current palette tokens. Computed on the fly since
+    /// `FlexokiPalette` is a cheap value type and tracking it through
+    /// `@Environment` here would collide with the listen/AI highlight tints
+    /// that conditionally override `.tint` on individual buttons.
+    private var palette: FlexokiPalette { store.appearance.palette }
+
     public init(store: StoreOf<ReaderFeature>) {
         self.store = store
     }
@@ -44,6 +50,7 @@ public struct ReaderScreen: View {
                             isPDFViewerPresented = true
                         } label: {
                             Label("Original PDF", systemImage: "doc.richtext")
+                                .foregroundStyle(palette.primary)
                         }
                         .help("Show the original PDF in PDFKit")
                     }
@@ -53,6 +60,7 @@ public struct ReaderScreen: View {
                         isFindNavigatorPresented.toggle()
                     } label: {
                         Label("Find", systemImage: "magnifyingglass")
+                            .foregroundStyle(palette.primary)
                     }
                     // ⌘F — standard macOS find shortcut. The system's
                     // own Edit → Find menu item binds to the same
@@ -72,6 +80,7 @@ public struct ReaderScreen: View {
                         isAppearancePanelPresented.toggle()
                     } label: {
                         Label("Appearance", systemImage: "textformat.size")
+                            .foregroundStyle(palette.primary)
                     }
                     .popover(isPresented: $isAppearancePanelPresented, arrowEdge: .top) {
                         ReaderAppearanceControls(
@@ -80,11 +89,13 @@ public struct ReaderScreen: View {
                             onFontStyleChanged: { store.send(.fontStyleChanged($0)) },
                             onLineSpacingChanged: { store.send(.lineSpacingChanged($0)) },
                             onJustificationChanged: { store.send(.justificationChanged($0)) },
-                            onThemeChanged: { store.send(.themeChanged($0)) },
+                            onBackgroundChanged: { store.send(.backgroundChanged($0)) },
+                            onPrimaryAccentChanged: { store.send(.primaryAccentChanged($0)) },
+                            onSecondaryAccentChanged: { store.send(.secondaryAccentChanged($0)) },
                             onLineWidthChanged: { store.send(.lineWidthChanged($0)) },
                             onDone: { isAppearancePanelPresented = false }
                         )
-                        .frame(width: 360)
+                        .frame(width: 400)
                         .padding(12)
                         .presentationCompactAdaptation(.popover)
                     }
@@ -133,7 +144,7 @@ public struct ReaderScreen: View {
             ProgressView()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if let error = store.errorMessage {
-            Text(error).foregroundStyle(.red)
+            Text(error).foregroundStyle(store.appearance.palette.error)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             Text("Item not found")
@@ -156,11 +167,14 @@ public struct ReaderScreen: View {
         Button {
             store.send(.switchRenderMode(nextMode))
         } label: {
-            if isCurrentlyInteractive {
-                Label("Reader View", systemImage: "doc.plaintext")
-            } else {
-                Label("Interactive View", systemImage: "safari")
+            Group {
+                if isCurrentlyInteractive {
+                    Label("Reader View", systemImage: "doc.plaintext")
+                } else {
+                    Label("Interactive View", systemImage: "safari")
+                }
             }
+            .foregroundStyle(palette.primary)
         }
         .help(isCurrentlyInteractive
               ? "Show the stripped-down reader version of this article"
@@ -221,12 +235,13 @@ public struct ReaderScreen: View {
 extension ReaderScreen {
     @ViewBuilder
     fileprivate var listenToolbarButton: some View {
+        let isActive = store.speech.isSpeaking && !store.speech.isPaused
         Button {
             isListenPanelPresented.toggle()
         } label: {
             Label("Listen", systemImage: listenButtonSymbol)
+                .foregroundStyle(isActive ? palette.secondary : palette.primary)
         }
-        .tint(store.speech.isSpeaking && !store.speech.isPaused ? .accentColor : nil)
         .popover(isPresented: $isListenPanelPresented, arrowEdge: .top) {
             listenPanelContent
                 .frame(width: 320)
@@ -276,12 +291,13 @@ extension ReaderScreen {
 extension ReaderScreen {
     @ViewBuilder
     fileprivate var aiToolbarButton: some View {
+        let isActive = store.ai.isSummarizing || store.ai.isAnswering
         Button {
             isAIPanelPresented.toggle()
         } label: {
             Label("AI tools", systemImage: aiButtonSymbol)
+                .foregroundStyle(isActive ? palette.secondary : palette.primary)
         }
-        .tint(store.ai.isSummarizing || store.ai.isAnswering ? .accentColor : nil)
         .popover(isPresented: $isAIPanelPresented, arrowEdge: .top) {
             ReaderAIControls(
                 store: store.scope(state: \.ai, action: \.ai),

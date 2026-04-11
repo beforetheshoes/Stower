@@ -188,6 +188,7 @@ public enum StowerDatabase {
         migrator.registerMigration("drop-unique-indexes-from-sync-tables") { db in try migration_v6(db) }
         migrator.registerMigration("add-ai-summary-columns") { db in try migration_v7(db) }
         migrator.registerMigration("add-pdf-support") { db in try migration_v8(db) }
+        migrator.registerMigration("flexoki-background-accents") { db in try migration_v9(db) }
         try migrator.migrate(database)
     }
 
@@ -511,6 +512,23 @@ public enum StowerDatabase {
               "updatedAt" TEXT NOT NULL
             ) STRICT
             """)
+    }
+
+    /// v9 — Flexoki-based background + accent color scheme.
+    ///
+    /// * Adds `primaryAccent` and `secondaryAccent` columns so the user can
+    ///   pick a pair of hues from the 8 Flexoki accents.
+    /// * Rewrites the legacy `theme` column's string values to the new
+    ///   `ReaderBackground` raw values (`white|sepia|dark` → `paper|sepia|black`).
+    ///   Pre-v9 users stored on "white" are migrated onto the new warm
+    ///   `paper` background so the first post-upgrade open shows the
+    ///   intended Flexoki look; anyone who explicitly preferred pure white
+    ///   can still flip back via the reader appearance popover.
+    private static func migration_v9(_ db: Database) throws {
+        try db.execute(sql: #"ALTER TABLE "readerAppearanceSettingsLocalTables" ADD COLUMN "primaryAccent" TEXT NOT NULL DEFAULT 'blue'"#)
+        try db.execute(sql: #"ALTER TABLE "readerAppearanceSettingsLocalTables" ADD COLUMN "secondaryAccent" TEXT NOT NULL DEFAULT 'purple'"#)
+        try db.execute(sql: #"UPDATE "readerAppearanceSettingsLocalTables" SET "theme" = 'black' WHERE "theme" = 'dark'"#)
+        try db.execute(sql: #"UPDATE "readerAppearanceSettingsLocalTables" SET "theme" = 'paper' WHERE "theme" = 'white'"#)
     }
 }
 

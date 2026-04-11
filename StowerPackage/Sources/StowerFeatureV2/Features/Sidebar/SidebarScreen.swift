@@ -3,6 +3,7 @@ import SwiftUI
 
 public struct SidebarScreen: View {
     @Bindable var store: StoreOf<SidebarFeature>
+    @Environment(\.flexokiPalette) private var palette
     /// Optional hook so the parent (AppFeature) can present Settings on demand.
     public var onOpenSettings: (() -> Void)? = nil
     /// When non-nil, rows render as Buttons instead of NavigationLinks. Used
@@ -115,22 +116,33 @@ public struct SidebarScreen: View {
                 onSelect?(filter)
             } label: {
                 HStack {
-                    Label(label, systemImage: systemImage)
+                    tintedLabel(label, systemImage: systemImage)
                     Spacer()
                     if store.selection == filter {
                         Image(systemName: "checkmark")
-                            .foregroundStyle(.tint)
+                            .foregroundStyle(palette.primary)
                     }
                 }
             }
             .badge(count)
         } else {
             NavigationLink(value: filter) {
-                Label(label, systemImage: systemImage)
+                tintedLabel(label, systemImage: systemImage)
             }
             .badge(count)
             .tag(filter)
         }
+    }
+
+    /// Label whose title uses the palette's primary text color and whose
+    /// icon uses the primary accent. The two-argument `foregroundStyle`
+    /// applies the first style to primary content (text) and the second to
+    /// secondary content (symbol), which is how SwiftUI's `Label` exposes
+    /// its icon for styling.
+    @ViewBuilder
+    private func tintedLabel(_ label: String, systemImage: String) -> some View {
+        Label(label, systemImage: systemImage)
+            .foregroundStyle(palette.tx, palette.primary)
     }
 
     @ViewBuilder
@@ -147,10 +159,11 @@ public struct SidebarScreen: View {
                             .fill(tagColor(tag.colorHex))
                             .frame(width: 10, height: 10)
                         Text(tag.name)
+                            .foregroundStyle(palette.tx)
                         Spacer()
                         if store.selection == filter {
                             Image(systemName: "checkmark")
-                                .foregroundStyle(.tint)
+                                .foregroundStyle(palette.primary)
                         }
                     }
                 }
@@ -162,6 +175,7 @@ public struct SidebarScreen: View {
                             .fill(tagColor(tag.colorHex))
                             .frame(width: 10, height: 10)
                         Text(tag.name)
+                            .foregroundStyle(palette.tx)
                     }
                 }
                 .badge(store.counts.byTag[tag.id] ?? 0)
@@ -175,7 +189,9 @@ public struct SidebarScreen: View {
     }
 
     private func tagColor(_ hex: String?) -> Color {
-        // Color parsing is a follow-up; for now every tag uses the accent color.
-        return .accentColor
+        // Color parsing is a follow-up; for now every tag uses the current
+        // palette's secondary accent so tags visually contrast with the
+        // primary-tinted system tint without clashing.
+        return palette.secondary
     }
 }

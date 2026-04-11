@@ -85,7 +85,9 @@ struct DatabaseTests {
             fontStyle: .avenirNext,
             lineSpacing: 12,
             justification: .justified,
-            theme: .sepia,
+            background: .sepia,
+            primaryAccent: .cyan,
+            secondaryAccent: .magenta,
             lineWidth: 760
         )
         try await repository.saveReaderAppearanceSettings(updated)

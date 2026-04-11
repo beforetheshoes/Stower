@@ -7,6 +7,7 @@ import UIKit
 // Rendered as the contents of a popover anchored to the Reader toolbar's Listen
 // button. Kept in its own file to keep ReaderScreen type-check times under control.
 struct ReaderListenControls: View {
+    @Environment(\.flexokiPalette) private var palette
     let speech: ReaderSpeechFeature.State
     let speechBlocks: [SpeechBlock]
     let onListen: () -> Void
@@ -258,7 +259,7 @@ struct ReaderListenControls: View {
         if let error = speech.errorMessage {
             Text(error)
                 .font(.caption)
-                .foregroundStyle(.red)
+                .foregroundStyle(palette.error)
         } else if speechBlocks.isEmpty {
             Text("No readable text found.")
                 .font(.caption)

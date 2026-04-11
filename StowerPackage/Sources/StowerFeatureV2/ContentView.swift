@@ -1,5 +1,6 @@
 import ComposableArchitecture
 import SwiftUI
+import StowerData
 
 public struct ContentView: View {
     let store: StoreOf<AppFeature>
@@ -41,17 +42,19 @@ public struct AppView: View {
     }
 
     public var body: some View {
-        let theme = store.readerTheme
+        let palette = store.palette
 
-        navigationContainer(theme: theme)
+        navigationContainer(palette: palette)
             #if os(macOS)
-            .toolbarBackground(theme.toolbarBackground, for: .windowToolbar)
+            .toolbarBackground(palette.bg2, for: .windowToolbar)
             .toolbarBackgroundVisibility(.visible, for: .windowToolbar)
             #else
-            .toolbarBackground(theme.toolbarBackground, for: .navigationBar)
+            .toolbarBackground(palette.bg2, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
             #endif
-            .preferredColorScheme(theme.colorScheme)
+            .tint(palette.primary)
+            .preferredColorScheme(palette.colorScheme)
+            .environment(\.flexokiPalette, palette)
             .alert($store.scope(state: \.resetAlert, action: \.resetAlert))
             .sheet(
                 isPresented: Binding(
@@ -67,11 +70,14 @@ public struct AppView: View {
                             }
                         }
                 }
+                .tint(palette.primary)
+                .environment(\.flexokiPalette, palette)
+                .preferredColorScheme(palette.colorScheme)
             }
     }
 
     @ViewBuilder
-    private func navigationContainer(theme: ReaderTheme) -> some View {
+    private func navigationContainer(palette: FlexokiPalette) -> some View {
         #if os(iOS)
         // On iPhone (compact), NavigationSplitView's detail column does not
         // reliably push when an `if let` swap toggles its content — taps on
@@ -86,23 +92,23 @@ public struct AppView: View {
                     onOpenFilters: { isFilterSheetPresented = true }
                 )
                     .scrollContentBackground(.hidden)
-                    .background(theme.sidebarBackground)
+                    .background(palette.bg)
                     .navigationDestination(
                         item: $store.scope(state: \.reader, action: \.reader)
                     ) { readerStore in
                         ReaderScreen(store: readerStore)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .background(theme.readerBackground)
+                            .background(palette.bg)
                     }
             }
             .sheet(isPresented: $isFilterSheetPresented) {
-                filterSheet(theme: theme)
+                filterSheet(palette: palette)
             }
         } else {
-            splitNavigationView(theme: theme)
+            splitNavigationView(palette: palette)
         }
         #else
-        splitNavigationView(theme: theme)
+        splitNavigationView(palette: palette)
         #endif
     }
 
@@ -111,7 +117,7 @@ public struct AppView: View {
     /// shared `SidebarScreen`, but rows are wired to dismiss the sheet via
     /// the `onSelect` closure rather than push a NavigationSplitView column.
     @ViewBuilder
-    private func filterSheet(theme: ReaderTheme) -> some View {
+    private func filterSheet(palette: FlexokiPalette) -> some View {
         NavigationStack {
             SidebarScreen(
                 store: store.scope(state: \.sidebar, action: \.sidebar),
@@ -124,32 +130,35 @@ public struct AppView: View {
                 }
             )
             .scrollContentBackground(.hidden)
-            .background(theme.sidebarBackground)
+            .background(palette.bg2)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { isFilterSheetPresented = false }
                 }
             }
         }
+        .tint(palette.primary)
+        .environment(\.flexokiPalette, palette)
+        .preferredColorScheme(palette.colorScheme)
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
     }
     #endif
 
     @ViewBuilder
-    private func splitNavigationView(theme: ReaderTheme) -> some View {
+    private func splitNavigationView(palette: FlexokiPalette) -> some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
             SidebarScreen(
                 store: store.scope(state: \.sidebar, action: \.sidebar),
                 onOpenSettings: { store.send(.openSettings) }
             )
             .scrollContentBackground(.hidden)
-            .background(theme.sidebarBackground)
+            .background(palette.bg2)
             .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 320)
         } content: {
             LibraryScreen(store: store.scope(state: \.library, action: \.library))
                 .scrollContentBackground(.hidden)
-                .background(theme.sidebarBackground)
+                .background(palette.bg2)
                 .navigationSplitViewColumnWidth(min: 320, ideal: 380, max: 500)
         } detail: {
             // `ContentUnavailableView` is self-sizing, so `.background()`
@@ -163,7 +172,7 @@ public struct AppView: View {
                     ReaderScreen(store: readerStore)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(theme.readerBackground)
+                .background(palette.bg)
             } else {
                 ContentUnavailableView(
                     "Select an Item",
@@ -171,50 +180,8 @@ public struct AppView: View {
                     description: Text("Choose an article from Library to read.")
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(theme.readerBackground)
+                .background(palette.bg)
             }
-        }
-    }
-}
-
-private extension ReaderTheme {
-    var colorScheme: ColorScheme {
-        switch self {
-        case .white, .sepia: return .light
-        case .dark: return .dark
-        }
-    }
-
-    var readerBackground: Color {
-        switch self {
-        case .white:
-            return .white
-        case .sepia:
-            return Color(red: 0.96, green: 0.92, blue: 0.84)
-        case .dark:
-            return Color(red: 0.09, green: 0.10, blue: 0.12)
-        }
-    }
-
-    var sidebarBackground: Color {
-        switch self {
-        case .white:
-            return Color(red: 0.97, green: 0.97, blue: 0.99)
-        case .sepia:
-            return Color(red: 0.93, green: 0.88, blue: 0.80)
-        case .dark:
-            return Color(red: 0.13, green: 0.14, blue: 0.16)
-        }
-    }
-
-    var toolbarBackground: Color {
-        switch self {
-        case .white:
-            return Color(red: 0.95, green: 0.95, blue: 0.97)
-        case .sepia:
-            return Color(red: 0.91, green: 0.86, blue: 0.77)
-        case .dark:
-            return Color(red: 0.16, green: 0.17, blue: 0.20)
         }
     }
 }

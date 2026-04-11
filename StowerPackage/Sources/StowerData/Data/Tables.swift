@@ -165,7 +165,11 @@ public nonisolated struct ReaderAppearanceSettingsLocalTable: Hashable, Identifi
     public var fontStyle: String = "newYork"
     public var lineSpacing: Double = 8
     public var justification: String = "leading"
-    public var theme: String = "white"
+    /// Stores the `ReaderBackground` raw value. Legacy rows may still contain
+    /// `white|sepia|dark` — `ReaderBackground.fromStored(_:)` maps them.
+    public var theme: String = "paper"
+    public var primaryAccent: String = "blue"
+    public var secondaryAccent: String = "purple"
     public var lineWidth: Double = 820
     public var updatedAt: Date = .now
 }

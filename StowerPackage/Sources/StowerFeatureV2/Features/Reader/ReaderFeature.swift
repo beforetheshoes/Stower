@@ -68,7 +68,9 @@ public struct ReaderFeature {
         case fontStyleChanged(ReaderFontStyle)
         case lineSpacingChanged(Double)
         case justificationChanged(ReaderJustification)
-        case themeChanged(ReaderTheme)
+        case backgroundChanged(ReaderBackground)
+        case primaryAccentChanged(FlexokiHue)
+        case secondaryAccentChanged(FlexokiHue)
         case lineWidthChanged(Double)
         case saveAppearance
         case saveAppearanceFinished
@@ -180,8 +182,16 @@ public struct ReaderFeature {
                 state.appearance.justification = value
                 return .send(.saveAppearance)
 
-            case .themeChanged(let value):
-                state.appearance.theme = value
+            case .backgroundChanged(let value):
+                state.appearance.background = value
+                return .send(.saveAppearance)
+
+            case .primaryAccentChanged(let value):
+                state.appearance.primaryAccent = value
+                return .send(.saveAppearance)
+
+            case .secondaryAccentChanged(let value):
+                state.appearance.secondaryAccent = value
                 return .send(.saveAppearance)
 
             case .lineWidthChanged(let value):

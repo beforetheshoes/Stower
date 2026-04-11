@@ -4,6 +4,7 @@ import UniformTypeIdentifiers
 
 public struct LibraryScreen: View {
     @Bindable var store: StoreOf<LibraryFeature>
+    @Environment(\.flexokiPalette) private var palette
     /// Invoked when the user taps the settings gear in the iOS toolbar.
     /// nil on macOS (the sidebar already has its own settings button).
     private let onOpenSettings: (() -> Void)?
@@ -37,13 +38,13 @@ public struct LibraryScreen: View {
                 if store.saveState == .failed, let error = store.errorMessage {
                     Text(error)
                         .font(.caption)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(palette.error)
                         .listRowBackground(Color.clear)
                 }
             }
             if let error = store.errorMessage, store.saveState != .failed {
                 Text(error)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(palette.error)
                     .listRowBackground(Color.clear)
             }
             #endif
@@ -119,7 +120,7 @@ public struct LibraryScreen: View {
                         } label: {
                             Label(item.isStarred ? "Unstar" : "Star", systemImage: item.isStarred ? "star.slash" : "star.fill")
                         }
-                        .tint(.yellow)
+                        .tint(palette.warning)
 
                         Button {
                             store.send(.toggleRead(item.id))
@@ -129,14 +130,14 @@ public struct LibraryScreen: View {
                                 systemImage: item.isRead ? "circle" : "checkmark.circle"
                             )
                         }
-                        .tint(.blue)
+                        .tint(palette.primary)
                     } else {
                         Button {
                             store.send(.restoreFromTrash(item.id))
                         } label: {
                             Label("Restore", systemImage: "arrow.uturn.backward")
                         }
-                        .tint(.green)
+                        .tint(palette.success)
                     }
                 }
                 .swipeActions(edge: .trailing) {
@@ -158,7 +159,7 @@ public struct LibraryScreen: View {
                         } label: {
                             Label("Improve", systemImage: "wand.and.stars")
                         }
-                        .tint(.purple)
+                        .tint(palette.secondary)
                     }
                 }
                 .contextMenu {
@@ -328,7 +329,7 @@ public struct LibraryScreen: View {
                     Text("URL")
                 } footer: {
                     if store.saveState == .failed, let error = store.errorMessage {
-                        Text(error).foregroundStyle(.red)
+                        Text(error).foregroundStyle(palette.error)
                     } else {
                         Text("Paste any article URL. Stower will fetch and archive it for offline reading.")
                     }
@@ -469,21 +470,21 @@ public struct LibraryScreen: View {
 
     private func badgeBackground(_ state: ProcessingState) -> Color {
         switch state {
-        case .ready: return .green.opacity(0.16)
-        case .partial: return .orange.opacity(0.16)
-        case .failed: return .red.opacity(0.16)
-        case .extracting: return .blue.opacity(0.16)
-        case .queued: return .gray.opacity(0.16)
+        case .ready: return palette.success.opacity(0.16)
+        case .partial: return palette.warning.opacity(0.16)
+        case .failed: return palette.error.opacity(0.16)
+        case .extracting: return palette.info.opacity(0.16)
+        case .queued: return palette.tx3.opacity(0.16)
         }
     }
 
     private func badgeForeground(_ state: ProcessingState) -> Color {
         switch state {
-        case .ready: return .green
-        case .partial: return .orange
-        case .failed: return .red
-        case .extracting: return .blue
-        case .queued: return .secondary
+        case .ready: return palette.success
+        case .partial: return palette.warning
+        case .failed: return palette.error
+        case .extracting: return palette.info
+        case .queued: return palette.tx2
         }
     }
 }

@@ -3,6 +3,7 @@ import SwiftUI
 
 public struct SettingsScreen: View {
     @Bindable var store: StoreOf<SettingsFeature>
+    @Environment(\.flexokiPalette) private var palette
 
     public init(store: StoreOf<SettingsFeature>) {
         self.store = store
@@ -77,7 +78,7 @@ public struct SettingsScreen: View {
 
             if let error = store.errorMessage {
                 Text(error)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(palette.error)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }

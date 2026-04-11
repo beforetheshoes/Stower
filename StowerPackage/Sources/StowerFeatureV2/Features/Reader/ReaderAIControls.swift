@@ -15,6 +15,7 @@ import SwiftUI
 /// with a per-reason explanation instead of the tabs.
 struct ReaderAIControls: View {
     @Bindable var store: StoreOf<ReaderAIFeature>
+    @Environment(\.flexokiPalette) private var palette
     let document: ReaderDocument?
     let plainText: String
 
@@ -151,7 +152,7 @@ struct ReaderAIControls: View {
             if let error = store.summaryError {
                 Text(error)
                     .font(.caption)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(palette.error)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -214,7 +215,7 @@ struct ReaderAIControls: View {
             if let error = store.askError {
                 Text(error)
                     .font(.caption)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(palette.error)
                     .fixedSize(horizontal: false, vertical: true)
             }
 

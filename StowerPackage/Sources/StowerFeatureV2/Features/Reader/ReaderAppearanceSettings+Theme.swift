@@ -9,6 +9,7 @@ public typealias PlatformFont = NSFont
 public typealias PlatformColor = NSColor
 #endif
 import SwiftUI
+import StowerData
 
 extension ReaderAppearanceSettings {
     public var bodyFont: Font {
@@ -62,35 +63,20 @@ extension ReaderAppearanceSettings {
         }
     }
 
-    public var backgroundColor: Color {
-        switch theme {
-        case .white: return Color.white
-        case .sepia: return Color(red: 0.96, green: 0.92, blue: 0.84)
-        case .dark: return Color(red: 0.09, green: 0.10, blue: 0.12)
-        }
-    }
+    // MARK: - Color tokens (palette forwards)
+    //
+    // Every color used by the reader screen comes from the Flexoki palette
+    // resolved from `background/primaryAccent/secondaryAccent`. The
+    // convenience properties below keep existing call sites compiling while
+    // routing through a single source of truth.
 
-    public var surfaceColor: Color {
-        switch theme {
-        case .white: return Color(red: 0.95, green: 0.95, blue: 0.97)
-        case .sepia: return Color(red: 0.91, green: 0.86, blue: 0.77)
-        case .dark: return Color(red: 0.16, green: 0.17, blue: 0.20)
-        }
-    }
-
-    public var primaryTextColor: Color {
-        switch theme {
-        case .white, .sepia: return Color(red: 0.12, green: 0.12, blue: 0.14)
-        case .dark: return Color(red: 0.92, green: 0.92, blue: 0.94)
-        }
-    }
-
-    public var secondaryTextColor: Color {
-        switch theme {
-        case .white, .sepia: return Color(red: 0.36, green: 0.36, blue: 0.40)
-        case .dark: return Color(red: 0.68, green: 0.68, blue: 0.72)
-        }
-    }
+    public var backgroundColor: Color { palette.bg }
+    public var surfaceColor: Color { palette.bg2 }
+    public var primaryTextColor: Color { palette.tx }
+    public var secondaryTextColor: Color { palette.tx2 }
+    public var faintTextColor: Color { palette.tx3 }
+    public var borderColor: Color { palette.ui }
+    public var accentColor: Color { palette.primary }
 
     var italicFamilyName: String {
         switch fontStyle {
@@ -143,21 +129,33 @@ extension ReaderAppearanceSettings {
         #endif
     }
 
-    /// CSS string that applies the reader theme to a WebView.
+    /// CSS string that applies the reader theme to a WebView. All colors are
+    /// exposed as CSS custom properties so the shared `<style>` template
+    /// reads exactly like the native palette tokens.
     public func readerCSS(pageWidth: CGFloat) -> String {
-        let bgHex = cssHex(backgroundColor)
-        let textHex = cssHex(primaryTextColor)
-        let secondaryHex = cssHex(secondaryTextColor)
+        let p = palette
         let font = cssFont
         let columnWidth = min(lineWidth, pageWidth - 40)
+        let colorScheme = p.isDark ? "dark" : "light"
 
         return """
         :root {
-          color-scheme: \(theme == .dark ? "dark" : "light");
+          color-scheme: \(colorScheme);
+          --stower-bg: \(p.bgHex);
+          --stower-bg2: \(p.bg2Hex);
+          --stower-ui: \(p.uiHex);
+          --stower-tx: \(p.txHex);
+          --stower-tx2: \(p.tx2Hex);
+          --stower-tx3: \(p.tx3Hex);
+          --stower-primary: \(p.primaryHex);
+          --stower-primary-muted: \(p.primaryMutedHex);
+          --stower-primary-wash: \(p.primaryWashHex);
+          --stower-secondary: \(p.secondaryHex);
+          --stower-secondary-muted: \(p.secondaryMutedHex);
         }
         html, body {
-          background-color: \(bgHex) !important;
-          color: \(textHex) !important;
+          background-color: var(--stower-bg) !important;
+          color: var(--stower-tx) !important;
           font-family: \(font), -apple-system, serif !important;
           font-size: \(fontSize)px !important;
           line-height: \(1.4 + lineSpacing / 20) !important;
@@ -166,12 +164,27 @@ extension ReaderAppearanceSettings {
           padding: 20px 20px 60px 20px !important;
           word-break: break-word;
         }
-        a { color: \(cssAccentColor) !important; }
-        pre, code { background: \(cssHex(surfaceColor)) !important; border-radius: 6px; }
-        blockquote { border-left: 4px solid \(secondaryHex); padding-left: 12px; color: \(secondaryHex) !important; }
+        a { color: var(--stower-primary) !important; text-decoration-color: color-mix(in srgb, var(--stower-primary) 45%, transparent); }
+        a:hover { color: var(--stower-primary-muted) !important; }
+        pre, code { background: var(--stower-bg2) !important; color: var(--stower-tx) !important; border-radius: 6px; }
+        pre { padding: 12px; overflow-x: auto; }
+        code { padding: 0 4px; }
+        blockquote {
+          border-left: 4px solid var(--stower-secondary);
+          padding-left: 14px;
+          margin-left: 0;
+          color: var(--stower-tx2) !important;
+          font-style: italic;
+        }
+        hr { border: none; border-top: 1px solid var(--stower-ui); margin: 2em 0; }
+        h1, h2, h3, h4, h5, h6 { color: var(--stower-tx) !important; }
+        h1 { border-bottom: 1px solid var(--stower-ui); padding-bottom: 0.25em; }
+        h2 { border-bottom: 1px solid var(--stower-ui); padding-bottom: 0.2em; }
         img { max-width: 100% !important; height: auto !important; border-radius: 8px; }
         table { width: 100% !important; border-collapse: collapse; }
-        td, th { border: 1px solid \(secondaryHex); padding: 6px 10px; }
+        td, th { border: 1px solid var(--stower-ui); padding: 6px 10px; color: var(--stower-tx); }
+        th { background: var(--stower-bg2); }
+        ::selection { background: var(--stower-primary-wash); color: var(--stower-tx); }
         nav, header, footer, .sidebar, .comments, .share, .related, [role="banner"], [role="navigation"] {
           display: none !important;
         }
@@ -186,27 +199,6 @@ extension ReaderAppearanceSettings {
         case .avenirNext: return "'Avenir Next'"
         case .menlo: return "Menlo"
         }
-    }
-
-    private var cssAccentColor: String {
-        switch theme {
-        case .white: return "#0066cc"
-        case .sepia: return "#5c3d11"
-        case .dark: return "#4da6ff"
-        }
-    }
-
-    private func cssHex(_ color: Color) -> String {
-        #if canImport(UIKit)
-        let ui = UIColor(color)
-        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
-        ui.getRed(&r, green: &g, blue: &b, alpha: &a)
-        #elseif canImport(AppKit)
-        let ns = NSColor(color).usingColorSpace(.sRGB) ?? NSColor(color)
-        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
-        ns.getRed(&r, green: &g, blue: &b, alpha: &a)
-        #endif
-        return String(format: "#%02x%02x%02x", Int(r * 255), Int(g * 255), Int(b * 255))
     }
 }
 
@@ -230,16 +222,6 @@ extension ReaderJustification {
         switch self {
         case .leading: return "Left"
         case .justified: return "Justified"
-        }
-    }
-}
-
-extension ReaderTheme {
-    public var displayName: String {
-        switch self {
-        case .white: return "White"
-        case .sepia: return "Sepia"
-        case .dark: return "Dark"
         }
     }
 }

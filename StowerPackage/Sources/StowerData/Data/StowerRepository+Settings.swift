@@ -50,7 +50,9 @@ extension StowerRepository {
                     fontStyle: ReaderFontStyle(rawValue: row.fontStyle) ?? .newYork,
                     lineSpacing: row.lineSpacing,
                     justification: ReaderJustification(rawValue: row.justification) ?? .leading,
-                    theme: ReaderTheme(rawValue: row.theme) ?? .white,
+                    background: ReaderBackground.fromStored(row.theme),
+                    primaryAccent: FlexokiHue.fromStored(row.primaryAccent, default: .blue),
+                    secondaryAccent: FlexokiHue.fromStored(row.secondaryAccent, default: .purple),
                     lineWidth: row.lineWidth
                 ).clamped()
             }
@@ -67,7 +69,9 @@ extension StowerRepository {
                         $0.fontStyle = clamped.fontStyle.rawValue
                         $0.lineSpacing = clamped.lineSpacing
                         $0.justification = clamped.justification.rawValue
-                        $0.theme = clamped.theme.rawValue
+                        $0.theme = clamped.background.rawValue
+                        $0.primaryAccent = clamped.primaryAccent.rawValue
+                        $0.secondaryAccent = clamped.secondaryAccent.rawValue
                         $0.lineWidth = clamped.lineWidth
                         $0.updatedAt = Date.now
                     }.execute(db)
@@ -79,7 +83,9 @@ extension StowerRepository {
                             fontStyle: clamped.fontStyle.rawValue,
                             lineSpacing: clamped.lineSpacing,
                             justification: clamped.justification.rawValue,
-                            theme: clamped.theme.rawValue,
+                            theme: clamped.background.rawValue,
+                            primaryAccent: clamped.primaryAccent.rawValue,
+                            secondaryAccent: clamped.secondaryAccent.rawValue,
                             lineWidth: clamped.lineWidth,
                             updatedAt: .now
                         )

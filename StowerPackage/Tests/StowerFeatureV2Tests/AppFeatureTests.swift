@@ -49,7 +49,7 @@ struct AppFeatureTests {
     func startupLoadsLibraryAndSettings() async {
         let item = SavedItem(id: UUID(), title: "One", content: "Body")
         let settings = ImageDownloadSettings(globalAutoDownload: true, askForNewSources: false)
-        let appearance = ReaderAppearanceSettings(theme: .sepia)
+        let appearance = ReaderAppearanceSettings(background: .sepia)
 
         let store = TestStore(initialState: AppFeature.State()) {
             AppFeature()
@@ -80,7 +80,6 @@ struct AppFeatureTests {
         // Appearance loads in parallel — may arrive before or after startup
         await store.receive(AppFeature.Action.readerAppearanceLoaded(appearance)) {
             $0.cachedAppearance = appearance
-            $0.readerTheme = ReaderTheme.sepia
         }
         await store.receive(AppFeature.Action.startupFinished) {
             $0.startupFinished = true

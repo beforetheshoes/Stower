@@ -131,10 +131,63 @@ public enum ReaderJustification: String, Codable, CaseIterable, Equatable, Senda
     case justified
 }
 
-public enum ReaderTheme: String, Codable, CaseIterable, Equatable, Sendable {
+/// The background palette driving the whole app — not just the reader.
+/// Picking `.black` switches the app into dark mode; the three light options
+/// switch it into light mode. Sepia is a custom warm-cream palette tuned to
+/// harmonise with Flexoki accent hues.
+public enum ReaderBackground: String, Codable, CaseIterable, Equatable, Sendable {
+    case paper
     case white
     case sepia
-    case dark
+    case black
+
+    public var displayName: String {
+        switch self {
+        case .paper: return "Paper"
+        case .white: return "White"
+        case .sepia: return "Sepia"
+        case .black: return "Black"
+        }
+    }
+
+    /// Safe decode from legacy stored values. Pre-Flexoki databases persisted
+    /// `white|sepia|dark`; the migration rewrites them at the SQL layer, but
+    /// this fallback keeps us robust against any stragglers (e.g. rows
+    /// inserted by older app versions mid-migration, sync replay, etc.).
+    public static func fromStored(_ raw: String?) -> ReaderBackground {
+        guard let raw else { return .paper }
+        if let exact = ReaderBackground(rawValue: raw) { return exact }
+        switch raw {
+        case "dark": return .black
+        case "white": return .white
+        default: return .paper
+        }
+    }
+}
+
+/// The eight Flexoki accent hues the user can pick from. Each resolves to
+/// different shades depending on whether the current background is light or
+/// dark — see `FlexokiRaw.accent(_:isDark:)`.
+public enum FlexokiHue: String, Codable, CaseIterable, Equatable, Sendable {
+    case red, orange, yellow, green, cyan, blue, purple, magenta
+
+    public var displayName: String {
+        switch self {
+        case .red: return "Red"
+        case .orange: return "Orange"
+        case .yellow: return "Yellow"
+        case .green: return "Green"
+        case .cyan: return "Cyan"
+        case .blue: return "Blue"
+        case .purple: return "Purple"
+        case .magenta: return "Magenta"
+        }
+    }
+
+    public static func fromStored(_ raw: String?, default fallback: FlexokiHue) -> FlexokiHue {
+        guard let raw, let value = FlexokiHue(rawValue: raw) else { return fallback }
+        return value
+    }
 }
 
 public struct ReaderAppearanceSettings: Equatable, Sendable {
@@ -146,7 +199,9 @@ public struct ReaderAppearanceSettings: Equatable, Sendable {
     public var fontStyle: ReaderFontStyle
     public var lineSpacing: Double
     public var justification: ReaderJustification
-    public var theme: ReaderTheme
+    public var background: ReaderBackground
+    public var primaryAccent: FlexokiHue
+    public var secondaryAccent: FlexokiHue
     public var lineWidth: Double
 
     public init(
@@ -154,14 +209,18 @@ public struct ReaderAppearanceSettings: Equatable, Sendable {
         fontStyle: ReaderFontStyle = .newYork,
         lineSpacing: Double = 8,
         justification: ReaderJustification = .leading,
-        theme: ReaderTheme = .white,
+        background: ReaderBackground = .paper,
+        primaryAccent: FlexokiHue = .blue,
+        secondaryAccent: FlexokiHue = .purple,
         lineWidth: Double = 820
     ) {
         self.fontSize = fontSize
         self.fontStyle = fontStyle
         self.lineSpacing = lineSpacing
         self.justification = justification
-        self.theme = theme
+        self.background = background
+        self.primaryAccent = primaryAccent
+        self.secondaryAccent = secondaryAccent
         self.lineWidth = lineWidth
         self.clamp()
     }

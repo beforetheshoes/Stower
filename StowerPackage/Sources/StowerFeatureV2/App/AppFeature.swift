@@ -11,7 +11,6 @@ public struct AppFeature {
         public var library = LibraryFeature.State()
         public var settings = SettingsFeature.State()
         public var isSettingsPresented: Bool = false
-        public var readerTheme: ReaderTheme
         public var cachedAppearance: ReaderAppearanceSettings
         @Presents public var reader: ReaderFeature.State?
         public var startupFinished = false
@@ -19,35 +18,54 @@ public struct AppFeature {
         public var cloudSyncStatus: CloudSyncStatus = .starting
         @Presents public var resetAlert: AlertState<Action.ResetAlert>?
 
+        public var palette: FlexokiPalette { cachedAppearance.palette }
+
         public init() {
-            // Seed the initial theme from UserDefaults so the very first
-            // frame is rendered in the right color. Persisted appearance
-            // still loads asynchronously from SQLite, but the theme —
-            // which is what every background on the screen depends on —
-            // must be synchronously available or the entire app flashes
-            // white on every launch before the SQLite read completes.
-            let seeded = ThemeCache.loadTheme()
-            self.readerTheme = seeded
-            var appearance = ReaderAppearanceSettings()
-            appearance.theme = seeded
-            self.cachedAppearance = appearance
+            // Seed the initial appearance from UserDefaults so the very
+            // first frame is rendered in the user's chosen palette. The
+            // persisted appearance still loads asynchronously from SQLite,
+            // but the background + accents — which every screen depends on
+            // — must be synchronously available or the entire app flashes
+            // blue/white on every launch before the SQLite read completes.
+            self.cachedAppearance = AppearanceCache.loadAppearance()
         }
     }
 
-    /// Synchronous read/write of the last-known theme so `State.init`
-    /// can paint the correct background before SQLite responds.
-    enum ThemeCache {
-        static let key = "stower.readerTheme"
+    /// Synchronous read/write of the last-known appearance seed so
+    /// `State.init` can paint the correct background before SQLite responds.
+    /// Only the three palette-driving fields are cached; everything else
+    /// (font, spacing, etc.) defaults until SQLite catches up.
+    enum AppearanceCache {
+        static let backgroundKey = "stower.readerBackground"
+        static let primaryAccentKey = "stower.readerPrimaryAccent"
+        static let secondaryAccentKey = "stower.readerSecondaryAccent"
+        // Legacy key from pre-Flexoki versions — fall back to it on first launch.
+        static let legacyThemeKey = "stower.readerTheme"
 
-        static func loadTheme() -> ReaderTheme {
-            guard let raw = UserDefaults.standard.string(forKey: key),
-                  let theme = ReaderTheme(rawValue: raw)
-            else { return .sepia }
-            return theme
+        static func loadAppearance() -> ReaderAppearanceSettings {
+            var appearance = ReaderAppearanceSettings()
+            let defaults = UserDefaults.standard
+            if let raw = defaults.string(forKey: backgroundKey) {
+                appearance.background = ReaderBackground.fromStored(raw)
+            } else if let legacy = defaults.string(forKey: legacyThemeKey) {
+                appearance.background = ReaderBackground.fromStored(legacy)
+            }
+            if let raw = defaults.string(forKey: primaryAccentKey),
+               let hue = FlexokiHue(rawValue: raw) {
+                appearance.primaryAccent = hue
+            }
+            if let raw = defaults.string(forKey: secondaryAccentKey),
+               let hue = FlexokiHue(rawValue: raw) {
+                appearance.secondaryAccent = hue
+            }
+            return appearance
         }
 
-        static func saveTheme(_ theme: ReaderTheme) {
-            UserDefaults.standard.set(theme.rawValue, forKey: key)
+        static func save(_ appearance: ReaderAppearanceSettings) {
+            let defaults = UserDefaults.standard
+            defaults.set(appearance.background.rawValue, forKey: backgroundKey)
+            defaults.set(appearance.primaryAccent.rawValue, forKey: primaryAccentKey)
+            defaults.set(appearance.secondaryAccent.rawValue, forKey: secondaryAccentKey)
         }
     }
 
@@ -196,8 +214,7 @@ public struct AppFeature {
 
             case .readerAppearanceLoaded(let appearance):
                 state.cachedAppearance = appearance
-                state.readerTheme = appearance.theme
-                ThemeCache.saveTheme(appearance.theme)
+                AppearanceCache.save(appearance)
                 return .none
 
             case .readerAppearanceFailed:
@@ -298,18 +315,26 @@ public struct AppFeature {
                 )
                 return .none
 
-            case .reader(.presented(.themeChanged(let theme))):
-                state.readerTheme = theme
-                state.cachedAppearance.theme = theme
-                ThemeCache.saveTheme(theme)
+            case .reader(.presented(.backgroundChanged(let bg))):
+                state.cachedAppearance.background = bg
+                AppearanceCache.save(state.cachedAppearance)
+                return .none
+
+            case .reader(.presented(.primaryAccentChanged(let hue))):
+                state.cachedAppearance.primaryAccent = hue
+                AppearanceCache.save(state.cachedAppearance)
+                return .none
+
+            case .reader(.presented(.secondaryAccentChanged(let hue))):
+                state.cachedAppearance.secondaryAccent = hue
+                AppearanceCache.save(state.cachedAppearance)
                 return .none
 
             case .reader(.presented(.saveAppearanceFinished)):
                 // Keep cached appearance in sync when reader saves changes
                 if let readerAppearance = state.reader?.appearance {
                     state.cachedAppearance = readerAppearance
-                    state.readerTheme = readerAppearance.theme
-                    ThemeCache.saveTheme(readerAppearance.theme)
+                    AppearanceCache.save(readerAppearance)
                 }
                 return .none
 
