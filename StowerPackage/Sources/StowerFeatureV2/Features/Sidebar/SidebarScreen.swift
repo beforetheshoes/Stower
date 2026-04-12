@@ -56,7 +56,7 @@ public struct SidebarScreen: View {
                 }
             }
         }
-        // Obscure list rows as they scroll behind the Liquid Glass nav
+        // Obscure list rows as they scroll beneath the Liquid Glass nav
         // bar (top) and the floating Settings footer (bottom).
         .scrollEdgeEffectStyle(.soft, for: .top)
         .scrollEdgeEffectStyle(.soft, for: .bottom)

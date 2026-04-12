@@ -216,7 +216,7 @@ public struct LibraryScreen: View {
             }
         }
         .scrollContentBackground(.hidden)
-        // Obscure rows as they scroll behind the Liquid Glass nav bar so
+        // Obscure rows as they scroll beneath the Liquid Glass nav bar so
         // the first row stays legible against the glass material.
         .scrollEdgeEffectStyle(.soft, for: .top)
         .navigationTitle(navigationTitle)
@@ -452,7 +452,7 @@ public struct LibraryScreen: View {
                 .padding(.vertical, 7)
                 // Liquid Glass input chip — the composer floats above the
                 // library list as frosted glass, refracting whatever rows
-                // sit behind it instead of the old flat 6% opacity fill.
+                // sit beneath it instead of the old flat 6% opacity fill.
                 .glassEffect(.regular, in: .rect(cornerRadius: 6))
                 .onSubmit { store.send(.saveURLTapped) }
 
@@ -502,7 +502,7 @@ public struct LibraryScreen: View {
             // Liquid Glass pill. The semantic state color becomes the
             // tint on the glass capsule so warning / error / extracting
             // still read at a glance over a scrolling list, while the
-            // capsule itself refracts the row content behind it.
+            // capsule itself refracts the row content beneath it.
             .glassEffect(.regular.tint(badgeBackground(state)), in: .capsule)
     }
 

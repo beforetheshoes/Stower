@@ -104,7 +104,7 @@ private func pdfIngest(url: URL) async throws -> IngestionResult {
 
     // Wipe any stale page images from a previous ingestion of the same
     // SHA. Without this, re-ingesting a PDF that had more pages last
-    // time would leave orphaned `pdf-page-N.jpg` files behind.
+    // time would leave orphaned `pdf-page-N.jpg` files remaining.
     PDFArchiver.deletePageImages(for: itemID)
 
     let attributes = pdf.documentAttributes ?? [:]
