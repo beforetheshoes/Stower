@@ -28,7 +28,8 @@ public struct ReaderWebView: View {
     @State private var page: WebPage?
     @State private var archiveServer: LocalArchiveServer?
     @State private var hasRestoredPosition = false
-    @Environment(\.openURL) private var openURL
+    @Environment(\.openURL)
+    private var openURL
 
     public init(
         html: String,
@@ -208,7 +209,7 @@ public struct ReaderWebView: View {
     /// WKWebView blocks `file://` asset loads from documents loaded over
     /// HTTP — the symlinks keep the page images in the same origin as
     /// the HTML.
-    private nonisolated static func prepareStructuredServer(
+    nonisolated private static func prepareStructuredServer(
         html: String,
         itemID: UUID
     ) async -> (URL, LocalArchiveServer)? {
@@ -242,7 +243,7 @@ public struct ReaderWebView: View {
     }
 
     /// Prepares archive content off the main actor: patches HTML, injects CSS, starts server.
-    private nonisolated static func prepareArchive(
+    nonisolated private static func prepareArchive(
         html: String,
         sourceURL: String?,
         itemID: UUID,
@@ -336,5 +337,4 @@ public struct ReaderWebView: View {
             await ReaderWebPageFactory.scrollToBlock(restoreBlockIndex, on: page)
         }
     }
-
 }

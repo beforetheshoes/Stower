@@ -27,8 +27,10 @@ public struct SettingsFeature {
         case diagnosticsLoaded(SyncDiagnostics)
     }
 
-    @Dependency(\.stowerRepository) var repository
-    @Dependency(\.syncDiagnosticsClient) var syncDiagnosticsClient
+    @Dependency(\.stowerRepository)
+    var repository
+    @Dependency(\.syncDiagnosticsClient)
+    var syncDiagnosticsClient
 
     public var body: some ReducerOf<Self> {
         Reduce { state, action in

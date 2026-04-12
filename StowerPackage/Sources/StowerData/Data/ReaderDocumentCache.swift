@@ -8,8 +8,8 @@ import Foundation
 /// usage stays predictable for users who read many articles in one session.
 final class ReaderDocumentCache: @unchecked Sendable {
     private let lock = NSLock()
-    private var storage: [UUID: ReaderDocument] = [:]
-    private var accessOrder: [UUID] = []
+    private var storage: [UUID: ReaderDocument] = [:] // swiftlint:disable:this prefer_let_over_var
+    private var accessOrder: [UUID] = [] // swiftlint:disable:this prefer_let_over_var
     private let capacity: Int
 
     init(capacity: Int = 16) {

@@ -1,6 +1,6 @@
 import Foundation
-import Testing
 @testable import StowerFeature
+import Testing
 
 @Suite
 struct ReaderSpeechTextBuilderTests {

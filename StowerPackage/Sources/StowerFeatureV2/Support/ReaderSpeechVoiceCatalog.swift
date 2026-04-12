@@ -32,8 +32,10 @@ enum ReaderSpeechVoiceCatalog {
 
         let groupsByLanguage = Dictionary(grouping: AVSpeechSynthesisVoice.speechVoices(), by: \.language)
 
+        // swiftlint:disable prefer_let_over_var
         var preferred: [LanguageGroup] = []
         var other: [LanguageGroup] = []
+        // swiftlint:enable prefer_let_over_var
 
         for (language, voices) in groupsByLanguage {
             let entries = voices
@@ -69,7 +71,9 @@ enum ReaderSpeechVoiceCatalog {
         preferred.sort { lhs, rhs in
             let lhsRank = preferredPrefixes.firstIndex(of: String(lhs.id.prefix(2)).lowercased()) ?? Int.max
             let rhsRank = preferredPrefixes.firstIndex(of: String(rhs.id.prefix(2)).lowercased()) ?? Int.max
-            if lhsRank != rhsRank { return lhsRank < rhsRank }
+            if lhsRank != rhsRank {
+                return lhsRank < rhsRank
+            }
             return lhs.id < rhs.id
         }
         other.sort { $0.displayName < $1.displayName }
@@ -106,6 +110,7 @@ enum ReaderSpeechVoiceCatalog {
 
     private static func preferredLanguagePrefixes() -> [String] {
         var seen = Set<String>()
+        // swiftlint:disable:next prefer_let_over_var
         var result: [String] = []
         let sources = Locale.preferredLanguages.isEmpty
             ? [Locale.current.identifier]
@@ -132,9 +137,12 @@ enum ReaderSpeechVoiceCatalog {
 
     private static func qualityRank(_ quality: AVSpeechSynthesisVoiceQuality) -> Int {
         switch quality {
-        case .premium: return 3
-        case .enhanced: return 2
-        default: return 1
+        case .premium:
+            return 3
+        case .enhanced:
+            return 2
+        default:
+            return 1
         }
     }
 

@@ -76,10 +76,14 @@ extension StowerRepository {
 
     static func processingState(from local: SavedItemContentLocalTable?) -> ProcessingState {
         switch local?.localStatus {
-        case "available": return .ready
-        case "downloading": return .extracting
-        case "failed": return .failed
-        default: return .queued
+        case "available":
+            return .ready
+        case "downloading":
+            return .extracting
+        case "failed":
+            return .failed
+        default:
+            return .queued
         }
     }
 
@@ -109,56 +113,63 @@ extension StowerRepository {
         now: Date,
         updateLocalStatus: String
     ) throws {
-        let documentJSON: String = try String(decoding: JSONEncoder().encode(result.document), as: UTF8.self)
-        let hash: String = sha256Hex(result.plainText)
+        let documentJSON = try String(bytes: JSONEncoder().encode(result.document), encoding: .utf8) ?? ""
+        let hash = sha256Hex(result.plainText)
 
         if try SavedItemContentLocalTable.find(itemID).fetchOne(db) != nil {
-            try SavedItemContentLocalTable.find(itemID).update {
-                $0.renderFormat = result.renderFormat.rawValue
-                $0.documentVersion = result.document.version
-                $0.plainText = result.plainText
-                $0.documentJSON = documentJSON
-                $0.sourceHTMLHash = hash
-                $0.sourceHTML = result.sourceHTML
-                $0.localStatus = updateLocalStatus
-                $0.localError = #bind(result.processingError)
-                $0.updatedAt = now
-                if let pdfHash = result.pdfSHA256 {
-                    $0.pdfSHA256 = #bind(pdfHash)
+            try SavedItemContentLocalTable
+                .find(itemID)
+                .update {
+                    $0.renderFormat = result.renderFormat.rawValue
+                    $0.documentVersion = result.document.version
+                    $0.plainText = result.plainText
+                    $0.documentJSON = documentJSON
+                    $0.sourceHTMLHash = hash
+                    $0.sourceHTML = result.sourceHTML
+                    $0.localStatus = updateLocalStatus
+                    $0.localError = #bind(result.processingError)
+                    $0.updatedAt = now
+                    if let pdfHash = result.pdfSHA256 {
+                        $0.pdfSHA256 = #bind(pdfHash)
+                    }
                 }
-            }.execute(db)
+                .execute(db)
         } else {
-            try SavedItemContentLocalTable.insert {
-                SavedItemContentLocalTable.Draft(
-                    itemID: itemID,
-                    renderFormat: result.renderFormat.rawValue,
-                    documentVersion: result.document.version,
-                    plainText: result.plainText,
-                    documentJSON: documentJSON,
-                    sourceHTMLHash: hash,
-                    sourceHTML: result.sourceHTML,
-                    localStatus: updateLocalStatus,
-                    localError: result.processingError,
-                    createdAt: now,
-                    updatedAt: now,
-                    pdfSHA256: result.pdfSHA256
-                )
-            }.execute(db)
+            try SavedItemContentLocalTable
+                .insert {
+                    SavedItemContentLocalTable.Draft(
+                        itemID: itemID,
+                        renderFormat: result.renderFormat.rawValue,
+                        documentVersion: result.document.version,
+                        plainText: result.plainText,
+                        documentJSON: documentJSON,
+                        sourceHTMLHash: hash,
+                        sourceHTML: result.sourceHTML,
+                        localStatus: updateLocalStatus,
+                        localError: result.processingError,
+                        createdAt: now,
+                        updatedAt: now,
+                        pdfSHA256: result.pdfSHA256
+                    )
+                }
+                .execute(db)
         }
 
         // For PDF items, also mirror the extracted document into the
         // CloudKit-synced table so the second device can render the structured
         // text view without having the PDF bytes (which never sync).
         if result.renderFormat == .pdf {
-            try SavedPDFContentSyncTable.upsert {
-                SavedPDFContentSyncTable.Draft(
-                    id: itemID,
-                    documentJSON: documentJSON,
-                    plainText: result.plainText,
-                    createdAt: now,
-                    updatedAt: now
-                )
-            }.execute(db)
+            try SavedPDFContentSyncTable
+                .upsert {
+                    SavedPDFContentSyncTable.Draft(
+                        id: itemID,
+                        documentJSON: documentJSON,
+                        plainText: result.plainText,
+                        createdAt: now,
+                        updatedAt: now
+                    )
+                }
+                .execute(db)
         }
 
         // Media and embed rows have a UNIQUE constraint on (itemID, sourceURL)
@@ -170,39 +181,43 @@ extension StowerRepository {
         try SavedEmbedLocalTable.where { $0.itemID.eq(itemID) }.delete().execute(db)
 
         for descriptor in result.media {
-            try SavedMediaLocalTable.insert {
-                SavedMediaLocalTable.Draft(
-                    id: UUID(),
-                    itemID: itemID,
-                    kind: descriptor.kind.rawValue,
-                    sourceURL: descriptor.sourceURL,
-                    localURL: descriptor.localURL,
-                    mimeType: descriptor.mimeType,
-                    width: descriptor.width,
-                    height: descriptor.height,
-                    durationSeconds: descriptor.durationSeconds,
-                    posterURL: descriptor.posterURL,
-                    caption: descriptor.caption,
-                    status: "ready",
-                    createdAt: now,
-                    updatedAt: now
-                )
-            }.execute(db)
+            try SavedMediaLocalTable
+                .insert {
+                    SavedMediaLocalTable.Draft(
+                        id: UUID(),
+                        itemID: itemID,
+                        kind: descriptor.kind.rawValue,
+                        sourceURL: descriptor.sourceURL,
+                        localURL: descriptor.localURL,
+                        mimeType: descriptor.mimeType,
+                        width: descriptor.width,
+                        height: descriptor.height,
+                        durationSeconds: descriptor.durationSeconds,
+                        posterURL: descriptor.posterURL,
+                        caption: descriptor.caption,
+                        status: "ready",
+                        createdAt: now,
+                        updatedAt: now
+                    )
+                }
+                .execute(db)
         }
 
         for embed in result.embeds {
-            try SavedEmbedLocalTable.insert {
-                SavedEmbedLocalTable.Draft(
-                    id: UUID(),
-                    itemID: itemID,
-                    provider: embed.provider,
-                    embedURL: embed.embedURL,
-                    htmlSnippet: embed.htmlSnippet,
-                    status: "ready",
-                    createdAt: now,
-                    updatedAt: now
-                )
-            }.execute(db)
+            try SavedEmbedLocalTable
+                .insert {
+                    SavedEmbedLocalTable.Draft(
+                        id: UUID(),
+                        itemID: itemID,
+                        provider: embed.provider,
+                        embedURL: embed.embedURL,
+                        htmlSnippet: embed.htmlSnippet,
+                        status: "ready",
+                        createdAt: now,
+                        updatedAt: now
+                    )
+                }
+                .execute(db)
         }
     }
 }
@@ -224,7 +239,7 @@ extension StowerRepository {
         guard let key = normalizedURLKey(urlString) else { return UUID() }
         let digest = SHA256.hash(data: Data(key.utf8))
         let bytes = Array(digest)
-        var b = bytes[0..<16].map { $0 }
+        var b = Array(bytes[0..<16])
         b[6] = (b[6] & 0x0F) | 0x50
         b[8] = (b[8] & 0x3F) | 0x80
         var uuidBytes: uuid_t = (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)

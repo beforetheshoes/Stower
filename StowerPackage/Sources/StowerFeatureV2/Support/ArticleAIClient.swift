@@ -1,3 +1,4 @@
+// swiftlint:disable no_sensitive_logging
 import Dependencies
 import Foundation
 import FoundationModels
@@ -130,7 +131,7 @@ extension ArticleAIClient {
     /// (summarization, Q&A) over content that isn't itself being asked
     /// to cause harm. That's exactly the transformation surface this
     /// client operates on.
-    fileprivate static let permissiveModel: SystemLanguageModel = {
+    private static let permissiveModel: SystemLanguageModel = {
         SystemLanguageModel(
             useCase: .general,
             guardrails: .permissiveContentTransformations
@@ -182,7 +183,7 @@ extension ArticleAIClient {
         )
     }()
 
-    public static let test: ArticleAIClient = ArticleAIClient(
+    public static let test = ArticleAIClient(
         availability: { .available },
         summarize: { _, _ in
             AsyncThrowingStream { continuation in
@@ -224,16 +225,23 @@ extension ArticleAIClient {
 
     // MARK: - Token budgeting
 
-    /// Split of the context window: reserve room for instructions and
-    /// response, give the rest to the input. Uses `contextSize` rather than
-    /// hard-coding 4096 so future model updates are picked up automatically.
-    ///
-    /// The reserves are deliberately generous (roughly 1/4 of a 4096 window).
-    /// The token estimator can undercount by ~25% on real articles, so the
-    /// extra headroom keeps even mis-estimated inputs from colliding with
-    /// the real context ceiling.
+    // Split of the context window: reserve room for instructions and
+    // response, give the rest to the input.
+    //
+    // The reserves are deliberately generous (roughly 1/4 of a 4096 window).
+    // The token estimator can undercount by ~25% on real articles, so the
+    // extra headroom keeps even mis-estimated inputs from colliding with
+    // the real context ceiling.
+    //
+    // Uses `SystemLanguageModel.contextSize` when available (iOS 26.4+),
+    // otherwise falls back to the known 4 096-token window.
     private static func computeInputBudget() -> Int {
-        let total = SystemLanguageModel.default.contextSize
+        let total: Int
+        if #available(iOS 26.4, macOS 26.4, *) {
+            total = SystemLanguageModel.default.contextSize
+        } else {
+            total = 4096
+        }
         let instructionsReserve = 256
         let responseReserve = 768
         return max(512, total - instructionsReserve - responseReserve)
@@ -296,6 +304,7 @@ extension ArticleAIClient {
             return
         }
 
+        // swiftlint:disable:next prefer_let_over_var
         var sectionSummaries: [String] = []
         sectionSummaries.reserveCapacity(chunks.count)
 
@@ -512,3 +521,4 @@ extension ArticleAIClient {
         continuation.yield(.finished(lastContent))
     }
 }
+// swiftlint:enable no_sensitive_logging

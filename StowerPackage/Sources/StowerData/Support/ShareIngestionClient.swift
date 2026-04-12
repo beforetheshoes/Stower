@@ -18,7 +18,8 @@ public enum ShareIngestionClient {
             // Share extension should avoid CloudKit work.
             try $0.bootstrapStowerDatabase(enableSync: false)
         }
-        @Dependency(\.stowerRepository) var repository
+        @Dependency(\.stowerRepository)
+        var repository
         Task {
             try? await repository.enqueueIngestionJob(.url, url.absoluteString)
         }
@@ -29,7 +30,8 @@ public enum ShareIngestionClient {
             // Share extension should avoid CloudKit work.
             try $0.bootstrapStowerDatabase(enableSync: false)
         }
-        @Dependency(\.stowerRepository) var repository
+        @Dependency(\.stowerRepository)
+        var repository
         Task {
             try? await repository.enqueueIngestionJob(.text, text)
         }
@@ -71,7 +73,8 @@ public enum ShareIngestionClient {
         let destination = pendingDir.appendingPathComponent(filename)
         try FileManager.default.copyItem(at: sourceURL, to: destination)
 
-        @Dependency(\.stowerRepository) var repository
+        @Dependency(\.stowerRepository)
+        var repository
         let path = destination.path
         Task {
             try? await repository.enqueueIngestionJob(.pdf, path)

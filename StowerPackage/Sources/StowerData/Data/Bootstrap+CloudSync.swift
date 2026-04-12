@@ -5,6 +5,7 @@ import SQLiteData
 import CloudKit
 #endif
 
+// swiftlint:disable:next prefixed_toplevel_constant
 private let cloudSyncLogger = Logger(subsystem: "com.ryanleewilliams.stower", category: "CloudSync")
 
 extension StowerDatabase {
@@ -19,7 +20,7 @@ extension StowerDatabase {
         continuation.yield(.starting)
 
         do {
-            let delegate = syncEngineDelegate ?? StowerSyncEngineDelegate(emit: { continuation.yield($0) })
+            let delegate = syncEngineDelegate ?? StowerSyncEngineDelegate { continuation.yield($0) }
             let syncEngine: SyncEngine = try SyncEngine(
                 for: database,
                 tables: SavedItemSyncTable.self,

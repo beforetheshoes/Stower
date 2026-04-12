@@ -1,11 +1,10 @@
 import Foundation
-import Testing
 @testable import StowerData
 @testable import StowerFeature
+import Testing
 
 @Suite
 struct RepositoryFilterTests {
-
     private func makeRepository() throws -> StowerRepository {
         let database = try StowerDatabase.makeDatabase()
         return StowerRepository.live(database: database, cloudSyncClient: .noop)
@@ -91,7 +90,7 @@ struct RepositoryFilterTests {
         #expect(taggedIDs == Set([a.id, b.id]))
 
         // Domain model should surface the tag IDs on the item.
-        let taggedA = try #require(tagged.first(where: { $0.id == a.id }))
+        let taggedA = try #require(tagged.first { $0.id == a.id })
         #expect(taggedA.tagIDs == [work.id])
     }
 
@@ -131,7 +130,7 @@ struct RepositoryFilterTests {
         let untagged = try await repository.fetchLibrary(.untagged)
         #expect(untagged.map(\.id).contains(a.id))
         let tags = try await repository.fetchTags()
-        #expect(!tags.contains(where: { $0.id == label.id }))
+        #expect(!tags.contains { $0.id == label.id })
     }
 
     @Test

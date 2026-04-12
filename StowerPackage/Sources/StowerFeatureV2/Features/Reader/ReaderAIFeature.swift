@@ -35,14 +35,16 @@ public struct ReaderAIFeature {
         // MARK: Ask tab
         public var question: String = ""
         public var pendingAnswer: String = ""
+        // swiftlint:disable:next prefer_let_over_var
         public var transcript: [QAEntry] = []
         public var isAnswering = false
         public var isRetrieving = false
         public var askError: String?
 
+        // swiftlint:disable:next explicit_enum_raw_value
         public enum Mode: String, Equatable, Sendable {
-            case summary
-            case ask
+            case summary // swiftlint:disable:this explicit_enum_raw_value
+            case ask // swiftlint:disable:this explicit_enum_raw_value
         }
 
         public struct QAEntry: Equatable, Identifiable, Sendable {
@@ -50,7 +52,7 @@ public struct ReaderAIFeature {
             public let question: String
             public let answer: String
 
-            public init(id: UUID = UUID(), question: String, answer: String) {
+            public init(question: String, answer: String, id: UUID = UUID()) {
                 self.id = id
                 self.question = question
                 self.answer = answer
@@ -88,8 +90,10 @@ public struct ReaderAIFeature {
         case ask
     }
 
-    @Dependency(\.stowerRepository) var repository
-    @Dependency(\.articleAIClient) var ai
+    @Dependency(\.stowerRepository)
+    var repository
+    @Dependency(\.articleAIClient)
+    var ai
 
     public var body: some ReducerOf<Self> {
         Reduce { state, action in
@@ -105,7 +109,7 @@ public struct ReaderAIFeature {
                     await send(.cacheLoaded(text: cached?.text, generatedAt: cached?.generatedAt))
                 }
 
-            case .cacheLoaded(let text, let generatedAt):
+            case let .cacheLoaded(text, generatedAt):
                 if let text, !text.isEmpty {
                     state.summaryText = text
                     state.summaryGeneratedAt = generatedAt
@@ -117,7 +121,7 @@ public struct ReaderAIFeature {
                 state.mode = mode
                 return .none
 
-            case .summarizeRequested(let document, let plainText):
+            case let .summarizeRequested(document, plainText):
                 guard state.availability == .available else {
                     return .none
                 }
@@ -195,7 +199,7 @@ public struct ReaderAIFeature {
                 state.question = text
                 return .none
 
-            case .askSubmitted(let document, let plainText):
+            case let .askSubmitted(document, plainText):
                 guard state.availability == .available else { return .none }
                 let trimmed = state.question.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !trimmed.isEmpty else { return .none }

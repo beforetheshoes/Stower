@@ -25,4 +25,3 @@ public struct CloudSyncStatus: Equatable, Sendable {
 
     public static let starting = Self(state: .starting)
 }
-

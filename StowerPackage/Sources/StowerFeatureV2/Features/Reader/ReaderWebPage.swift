@@ -48,7 +48,6 @@ struct ReaderNavigationDecider: WebPage.NavigationDeciding {
 
 /// Creates configured `WebPage` instances for the reader.
 enum ReaderWebPageFactory {
-
     /// Creates a new `WebPage` with link interception.
     /// CSS is injected directly into the HTML before loading — no WKUserScript needed.
     @MainActor

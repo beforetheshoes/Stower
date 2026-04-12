@@ -1,3 +1,4 @@
+// swiftlint:disable function_default_parameter_at_end
 import Foundation
 
 /// A user-created tag that can be applied to multiple saved items.
@@ -24,3 +25,4 @@ public struct Tag: Equatable, Identifiable, Sendable, Hashable {
         self.updatedAt = updatedAt
     }
 }
+// swiftlint:enable function_default_parameter_at_end

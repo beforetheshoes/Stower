@@ -92,14 +92,22 @@ public struct AppFeature {
         }
     }
 
-    @Dependency(\.cloudSyncClient) var cloudSyncClient
-    @Dependency(\.stowerRepository) var repository
-    @Dependency(\.urlIngestionClient) var ingestionClient
-    @Dependency(\.pdfIngestionClient) var pdfIngestionClient
-    @Dependency(\.defaultDatabase) var database
-    @Dependency(\.defaultSyncEngine) var syncEngine
-    @Dependency(\.continuousClock) var clock
-    @Dependency(\.context) var context
+    @Dependency(\.cloudSyncClient)
+    var cloudSyncClient
+    @Dependency(\.stowerRepository)
+    var repository
+    @Dependency(\.urlIngestionClient)
+    var ingestionClient
+    @Dependency(\.pdfIngestionClient)
+    var pdfIngestionClient
+    @Dependency(\.defaultDatabase)
+    var database
+    @Dependency(\.defaultSyncEngine)
+    var syncEngine
+    @Dependency(\.continuousClock)
+    var clock
+    @Dependency(\.context)
+    var context
 
     public var body: some ReducerOf<Self> {
         Scope(state: \.sidebar, action: \.sidebar) {

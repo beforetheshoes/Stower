@@ -57,11 +57,14 @@ extension StowerRepository {
         database: any DatabaseWriter,
         scheduleSync: @escaping @Sendable () -> Void
     ) -> @Sendable (UUID, Int) async throws -> Void {
-        { (id: UUID, blockIndex: Int) async throws -> Void in
-            try await database.write { db -> Void in
-                try SavedItemSyncTable.find(id).update {
-                    $0.lastReadBlockIndex = #bind(blockIndex)
-                }.execute(db)
+        { (id: UUID, blockIndex: Int) async throws in
+            try await database.write { db in
+                try SavedItemSyncTable
+                    .find(id)
+                    .update {
+                        $0.lastReadBlockIndex = #bind(blockIndex)
+                    }
+                    .execute(db)
             }
             scheduleSync()
         }

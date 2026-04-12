@@ -1,5 +1,5 @@
-import SwiftUI
 import StowerFeature
+import SwiftUI
 
 @main
 struct StowerApp: App {

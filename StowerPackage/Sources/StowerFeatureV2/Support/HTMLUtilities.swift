@@ -10,26 +10,39 @@ func extractTitle(document: Document, sourceURL: URL) throws -> String {
         sourceURL.absoluteString,
     ]
     for candidate in candidates {
-        if let candidate { return candidate }
+        if let candidate {
+            return candidate
+        }
     }
     return sourceURL.absoluteString
 }
 
 func plainTextFromBlocks(_ blocks: [ReaderBlock]) -> String {
+    // swiftlint:disable:next prefer_let_over_var
     var parts: [String] = []
     for block in blocks {
         switch block {
-        case .paragraph(let inlines): parts.append(inlineText(inlines))
-        case .heading(_, let inlines): parts.append(inlineText(inlines))
-        case .list(_, let items): parts.append(items.map(inlineText).joined(separator: "\n"))
-        case .blockquote(let inlines): parts.append(inlineText(inlines))
-        case .code(_, let code): parts.append(code)
-        case .figure(let media): if let caption = media.caption { parts.append(caption) }
-        case .video(let media): if let caption = media.caption { parts.append(caption) }
-        case .embed: continue
-        case .table(let markdown): parts.append(markdown)
-        case .horizontalRule: continue
-        case .callout(let title, let inlines):
+        case .paragraph(let inlines):
+            parts.append(inlineText(inlines))
+        case .heading(_, let inlines):
+            parts.append(inlineText(inlines))
+        case .list(_, let items):
+            parts.append(items.map(inlineText).joined(separator: "\n"))
+        case .blockquote(let inlines):
+            parts.append(inlineText(inlines))
+        case .code(_, let code):
+            parts.append(code)
+        case .figure(let media):
+            if let caption = media.caption { parts.append(caption) }
+        case .video(let media):
+            if let caption = media.caption { parts.append(caption) }
+        case .embed:
+            continue
+        case .table(let markdown):
+            parts.append(markdown)
+        case .horizontalRule:
+            continue
+        case let .callout(title, inlines):
             if let title { parts.append(title) }
             parts.append(inlineText(inlines))
         }
@@ -44,12 +57,18 @@ func plainTextFromBlocks(_ blocks: [ReaderBlock]) -> String {
 func inlineText(_ inlines: [ReaderInline]) -> String {
     inlines.map {
         switch $0 {
-        case .text(let value): return value
-        case .link(let label, _): return label
-        case .emphasis(let value): return value
-        case .strong(let value): return value
-        case .code(let value): return value
-        case .strikethrough(let value): return value
+        case .text(let value):
+            return value
+        case .link(let label, _):
+            return label
+        case .emphasis(let value):
+            return value
+        case .strong(let value):
+            return value
+        case .code(let value):
+            return value
+        case .strikethrough(let value):
+            return value
         }
     }
     .joined(separator: " ")
@@ -70,7 +89,9 @@ func estimateReadingTime(text: String) -> Int {
 
 func parseDate(_ raw: String) -> Date? {
     let iso = ISO8601DateFormatter()
-    if let value = iso.date(from: raw) { return value }
+    if let value = iso.date(from: raw) {
+        return value
+    }
 
     let formatter = DateFormatter()
     formatter.locale = Locale(identifier: "en_US_POSIX")
@@ -120,15 +141,21 @@ func cleanInlineText(_ text: String) -> String {
         .replacingOccurrences(of: "\u{FEFF}", with: "")    // zero-width no-break space
         .replacingOccurrences(of: "[\\t\\n\\r ]+", with: " ", options: .regularExpression)
 
-    if normalized.isEmpty { return "" }
-    if normalized == " " { return " " }
+    if normalized.isEmpty {
+        return ""
+    }
+    if normalized == " " {
+        return " "
+    }
 
     // Preserve boundary whitespace explicitly so string trimming elsewhere
     // can't accidentally strip it.
     let hasLeading = normalized.first == " "
     let hasTrailing = normalized.last == " "
     let trimmed = normalized.trimmingCharacters(in: .whitespacesAndNewlines)
-    if trimmed.isEmpty { return " " }
+    if trimmed.isEmpty {
+        return " "
+    }
 
     return (hasLeading ? " " : "") + trimmed + (hasTrailing ? " " : "")
 }

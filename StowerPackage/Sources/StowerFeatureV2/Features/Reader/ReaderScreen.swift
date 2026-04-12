@@ -128,16 +128,16 @@ public struct ReaderScreen: View {
             .sheet(isPresented: $isPDFViewerPresented) {
                 PDFReaderSheet(
                     itemID: store.itemID,
-                    title: store.item?.title ?? "PDF",
-                    onDismiss: { isPDFViewerPresented = false }
-                )
+                    title: store.item?.title ?? "PDF"
+                ) {
+                    isPDFViewerPresented = false
+                }
             }
     }
 
     // MARK: - Content
 
-    @ViewBuilder
-    private var content: some View {
+    @ViewBuilder private var content: some View {
         if let item = store.item, let resolvedHTML = resolvedHTML(for: item) {
             ReaderWebView(
                 html: resolvedHTML,
@@ -146,9 +146,10 @@ public struct ReaderScreen: View {
                 appearance: store.appearance,
                 isWebViewFormat: store.effectiveRenderFormat == .webView,
                 highlightedBlockIndex: store.speech.currentBlockIndex,
-                restoreBlockIndex: item.lastReadBlockIndex,
-                onOpenInlineEmbed: { urlString in store.send(.openInlineWebEmbed(urlString)) }
-            )
+                restoreBlockIndex: item.lastReadBlockIndex
+            ) { urlString in
+                store.send(.openInlineWebEmbed(urlString))
+            }
         } else if let item = store.item, item.content.isEmpty {
             downloadPrompt(item: item)
         } else if store.isLoading {
@@ -171,8 +172,7 @@ public struct ReaderScreen: View {
     ///
     /// Label + icon reflect the destination, not the current mode, so the
     /// user can always read it as "this is what I'm about to get".
-    @ViewBuilder
-    private var switchModeButton: some View {
+    @ViewBuilder private var switchModeButton: some View {
         let isCurrentlyInteractive = store.effectiveRenderFormat == .webView
         let nextMode: RenderFormat = isCurrentlyInteractive ? .structuredV1 : .webView
         Button {
@@ -241,8 +241,7 @@ public struct ReaderScreen: View {
 // MARK: - Listen toolbar button
 
 extension ReaderScreen {
-    @ViewBuilder
-    fileprivate var listenToolbarButton: some View {
+    @ViewBuilder private var listenToolbarButton: some View {
         let isActive = store.speech.isSpeaking && !store.speech.isPaused
         Button {
             isListenPanelPresented.toggle()
@@ -265,15 +264,14 @@ extension ReaderScreen {
         }
     }
 
-    fileprivate var listenButtonSymbol: String {
+    private var listenButtonSymbol: String {
         if store.speech.isSpeaking {
             return store.speech.isPaused ? "speaker.slash" : "speaker.wave.2.fill"
         }
         return "speaker.wave.2"
     }
 
-    @ViewBuilder
-    fileprivate var listenPanelContent: some View {
+    @ViewBuilder private var listenPanelContent: some View {
         // Start from block-level speech output (one unit per paragraph /
         // heading / list / etc.) and then expand each block into
         // sentence-level units so the Listen skip buttons move by
@@ -304,8 +302,7 @@ extension ReaderScreen {
 // MARK: - AI toolbar button
 
 extension ReaderScreen {
-    @ViewBuilder
-    fileprivate var aiToolbarButton: some View {
+    @ViewBuilder private var aiToolbarButton: some View {
         let isActive = store.ai.isSummarizing || store.ai.isAnswering
         Button {
             isAIPanelPresented.toggle()
@@ -337,7 +334,7 @@ extension ReaderScreen {
         }
     }
 
-    fileprivate var aiButtonSymbol: String {
+    private var aiButtonSymbol: String {
         if store.ai.isSummarizing || store.ai.isAnswering {
             return "sparkles.rectangle.stack"
         }
@@ -350,7 +347,7 @@ extension ReaderScreen {
     /// be empty for articles that were ingested without persisting a
     /// plain-text copy (webView items, older ingestions). Falls back to
     /// `item.content` so plain-text notes still work.
-    fileprivate var resolvedAIPlainText: String {
+    private var resolvedAIPlainText: String {
         if let document = store.document {
             let blocks = ReaderSpeechTextBuilder.speechBlocks(document: document)
             if !blocks.isEmpty {

@@ -1,7 +1,7 @@
 import Foundation
-import Testing
 @testable import StowerData
 @testable import StowerFeature
+import Testing
 
 @Suite
 struct ArticleChunkerTests {

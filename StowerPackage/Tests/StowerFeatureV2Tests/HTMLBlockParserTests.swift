@@ -1,7 +1,7 @@
 import Foundation
+@testable import StowerFeature
 import SwiftSoup
 import Testing
-@testable import StowerFeature
 
 @Suite
 struct HTMLBlockParserTests {
@@ -24,14 +24,21 @@ struct HTMLBlockParserTests {
     private func concatenatedRawText(_ inlines: [ReaderInline]) -> String {
         inlines.map { inline -> String in
             switch inline {
-            case .text(let value): return value
-            case .link(let label, _): return label
-            case .emphasis(let value): return value
-            case .strong(let value): return value
-            case .code(let value): return value
-            case .strikethrough(let value): return value
+            case .text(let value):
+                return value
+            case .link(let label, _):
+                return label
+            case .emphasis(let value):
+                return value
+            case .strong(let value):
+                return value
+            case .code(let value):
+                return value
+            case .strikethrough(let value):
+                return value
             }
-        }.joined()
+        }
+        .joined()
     }
 
     @Test
@@ -166,14 +173,21 @@ struct HTMLBlockParserTests {
         func textOf(_ inlines: [ReaderInline]) -> String {
             inlines.map { inline -> String in
                 switch inline {
-                case .text(let value): return value
-                case .link(let label, _): return label
-                case .emphasis(let value): return value
-                case .strong(let value): return value
-                case .code(let value): return value
-                case .strikethrough(let value): return value
+                case .text(let value):
+                    return value
+                case .link(let label, _):
+                    return label
+                case .emphasis(let value):
+                    return value
+                case .strong(let value):
+                    return value
+                case .code(let value):
+                    return value
+                case .strikethrough(let value):
+                    return value
                 }
-            }.joined()
+            }
+            .joined()
         }
 
         var foundPhishing: String?
@@ -187,7 +201,8 @@ struct HTMLBlockParserTests {
                     let t = textOf(item)
                     if t.contains("phishing attempts") { foundPhishing = t }
                 }
-            default: break
+            default:
+                break
             }
         }
 
@@ -218,7 +233,8 @@ struct HTMLBlockParserTests {
                     let t = textOf(item)
                     if t.contains("phishing attempts") { foundAfterSanitize = t }
                 }
-            default: break
+            default:
+                break
             }
         }
         let afterSanitize = try #require(foundAfterSanitize)
@@ -268,14 +284,21 @@ struct HTMLBlockParserTests {
             for item in items {
                 let text = item.map { inline -> String in
                     switch inline {
-                    case .text(let value): return value
-                    case .link(let label, _): return label
-                    case .emphasis(let value): return value
-                    case .strong(let value): return value
-                    case .code(let value): return value
-                    case .strikethrough(let value): return value
+                    case .text(let value):
+                        return value
+                    case .link(let label, _):
+                        return label
+                    case .emphasis(let value):
+                        return value
+                    case .strong(let value):
+                        return value
+                    case .code(let value):
+                        return value
+                    case .strikethrough(let value):
+                        return value
                     }
-                }.joined()
+                }
+                .joined()
                 if text.contains("phishing") {
                     foundText = text
                     break

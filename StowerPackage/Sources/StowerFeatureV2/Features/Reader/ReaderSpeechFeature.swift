@@ -33,7 +33,7 @@ public struct ReaderSpeechFeature {
         /// typical case, so filter operations use `sequence` for
         /// identity rather than `index` (which is non-unique across
         /// sentences of the same block).
-        var currentBlocks: [SpeechBlock] = []
+        var currentBlocks: [SpeechBlock] = [] // swiftlint:disable:this prefer_let_over_var
 
         var errorMessage: String?
     }
@@ -60,8 +60,10 @@ public struct ReaderSpeechFeature {
         case speech
     }
 
-    @Dependency(\.readerSpeechClient) var speechClient
-    @Dependency(\.readerSpeechPreferencesClient) var preferencesClient
+    @Dependency(\.readerSpeechClient)
+    var speechClient
+    @Dependency(\.readerSpeechPreferencesClient)
+    var preferencesClient
 
     public var body: some ReducerOf<Self> {
         Reduce { state, action in
@@ -152,7 +154,7 @@ public struct ReaderSpeechFeature {
                 let reference = state.currentSequence
                     ?? state.currentBlocks.first?.sequence
                     ?? 0
-                let previous = state.currentBlocks.last(where: { $0.sequence < reference })
+                let previous = state.currentBlocks.last { $0.sequence < reference }
                 let targetSequence = previous?.sequence
                     ?? state.currentBlocks.first?.sequence
                     ?? reference
@@ -236,13 +238,13 @@ public struct ReaderSpeechFeature {
 
             case .speechEvent(let event):
                 switch event {
-                case .didStart(let blockIndex, let sequence):
+                case let .didStart(blockIndex, sequence):
                     state.currentBlockIndex = blockIndex
                     state.currentSequence = sequence
                     state.currentRangeInBlockUTF16 = nil
                     return .none
 
-                case .willSpeak(let blockIndex, let sequence, let range):
+                case let .willSpeak(blockIndex, sequence, range):
                     state.currentBlockIndex = blockIndex
                     state.currentSequence = sequence
                     state.currentRangeInBlockUTF16 = range

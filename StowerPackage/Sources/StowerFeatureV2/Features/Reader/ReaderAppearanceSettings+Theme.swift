@@ -8,8 +8,8 @@ import AppKit
 public typealias PlatformFont = NSFont
 public typealias PlatformColor = NSColor
 #endif
-import SwiftUI
 import StowerData
+import SwiftUI
 
 extension ReaderAppearanceSettings {
     public var bodyFont: Font {
@@ -48,18 +48,25 @@ extension ReaderAppearanceSettings {
 
     public var familyName: String {
         switch fontStyle {
-        case .newYork: return "NewYork"
-        case .timesNewRoman: return "Times New Roman"
-        case .helveticaNeue: return "Helvetica Neue"
-        case .avenirNext: return "Avenir Next"
-        case .menlo: return "Menlo"
+        case .newYork:
+            return "NewYork"
+        case .timesNewRoman:
+            return "Times New Roman"
+        case .helveticaNeue:
+            return "Helvetica Neue"
+        case .avenirNext:
+            return "Avenir Next"
+        case .menlo:
+            return "Menlo"
         }
     }
 
     public var textAlignment: TextAlignment {
         switch justification {
-        case .leading: return .leading
-        case .justified: return .leading
+        case .leading:
+            return .leading
+        case .justified:
+            return .leading
         }
     }
 
@@ -80,11 +87,16 @@ extension ReaderAppearanceSettings {
 
     var italicFamilyName: String {
         switch fontStyle {
-        case .newYork: return "NewYork-Italic"
-        case .timesNewRoman: return "Times New Roman Italic"
-        case .helveticaNeue: return "HelveticaNeue-Italic"
-        case .avenirNext: return "AvenirNext-Italic"
-        case .menlo: return "Menlo-Italic"
+        case .newYork:
+            return "NewYork-Italic"
+        case .timesNewRoman:
+            return "Times New Roman Italic"
+        case .helveticaNeue:
+            return "HelveticaNeue-Italic"
+        case .avenirNext:
+            return "AvenirNext-Italic"
+        case .menlo:
+            return "Menlo-Italic"
         }
     }
 
@@ -101,10 +113,14 @@ extension ReaderAppearanceSettings {
         case .heading(let level):
             let multiplier: Double
             switch level {
-            case 1: multiplier = 2.05
-            case 2: multiplier = 1.65
-            case 3: multiplier = 1.4
-            default: multiplier = 1.2
+            case 1:
+                multiplier = 2.05
+            case 2:
+                multiplier = 1.65
+            case 3:
+                multiplier = 1.4
+            default:
+                multiplier = 1.2
             }
             size = max(baseSize * multiplier, 14)
         }
@@ -118,13 +134,17 @@ extension ReaderAppearanceSettings {
     public func platformTextColor(for role: ReaderInlineTextRole) -> PlatformColor {
         #if canImport(UIKit)
         switch role {
-        case .blockquote: return UIColor(secondaryTextColor)
-        case .body, .list, .heading: return UIColor(primaryTextColor)
+        case .blockquote:
+            return UIColor(secondaryTextColor)
+        case .body, .list, .heading:
+            return UIColor(primaryTextColor)
         }
         #elseif canImport(AppKit)
         switch role {
-        case .blockquote: return NSColor(secondaryTextColor)
-        case .body, .list, .heading: return NSColor(primaryTextColor)
+        case .blockquote:
+            return NSColor(secondaryTextColor)
+        case .body, .list, .heading:
+            return NSColor(primaryTextColor)
         }
         #endif
     }
@@ -194,11 +214,16 @@ extension ReaderAppearanceSettings {
 
     private var cssFont: String {
         switch fontStyle {
-        case .newYork: return "'New York'"
-        case .timesNewRoman: return "'Times New Roman'"
-        case .helveticaNeue: return "'Helvetica Neue'"
-        case .avenirNext: return "'Avenir Next'"
-        case .menlo: return "Menlo"
+        case .newYork:
+            return "'New York'"
+        case .timesNewRoman:
+            return "'Times New Roman'"
+        case .helveticaNeue:
+            return "'Helvetica Neue'"
+        case .avenirNext:
+            return "'Avenir Next'"
+        case .menlo:
+            return "Menlo"
         }
     }
 }
@@ -212,8 +237,10 @@ public enum ReaderInlineTextRole: Equatable {
 
     public var isItalic: Bool {
         switch self {
-        case .blockquote: return true
-        case .body, .list, .heading: return false
+        case .blockquote:
+            return true
+        case .body, .list, .heading:
+            return false
         }
     }
 }
@@ -221,8 +248,10 @@ public enum ReaderInlineTextRole: Equatable {
 extension ReaderJustification {
     public var displayName: String {
         switch self {
-        case .leading: return "Left"
-        case .justified: return "Justified"
+        case .leading:
+            return "Left"
+        case .justified:
+            return "Justified"
         }
     }
 }

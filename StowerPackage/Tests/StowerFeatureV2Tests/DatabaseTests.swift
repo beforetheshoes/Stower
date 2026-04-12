@@ -1,7 +1,7 @@
 import Foundation
-import Testing
 @testable import StowerData
 @testable import StowerFeature
+import Testing
 
 @Suite
 struct DatabaseTests {
@@ -15,7 +15,7 @@ struct DatabaseTests {
         let items = try await repository.fetchLibrary(.all)
 
         #expect(items.count >= 1)
-        #expect(items.contains(where: { $0.id == saved.id }))
+        #expect(items.contains { $0.id == saved.id })
     }
 
     @Test
@@ -44,7 +44,7 @@ struct DatabaseTests {
         try await repository.markIngestionJobProcessed(first.id)
 
         let remaining = try await repository.fetchPendingIngestionJobs()
-        #expect(!remaining.contains(where: { $0.id == first.id }))
+        #expect(!remaining.contains { $0.id == first.id })
     }
 
     @Test
@@ -58,7 +58,7 @@ struct DatabaseTests {
 
         // Simulate what fetchLibrary does (user sees item in list)
         let library = try await repository.fetchLibrary(.all)
-        let libraryItem = try #require(library.first(where: { $0.id == created.id }))
+        let libraryItem = try #require(library.first { $0.id == created.id })
 
         // Simulate what ReaderFeature.load does (user taps item)
         let loadedItem = try await repository.loadItem(libraryItem.id)

@@ -10,10 +10,14 @@ extension StowerRepository {
     /// the reader on a blank screen for anything that couldn't be extracted.
     private static func localStatus(for state: ProcessingState) -> String {
         switch state {
-        case .ready, .partial: return "available"
-        case .failed: return "failed"
-        case .extracting: return "downloading"
-        case .queued: return "notDownloaded"
+        case .ready, .partial:
+            return "available"
+        case .failed:
+            return "failed"
+        case .extracting:
+            return "downloading"
+        case .queued:
+            return "notDownloaded"
         }
     }
 
@@ -23,9 +27,9 @@ extension StowerRepository {
     ) -> @Sendable (IngestionResult) async throws -> SavedItem {
         { (result: IngestionResult) async throws -> SavedItem in
             let item: SavedItem = try await database.write { db -> SavedItem in
-                let now: Date = Date.now
-                let itemID: UUID = stableItemID(from: result.canonicalURL ?? result.sourceURL)
-                let syncDraft: SavedItemSyncTable.Draft = makeSyncDraft(id: itemID, result: result, now: now)
+                let now = Date.now
+                let itemID = stableItemID(from: result.canonicalURL ?? result.sourceURL)
+                let syncDraft = makeSyncDraft(id: itemID, result: result, now: now)
                 try SavedItemSyncTable.upsert { syncDraft }.execute(db)
                 try persistLocalContentAndCaches(db: db, itemID: itemID, result: result, now: now, updateLocalStatus: localStatus(for: result.processingState))
                 // Read back the just-written local row so the returned
@@ -46,8 +50,8 @@ extension StowerRepository {
         scheduleSync: @escaping @Sendable () -> Void
     ) -> @Sendable (UUID, IngestionResult) async throws -> SavedItem? {
         { (id: UUID, result: IngestionResult) async throws -> SavedItem? in
-            let now: Date = Date.now
-            try await database.write { db -> Void in
+            let now = Date.now
+            try await database.write { db in
                 guard try SavedItemSyncTable.find(id).fetchOne(db) != nil else { return }
                 try db.execute(
                     sql: """
@@ -61,7 +65,7 @@ extension StowerRepository {
                         result.title, result.sourceURL, result.canonicalURL, result.excerpt,
                         result.heroImageURL, result.author, result.publishedAt?.timeIntervalSince1970,
                         result.siteName, result.readingTimeMinutes, result.hasRichMedia ? 1 : 0,
-                        now.timeIntervalSince1970, id.uuidString
+                        now.timeIntervalSince1970, id.uuidString,
                     ]
                 )
                 try persistLocalContentAndCaches(db: db, itemID: id, result: result, now: now, updateLocalStatus: localStatus(for: result.processingState))
@@ -76,9 +80,9 @@ extension StowerRepository {
     }
 
     static func _hydrateItemContent(database: any DatabaseWriter) -> @Sendable (UUID, IngestionResult) async throws -> Void {
-        { (id: UUID, result: IngestionResult) async throws -> Void in
-            let now: Date = Date.now
-            try await database.write { db -> Void in
+        { (id: UUID, result: IngestionResult) async throws in
+            let now = Date.now
+            try await database.write { db in
                 guard try SavedItemSyncTable.find(id).fetchOne(db) != nil else { return }
                 try persistLocalContentAndCaches(db: db, itemID: id, result: result, now: now, updateLocalStatus: localStatus(for: result.processingState))
             }
@@ -86,15 +90,18 @@ extension StowerRepository {
     }
 
     static func _updateLocalContentStatus(database: any DatabaseWriter) -> @Sendable (UUID, String, String?) async throws -> Void {
-        { (id: UUID, status: String, message: String?) async throws -> Void in
-            let now: Date = Date.now
-            try await database.write { db -> Void in
+        { (id: UUID, status: String, message: String?) async throws in
+            let now = Date.now
+            try await database.write { db in
                 guard try SavedItemContentLocalTable.find(id).fetchOne(db) != nil else { return }
-                try SavedItemContentLocalTable.find(id).update {
-                    $0.localStatus = status
-                    $0.localError = #bind(message)
-                    $0.updatedAt = now
-                }.execute(db)
+                try SavedItemContentLocalTable
+                    .find(id)
+                    .update {
+                        $0.localStatus = status
+                        $0.localError = #bind(message)
+                        $0.updatedAt = now
+                    }
+                    .execute(db)
             }
         }
     }

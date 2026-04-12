@@ -15,7 +15,8 @@ import SwiftUI
 /// with a per-reason explanation instead of the tabs.
 struct ReaderAIControls: View {
     @Bindable var store: StoreOf<ReaderAIFeature>
-    @Environment(\.flexokiPalette) private var palette
+    @Environment(\.flexokiPalette)
+    private var palette
     let document: ReaderDocument?
     let plainText: String
 
@@ -30,11 +31,11 @@ struct ReaderAIControls: View {
 
     // MARK: - Header
 
-    @ViewBuilder
-    private var header: some View {
+    @ViewBuilder private var header: some View {
         HStack {
             Image(systemName: "sparkles")
                 .foregroundStyle(.secondary)
+                .accessibilityLabel("AI")
             Picker("Mode", selection: $store.mode.sending(\.modeChanged)) {
                 Text("Summary").tag(ReaderAIFeature.State.Mode.summary)
                 Text("Ask").tag(ReaderAIFeature.State.Mode.ask)
@@ -47,8 +48,7 @@ struct ReaderAIControls: View {
 
     // MARK: - Content routing
 
-    @ViewBuilder
-    private var content: some View {
+    @ViewBuilder private var content: some View {
         switch store.availability {
         case .available:
             switch store.mode {
@@ -96,8 +96,7 @@ struct ReaderAIControls: View {
 
     // MARK: - Summary tab
 
-    @ViewBuilder
-    private var summaryTab: some View {
+    @ViewBuilder private var summaryTab: some View {
         VStack(alignment: .leading, spacing: 12) {
             if !store.summaryText.isEmpty {
                 ScrollView {
@@ -140,6 +139,7 @@ struct ReaderAIControls: View {
                     Button {
                         store.send(.summarizeRequested(document: document, plainText: plainText))
                     } label: {
+                        // swiftlint:disable:next no_hardcoded_strings
                         Label("Summarize this article", systemImage: "sparkles")
                             .frame(maxWidth: .infinity)
                     }
@@ -158,8 +158,7 @@ struct ReaderAIControls: View {
         }
     }
 
-    @ViewBuilder
-    private var summaryFootnote: some View {
+    @ViewBuilder private var summaryFootnote: some View {
         if store.summaryWasCached, let date = store.summaryGeneratedAt {
             Text("Cached \(relativeDateText(date))")
                 .font(.caption2)
@@ -181,8 +180,7 @@ struct ReaderAIControls: View {
 
     // MARK: - Ask tab
 
-    @ViewBuilder
-    private var askTab: some View {
+    @ViewBuilder private var askTab: some View {
         VStack(alignment: .leading, spacing: 12) {
             if store.transcript.isEmpty && store.pendingAnswer.isEmpty && !store.isAnswering {
                 VStack(alignment: .leading, spacing: 8) {
@@ -234,6 +232,7 @@ struct ReaderAIControls: View {
                     submitQuestion()
                 } label: {
                     Image(systemName: "paperplane.fill")
+                        .accessibilityLabel("Send")
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(store.isAnswering || store.question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || plainText.isEmpty)

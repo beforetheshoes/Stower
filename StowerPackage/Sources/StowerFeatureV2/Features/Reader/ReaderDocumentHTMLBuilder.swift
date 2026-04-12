@@ -23,7 +23,6 @@ import AppKit
 /// This is a pure function — no dependencies on the filesystem, database,
 /// or main actor. Safe to call off the main thread.
 public enum ReaderDocumentHTMLBuilder {
-
     public static func buildReaderHTML(
         item: SavedItem,
         document: ReaderDocument,
@@ -94,9 +93,13 @@ public enum ReaderDocumentHTMLBuilder {
     /// i.e. the reader's visible content is entirely non-textual.
     /// Currently only PDF items produce this shape.
     private static func documentHasOnlyFigureBlocks(_ document: ReaderDocument) -> Bool {
-        guard !document.blocks.isEmpty else { return false }
+        guard !document.blocks.isEmpty else {
+            return false
+        }
         return document.blocks.allSatisfy { block in
-            if case .figure = block { return true }
+            if case .figure = block {
+                return true
+            }
             return false
         }
     }
@@ -124,6 +127,7 @@ public enum ReaderDocumentHTMLBuilder {
 
         html += "  <h1 class=\"stower-title\">\(escapeHTML(item.title))</h1>\n"
 
+        // swiftlint:disable:next prefer_let_over_var
         var metaPieces: [String] = []
         if let siteName = item.siteName, !siteName.isEmpty {
             metaPieces.append("<span class=\"stower-site\">\(escapeHTML(siteName))</span>")
@@ -155,11 +159,11 @@ public enum ReaderDocumentHTMLBuilder {
         case .paragraph(let inlines):
             return "<p \(idAttr)>\(renderInlines(inlines))</p>"
 
-        case .heading(let level, let inlines):
+        case let .heading(level, inlines):
             let clamped = min(max(level, 1), 6)
             return "<h\(clamped) \(idAttr)>\(renderInlines(inlines))</h\(clamped)>"
 
-        case .list(let ordered, let items):
+        case let .list(ordered, items):
             let tag = ordered ? "ol" : "ul"
             var out = "<\(tag) \(idAttr)>"
             for item in items {
@@ -171,7 +175,7 @@ public enum ReaderDocumentHTMLBuilder {
         case .blockquote(let inlines):
             return "<blockquote \(idAttr)><p>\(renderInlines(inlines))</p></blockquote>"
 
-        case .code(let language, let code):
+        case let .code(language, code):
             let langAttr: String
             if let language, !language.isEmpty {
                 langAttr = " class=\"language-\(attrEscape(language))\""
@@ -195,7 +199,7 @@ public enum ReaderDocumentHTMLBuilder {
         case .horizontalRule:
             return "<hr \(idAttr)>"
 
-        case .callout(let title, let inlines):
+        case let .callout(title, inlines):
             var out = "<aside class=\"stower-callout\" \(idAttr)>"
             if let title, !title.isEmpty {
                 out += "<h4>\(escapeHTML(title))</h4>"
@@ -389,7 +393,7 @@ public enum ReaderDocumentHTMLBuilder {
             case .text(let value):
                 out += escapeHTML(value)
 
-            case .link(let label, let url):
+            case let .link(label, url):
                 if isSafeLinkURL(url) {
                     out += "<a href=\"\(attrEscape(url))\" target=\"_blank\" rel=\"noopener noreferrer\">\(escapeHTML(label))</a>"
                 } else {
@@ -450,7 +454,9 @@ public enum ReaderDocumentHTMLBuilder {
 
     /// Allow only http(s), mailto, and fragment-local URLs for inline links.
     private static func isSafeLinkURL(_ url: String) -> Bool {
-        if url.hasPrefix("#") { return true }
+        if url.hasPrefix("#") {
+            return true
+        }
         guard let parsed = URL(string: url), let scheme = parsed.scheme?.lowercased() else {
             return false
         }
@@ -465,12 +471,18 @@ public enum ReaderDocumentHTMLBuilder {
         result.reserveCapacity(s.count)
         for scalar in s.unicodeScalars {
             switch scalar {
-            case "&": result += "&amp;"
-            case "<": result += "&lt;"
-            case ">": result += "&gt;"
-            case "\"": result += "&quot;"
-            case "'": result += "&#39;"
-            default: result.unicodeScalars.append(scalar)
+            case "&":
+                result += "&amp;"
+            case "<":
+                result += "&lt;"
+            case ">":
+                result += "&gt;"
+            case "\"":
+                result += "&quot;"
+            case "'":
+                result += "&#39;"
+            default:
+                result.unicodeScalars.append(scalar)
             }
         }
         return result

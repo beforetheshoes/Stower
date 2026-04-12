@@ -1,8 +1,8 @@
 import ComposableArchitecture
 import Foundation
-import Testing
 @testable import StowerData
 @testable import StowerFeature
+import Testing
 
 @MainActor
 @Suite

@@ -51,7 +51,7 @@ public struct URLIngestionClient: Sendable {
         )
 
         let (data, _) = try await URLSession.shared.data(for: request)
-        let html = String(decoding: data, as: UTF8.self)
+        let html = String(bytes: data, encoding: .utf8) ?? ""
 
         var result = try await ExtractionPipelineClient.live.extract(html, url)
         result.media = try await MediaResolutionClient.live.resolve(result.media)
@@ -96,7 +96,7 @@ public struct ExtractionPipelineClient: Sendable {
 
         let heroImageURL = nonEmpty(try? document.select("meta[property=og:image]").first()?.attr("abs:content"))
             ?? nonEmpty(try? document.select("meta[name=twitter:image]").first()?.attr("abs:content"))
-            ?? parsed.media.first(where: { $0.kind == .image })?.sourceURL
+            ?? parsed.media.first { $0.kind == .image }?.sourceURL
 
         let publishedRaw = nonEmpty(try? document.select("meta[property=article:published_time]").first()?.attr("content"))
             ?? nonEmpty(try? document.select("meta[name=date]").first()?.attr("content"))
@@ -201,6 +201,7 @@ public struct MediaResolutionClient: Sendable {
                 }
             }
 
+            // swiftlint:disable:next prefer_let_over_var
             var results: [(Int, MediaDescriptor)] = []
             for await result in group {
                 results.append(result)
@@ -333,7 +334,9 @@ private func maybeIngestAsPDF(url: URL) async throws -> IngestionResult? {
     // URL ends in `.pdf`.
     let header = data.prefix(5)
     let looksLikePDF: Bool = {
-        if isPDFFromHead { return true }
+        if isPDFFromHead {
+            return true
+        }
         guard header.count == 5 else { return false }
         return header[header.startIndex] == 0x25    // %
             && header[header.startIndex + 1] == 0x50 // P
@@ -392,13 +395,16 @@ private func maybeIngestAsPDF(url: URL) async throws -> IngestionResult? {
 func detectInteractiveContent(document: Document) -> Bool {
     // Canvas elements always require JS.
     let canvasCount = (try? document.select("canvas").array().count) ?? 0
-    if canvasCount > 0 { return true }
+    if canvasCount > 0 {
+        return true
+    }
 
     // SVGs that carry real interactivity: embedded <script>, SMIL animation,
     // or <foreignObject>. Child-count alone is a bad heuristic because
     // icon SVGs commonly have dozens of <path> children.
     let svgs = (try? document.select("svg").array()) ?? []
     for svg in svgs {
+        // swiftlint:disable:next for_where
         if (try? svg.select("script, animate, animateTransform, animateMotion, set, foreignObject").first()) != nil {
             return true
         }
@@ -410,7 +416,9 @@ func detectInteractiveContent(document: Document) -> Bool {
     let vizPatterns = ["d3.js", "d3.min.js", "/d3/", "chart.js", "chartjs", "highcharts", "plotly", "vega", "observablehq"]
     for script in scripts {
         let src = ((try? script.attr("src")) ?? "").lowercased()
-        if vizPatterns.contains(where: src.contains) { return true }
+        if vizPatterns.contains(where: src.contains) {
+            return true
+        }
     }
 
     // Inline scripts that construct charts or drive SVG animations. Match on
@@ -420,7 +428,9 @@ func detectInteractiveContent(document: Document) -> Bool {
     let vizCallPatterns = ["d3.select(", "new Chart(", "Highcharts.chart(", "Plotly.newPlot(", "vega.embed(", "createElementNS(\"http://www.w3.org/2000/svg\""]
     for script in inlineScripts {
         let content = (try? script.html()) ?? ""
-        if vizCallPatterns.contains(where: content.contains) { return true }
+        if vizCallPatterns.contains(where: content.contains) {
+            return true
+        }
     }
 
     return false

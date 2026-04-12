@@ -1,5 +1,5 @@
-import SwiftUI
 import StowerData
+import SwiftUI
 
 /// A fully-resolved palette of SwiftUI colors for a given
 /// `(background, primaryAccent, secondaryAccent)` triple. Every view in the
@@ -76,38 +76,38 @@ public struct FlexokiPalette: Equatable, Sendable {
         let info = FlexokiRaw.accent(.blue, isDark: base.isDark)
 
         return FlexokiPalette(
-            bg:            Color(hex: base.bg),
-            bg2:           Color(hex: base.bg2),
-            ui:            Color(hex: base.ui),
-            ui2:           Color(hex: base.ui2),
-            ui3:           Color(hex: base.ui3),
-            tx:            Color(hex: base.tx),
-            tx2:           Color(hex: base.tx2),
-            tx3:           Color(hex: base.tx3),
-            primary:       Color(hex: primary.main),
-            primaryMuted:  Color(hex: primary.muted),
-            primaryFill:   Color(hex: primary.fill),
-            primaryWash:   Color(hex: primary.wash),
-            secondary:     Color(hex: secondary.main),
+            bg: Color(hex: base.bg),
+            bg2: Color(hex: base.bg2),
+            ui: Color(hex: base.ui),
+            ui2: Color(hex: base.ui2),
+            ui3: Color(hex: base.ui3),
+            tx: Color(hex: base.tx),
+            tx2: Color(hex: base.tx2),
+            tx3: Color(hex: base.tx3),
+            primary: Color(hex: primary.main),
+            primaryMuted: Color(hex: primary.muted),
+            primaryFill: Color(hex: primary.fill),
+            primaryWash: Color(hex: primary.wash),
+            secondary: Color(hex: secondary.main),
             secondaryMuted: Color(hex: secondary.muted),
             secondaryFill: Color(hex: secondary.fill),
             secondaryWash: Color(hex: secondary.wash),
-            error:         Color(hex: error.main),
-            warning:       Color(hex: warning.main),
-            success:       Color(hex: success.main),
-            info:          Color(hex: info.main),
-            colorScheme:   base.isDark ? .dark : .light,
-            isDark:        base.isDark,
-            bgHex:         base.bg,
-            bg2Hex:        base.bg2,
-            uiHex:         base.ui,
-            txHex:         base.tx,
-            tx2Hex:        base.tx2,
-            tx3Hex:        base.tx3,
-            primaryHex:    primary.main,
+            error: Color(hex: error.main),
+            warning: Color(hex: warning.main),
+            success: Color(hex: success.main),
+            info: Color(hex: info.main),
+            colorScheme: base.isDark ? .dark : .light,
+            isDark: base.isDark,
+            bgHex: base.bg,
+            bg2Hex: base.bg2,
+            uiHex: base.ui,
+            txHex: base.tx,
+            tx2Hex: base.tx2,
+            tx3Hex: base.tx3,
+            primaryHex: primary.main,
             primaryMutedHex: primary.muted,
             primaryWashHex: primary.wash,
-            secondaryHex:  secondary.main,
+            secondaryHex: secondary.main,
             secondaryMutedHex: secondary.muted
         )
     }

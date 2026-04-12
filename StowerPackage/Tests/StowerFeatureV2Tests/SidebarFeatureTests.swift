@@ -1,17 +1,21 @@
 import ComposableArchitecture
 import Foundation
-import Testing
 @testable import StowerData
 @testable import StowerFeature
+import Testing
 
 @MainActor
 @Suite
 struct SidebarFeatureTests {
-
     @Test
     func reload_loadsCountsAndTags() async {
         let counts = LibraryListCounts(
-            unread: 2, read: 1, starred: 1, untagged: 1, all: 3, recentlyDeleted: 1,
+            unread: 2,
+            read: 1,
+            starred: 1,
+            untagged: 1,
+            all: 3,
+            recentlyDeleted: 1,
             byTag: [:]
         )
         let tag = Tag(name: "inbox")

@@ -1,7 +1,7 @@
 import ComposableArchitecture
 import Foundation
-import Testing
 @testable import StowerFeature
+import Testing
 
 @MainActor
 @Suite
@@ -118,4 +118,3 @@ struct ReaderSpeechFeatureTests {
         #expect(stopCalled.value == true)
     }
 }
-

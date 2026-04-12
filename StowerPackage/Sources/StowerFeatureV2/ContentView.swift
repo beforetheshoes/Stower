@@ -1,10 +1,11 @@
 import ComposableArchitecture
-import SwiftUI
 import StowerData
+import SwiftUI
 
 public struct ContentView: View {
     let store: StoreOf<AppFeature>
-    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.scenePhase)
+    private var scenePhase
 
     public init(store: StoreOf<AppFeature>) {
         self.store = store
@@ -33,7 +34,8 @@ public struct AppView: View {
     @Bindable var store: StoreOf<AppFeature>
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     #if os(iOS)
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.horizontalSizeClass)
+    private var horizontalSizeClass
     @State private var isFilterSheetPresented = false
     #endif
 
@@ -85,9 +87,10 @@ public struct AppView: View {
         if horizontalSizeClass == .compact {
             NavigationStack {
                 LibraryScreen(
-                    store: store.scope(state: \.library, action: \.library),
-                    onOpenFilters: { isFilterSheetPresented = true }
-                )
+                    store: store.scope(state: \.library, action: \.library)
+                ) {
+                    isFilterSheetPresented = true
+                }
                     .scrollContentBackground(.hidden)
                     .background(palette.bg)
                     .navigationDestination(
@@ -146,9 +149,10 @@ public struct AppView: View {
     private func splitNavigationView(palette: FlexokiPalette) -> some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
             SidebarScreen(
-                store: store.scope(state: \.sidebar, action: \.sidebar),
-                onOpenSettings: { store.send(.openSettings) }
-            )
+                store: store.scope(state: \.sidebar, action: \.sidebar)
+            ) {
+                store.send(.openSettings)
+            }
             .scrollContentBackground(.hidden)
             .background(palette.bg2)
             .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 320)

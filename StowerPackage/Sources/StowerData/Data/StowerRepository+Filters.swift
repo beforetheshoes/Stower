@@ -4,7 +4,6 @@ import SQLiteData
 // MARK: - Filter-aware reads + list-bucket mutations
 
 extension StowerRepository {
-
     // MARK: Filtered fetch
 
     static func _fetchLibraryFiltered(
@@ -83,7 +82,7 @@ extension StowerRepository {
                 let junctions: [ItemTagSyncTable] = ids.isEmpty
                     ? []
                     : try ItemTagSyncTable.where { $0.itemID.in(ids) }.fetchAll(db)
-                var tagIDsByItem: [UUID: [UUID]] = [:]
+                var tagIDsByItem: [UUID: [UUID]] = [:] // swiftlint:disable:this prefer_let_over_var
                 for row in junctions {
                     tagIDsByItem[row.itemID, default: []].append(row.tagID)
                 }
@@ -91,7 +90,9 @@ extension StowerRepository {
                 var seen = Set<String>()
                 return synced.compactMap { row -> SavedItem? in
                     if let key = normalizedURLKey(row.canonicalURL ?? row.sourceURL) {
-                        if seen.contains(key) { return nil }
+                        if seen.contains(key) {
+                            return nil
+                        }
                         seen.insert(key)
                     }
                     return toDomain(
@@ -110,13 +111,16 @@ extension StowerRepository {
         database: any DatabaseWriter,
         scheduleSync: @escaping @Sendable () -> Void
     ) -> @Sendable (UUID, Bool) async throws -> Void {
-        { (id: UUID, isRead: Bool) async throws -> Void in
+        { (id: UUID, isRead: Bool) async throws in
             let now = Date.now
-            try await database.write { db -> Void in
-                try SavedItemSyncTable.find(id).update {
-                    $0.isRead = #bind(isRead)
-                    $0.updatedAt = #bind(now)
-                }.execute(db)
+            try await database.write { db in
+                try SavedItemSyncTable
+                    .find(id)
+                    .update {
+                        $0.isRead = #bind(isRead)
+                        $0.updatedAt = #bind(now)
+                    }
+                    .execute(db)
             }
             scheduleSync()
         }
@@ -126,13 +130,16 @@ extension StowerRepository {
         database: any DatabaseWriter,
         scheduleSync: @escaping @Sendable () -> Void
     ) -> @Sendable (UUID, Bool) async throws -> Void {
-        { (id: UUID, isStarred: Bool) async throws -> Void in
+        { (id: UUID, isStarred: Bool) async throws in
             let now = Date.now
-            try await database.write { db -> Void in
-                try SavedItemSyncTable.find(id).update {
-                    $0.isStarred = #bind(isStarred)
-                    $0.updatedAt = #bind(now)
-                }.execute(db)
+            try await database.write { db in
+                try SavedItemSyncTable
+                    .find(id)
+                    .update {
+                        $0.isStarred = #bind(isStarred)
+                        $0.updatedAt = #bind(now)
+                    }
+                    .execute(db)
             }
             scheduleSync()
         }
@@ -142,13 +149,16 @@ extension StowerRepository {
         database: any DatabaseWriter,
         scheduleSync: @escaping @Sendable () -> Void
     ) -> @Sendable (UUID) async throws -> Void {
-        { (id: UUID) async throws -> Void in
+        { (id: UUID) async throws in
             let now = Date.now
-            try await database.write { db -> Void in
-                try SavedItemSyncTable.find(id).update {
-                    $0.deletedAt = #bind(Date?.some(now))
-                    $0.updatedAt = #bind(now)
-                }.execute(db)
+            try await database.write { db in
+                try SavedItemSyncTable
+                    .find(id)
+                    .update {
+                        $0.deletedAt = #bind(Date?.some(now))
+                        $0.updatedAt = #bind(now)
+                    }
+                    .execute(db)
             }
             scheduleSync()
         }
@@ -158,13 +168,16 @@ extension StowerRepository {
         database: any DatabaseWriter,
         scheduleSync: @escaping @Sendable () -> Void
     ) -> @Sendable (UUID) async throws -> Void {
-        { (id: UUID) async throws -> Void in
+        { (id: UUID) async throws in
             let now = Date.now
-            try await database.write { db -> Void in
-                try SavedItemSyncTable.find(id).update {
-                    $0.deletedAt = #bind(nil)
-                    $0.updatedAt = #bind(now)
-                }.execute(db)
+            try await database.write { db in
+                try SavedItemSyncTable
+                    .find(id)
+                    .update {
+                        $0.deletedAt = #bind(nil)
+                        $0.updatedAt = #bind(now)
+                    }
+                    .execute(db)
             }
             scheduleSync()
         }
@@ -174,8 +187,8 @@ extension StowerRepository {
         database: any DatabaseWriter,
         scheduleSync: @escaping @Sendable () -> Void
     ) -> @Sendable (UUID) async throws -> Void {
-        { (id: UUID) async throws -> Void in
-            try await database.write { db -> Void in
+        { (id: UUID) async throws in
+            try await database.write { db in
                 try ItemTagSyncTable.where { $0.itemID.eq(id) }.delete().execute(db)
                 try SavedItemSyncTable.find(id).delete().execute(db)
             }
@@ -249,7 +262,7 @@ extension StowerRepository {
                     .fetchAll(db)
                     .map(\.id)
                 let liveIDSet = Set(liveIDs)
-                var byTag: [UUID: Int] = [:]
+                var byTag: [UUID: Int] = [:] // swiftlint:disable:this prefer_let_over_var
                 for row in taggedRows where liveIDSet.contains(row.itemID) {
                     byTag[row.tagID, default: 0] += 1
                 }

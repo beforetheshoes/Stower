@@ -32,8 +32,12 @@ public struct ReaderFeature {
         ///    the case) silently broke every interactive-SVG page.
         /// 3. `.structuredV1` if the item hasn't loaded yet.
         public var effectiveRenderFormat: RenderFormat {
-            if let renderModeOverride { return renderModeOverride }
-            if let item { return item.renderFormat }
+            if let renderModeOverride {
+                return renderModeOverride
+            }
+            if let item {
+                return item.renderFormat
+            }
             return .structuredV1
         }
 
@@ -97,10 +101,14 @@ public struct ReaderFeature {
         case progressPoll
     }
 
-    @Dependency(\.stowerRepository) var repository
-    @Dependency(\.urlIngestionClient) var ingestionClient
-    @Dependency(\.continuousClock) var continuousClock
-    @Dependency(\.readerProgressClient) var readerProgressClient
+    @Dependency(\.stowerRepository)
+    var repository
+    @Dependency(\.urlIngestionClient)
+    var ingestionClient
+    @Dependency(\.continuousClock)
+    var continuousClock
+    @Dependency(\.readerProgressClient)
+    var readerProgressClient
 
     public var body: some ReducerOf<Self> {
         Scope(state: \.speech, action: \.speech) {
@@ -146,7 +154,7 @@ public struct ReaderFeature {
                     }
                 )
 
-            case .loaded(let item, let document, let sourceHTML):
+            case let .loaded(item, document, sourceHTML):
                 state.isLoading = false
                 if let item { state.item = item }
                 state.document = document
@@ -405,9 +413,13 @@ public struct ReaderFeature {
             var lastReported: Int?
             while !Task.isCancelled {
                 try? await clock.sleep(for: .seconds(1.5))
-                if Task.isCancelled { return }
+                if Task.isCancelled {
+                    return
+                }
                 guard let top = await client.topBlockIndex() else { continue }
-                if Task.isCancelled { return }
+                if Task.isCancelled {
+                    return
+                }
                 if top != lastReported {
                     lastReported = top
                     await send(.scrollProgressChanged(top), animation: nil)
