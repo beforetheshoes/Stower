@@ -62,10 +62,12 @@ final class ImageLoader: @unchecked Sendable {
 
                 let image = try Self.makeImage(from: data, targetPixelSize: targetPixelSize)
                 guard !Task.isCancelled else { return }
-                await MainActor.run { self?.phase = .success(image) }
+                let loader = self
+                await MainActor.run { loader?.phase = .success(image) }
             } catch {
                 guard !Task.isCancelled else { return }
-                await MainActor.run { self?.phase = .failure(error) }
+                let loader = self
+                await MainActor.run { loader?.phase = .failure(error) }
             }
         }
     }

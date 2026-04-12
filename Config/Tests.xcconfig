@@ -13,8 +13,8 @@ MACOSX_DEPLOYMENT_TARGET = 26.0
 // ==========================================
 // Test Target Identity
 // ==========================================
+PRODUCT_NAME = StowerUITests
 PRODUCT_BUNDLE_IDENTIFIER = com.ryanleewilliams.stower.uitests
-PRODUCT_MODULE_NAME = $(PRODUCT_NAME)UITests
 
 // ==========================================
 // Code Coverage
