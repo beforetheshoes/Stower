@@ -16,14 +16,17 @@ import WebKit
 /// `onReadingProgress`. TTS highlighting is driven by the `highlightedBlockIndex`
 /// binding and mapped through `ReaderWebPageFactory.runHighlight`.
 public struct ReaderWebView: View {
-    let html: String
+    let htmlProvider: () -> String
     let sourceURL: String?
     let itemID: UUID
+    let contentVersion: Int
     let appearance: ReaderAppearanceSettings
+    let viewportWidth: Double?
     let isWebViewFormat: Bool
     let highlightedBlockIndex: Int?
     let restoreBlockIndex: Int?
     let onOpenInlineEmbed: ((String) -> Void)?
+    let onContentTap: (() -> Void)?
 
     @State private var page: WebPage?
     @State private var archiveServer: LocalArchiveServer?
@@ -32,23 +35,29 @@ public struct ReaderWebView: View {
     private var openURL
 
     public init(
-        html: String,
+        html: @escaping () -> String,
         sourceURL: String?,
         itemID: UUID,
+        contentVersion: Int,
         appearance: ReaderAppearanceSettings,
+        viewportWidth: Double? = nil,
         isWebViewFormat: Bool = false,
         highlightedBlockIndex: Int? = nil,
         restoreBlockIndex: Int? = nil,
-        onOpenInlineEmbed: ((String) -> Void)? = nil
+        onOpenInlineEmbed: ((String) -> Void)? = nil,
+        onContentTap: (() -> Void)? = nil
     ) {
-        self.html = html
+        self.htmlProvider = html
         self.sourceURL = sourceURL
         self.itemID = itemID
+        self.contentVersion = contentVersion
         self.appearance = appearance
+        self.viewportWidth = viewportWidth
         self.isWebViewFormat = isWebViewFormat
         self.highlightedBlockIndex = highlightedBlockIndex
         self.restoreBlockIndex = restoreBlockIndex
         self.onOpenInlineEmbed = onOpenInlineEmbed
+        self.onContentTap = onContentTap
     }
 
     public var body: some View {
@@ -67,18 +76,17 @@ public struct ReaderWebView: View {
                     .webViewContentBackground(.hidden)
             }
         }
-        // Keyed on both `itemID` and the HTML byte count so that in-place
-        // document updates (e.g. re-running PDF OCR on the currently-open
-        // item) re-fire `loadContent()` and swap the WebPage for one
-        // loading the freshly-produced HTML. Without the byte-count
-        // component the task was only keyed on itemID, which never
-        // changes during an in-place update, so the WKWebView kept
-        // showing the old content.
-        .task(id: ContentReloadKey(itemID: itemID, htmlBytes: html.utf8.count)) {
+        // Keyed on item identity plus content version, not on the rendered
+        // HTML bytes. Appearance changes update CSS live; they must not tear
+        // down and recreate the whole WKWebView while the user drags a slider.
+        .task(id: ContentReloadKey(itemID: itemID, contentVersion: contentVersion)) {
             loadContent()
         }
         .onChange(of: appearance) { _, newAppearance in
             updateCSS(newAppearance)
+        }
+        .onChange(of: viewportWidth) { _, _ in
+            updateCSS(appearance)
         }
         .onChange(of: page?.isLoading) { _, isLoading in
             if isLoading == false {
@@ -90,6 +98,7 @@ public struct ReaderWebView: View {
                 // because `page.isLoading == false` is the first moment
                 // at which `stowerGetTopBlockIndex()` is guaranteed to
                 // exist on the JS side.
+                installContentTapHandler()
                 updateCSS(appearance)
                 maybeRestorePosition()
                 ReaderProgressCoordinator.shared.register(page)
@@ -105,15 +114,13 @@ public struct ReaderWebView: View {
         }
     }
 
-    /// Identity for the reload task. Changes whenever the item swaps or
-    /// the HTML content for the current item is replaced in place (e.g.
-    /// after a PDF is re-OCRed). Using `utf8.count` keeps the equality
-    /// check O(1); a collision (identical byte count after reprocessing)
-    /// would be extraordinarily unlikely given that re-extraction shifts
-    /// paragraph/table content around.
+    /// Identity for the reload task. Changes whenever the item swaps or its
+    /// underlying content changes in place (e.g. after re-extraction), but
+    /// stays stable for pure appearance tweaks so live CSS updates can handle
+    /// them without recreating the web content process.
     private struct ContentReloadKey: Hashable {
         let itemID: UUID
-        let htmlBytes: Int
+        let contentVersion: Int
     }
 
     // MARK: - Loading
@@ -130,11 +137,12 @@ public struct ReaderWebView: View {
         let hasArchive = AssetArchiver.archiveExists(for: itemID)
         let isArchive = isWebViewFormat && hasArchive
 
-        let currentHTML = html
+        let currentHTML = htmlProvider()
         let currentSourceURL = sourceURL
         let currentItemID = itemID
         let currentAppearance = appearance
         let openEmbed = onOpenInlineEmbed ?? { _ in }
+        let toggleChrome = onContentTap ?? {}
 
         Task {
             if isArchive {
@@ -148,7 +156,8 @@ public struct ReaderWebView: View {
 
                 let newPage = ReaderWebPageFactory.makePage(
                     openExternalURL: { [openURL] url in openURL(url) },
-                    openInlineEmbed: { openEmbed($0) }
+                    openInlineEmbed: { openEmbed($0) },
+                    toggleChrome: { toggleChrome() }
                 )
                 self.archiveServer = server
                 _ = newPage.load(URLRequest(url: loadURL))
@@ -174,7 +183,8 @@ public struct ReaderWebView: View {
                 ) {
                     let newPage = ReaderWebPageFactory.makePage(
                         openExternalURL: { [openURL] url in openURL(url) },
-                        openInlineEmbed: { openEmbed($0) }
+                        openInlineEmbed: { openEmbed($0) },
+                        toggleChrome: { toggleChrome() }
                     )
                     self.archiveServer = server
                     _ = newPage.load(URLRequest(url: loadURL))
@@ -187,7 +197,8 @@ public struct ReaderWebView: View {
                     let base = currentSourceURL.flatMap(URL.init(string:)) ?? URL(string: "about:blank")!
                     let newPage = ReaderWebPageFactory.makePage(
                         openExternalURL: { [openURL] url in openURL(url) },
-                        openInlineEmbed: { openEmbed($0) }
+                        openInlineEmbed: { openEmbed($0) },
+                        toggleChrome: { toggleChrome() }
                     )
                     _ = newPage.load(html: currentHTML, baseURL: base)
                     self.page = newPage
@@ -299,9 +310,17 @@ public struct ReaderWebView: View {
             return
         }
 
-        let css = appearance.readerCSS(pageWidth: 10_000)
+        let css = appearance.readerCSS(pageWidth: CGFloat(viewportWidth ?? 0))
         Task {
             await ReaderWebPageFactory.updateCSS(css, on: page)
+        }
+    }
+
+    @MainActor
+    private func installContentTapHandler() {
+        guard let page else { return }
+        Task {
+            await ReaderWebPageFactory.installContentTapHandler(on: page)
         }
     }
 

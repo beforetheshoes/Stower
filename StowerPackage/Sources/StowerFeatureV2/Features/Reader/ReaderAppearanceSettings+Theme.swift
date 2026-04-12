@@ -155,7 +155,8 @@ extension ReaderAppearanceSettings {
     public func readerCSS(pageWidth: CGFloat) -> String {
         let p = palette
         let font = cssFont
-        let columnWidth = min(lineWidth, pageWidth - 40)
+        let policy = ReaderLineWidthPolicy(viewportWidth: Double(pageWidth))
+        let columnWidth = policy.clamped(lineWidth)
         let colorScheme = p.isDark ? "dark" : "light"
 
         return """
@@ -179,11 +180,24 @@ extension ReaderAppearanceSettings {
           font-family: \(font), -apple-system, serif !important;
           font-size: \(fontSize)px !important;
           line-height: \(1.4 + lineSpacing / 20) !important;
-          max-width: \(columnWidth)px !important;
-          margin: 0 auto !important;
-          padding: 20px 20px 60px 20px !important;
+          width: 100% !important;
+          max-width: 100% !important;
+          margin: 0 !important;
+          overflow-x: hidden !important;
+          overscroll-behavior-x: none !important;
+          touch-action: pan-y pinch-zoom !important;
           word-break: break-word;
           text-align: \(justification == .justified ? "justify" : "left") !important;
+        }
+        body {
+          padding: 20px 20px 60px 20px !important;
+          box-sizing: border-box !important;
+        }
+        .stower-article {
+          width: 100% !important;
+          max-width: \(columnWidth)px !important;
+          margin: 0 auto !important;
+          overflow-x: clip !important;
         }
         a { color: var(--stower-primary) !important; text-decoration-color: color-mix(in srgb, var(--stower-primary) 45%, transparent); }
         a:hover { color: var(--stower-primary-muted) !important; }

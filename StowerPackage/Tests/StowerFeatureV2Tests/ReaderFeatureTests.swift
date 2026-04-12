@@ -8,6 +8,19 @@ import Testing
 @Suite
 struct ReaderFeatureTests {
     @Test
+    func viewportWidthChange_updatesState() async {
+        let itemID = UUID()
+
+        let store = TestStore(initialState: ReaderFeature.State(itemID: itemID)) {
+            ReaderFeature()
+        }
+
+        await store.send(.viewportWidthChanged(375)) {
+            $0.viewportWidth = 375
+        }
+    }
+
+    @Test
     func effectiveRenderFormat_defaultsToItemRenderFormat_forInteractiveArticles() {
         // Regression: previously `effectiveRenderFormat` always returned
         // `.structuredV1` when no manual override was set, which silently
@@ -186,6 +199,51 @@ struct ReaderFeatureTests {
             $0.errorMessage = SaveError.failed.localizedDescription
         }
         #expect(store.state.appearance.lineWidth == 760)
+    }
+
+    @Test
+    func lineWidthChange_clampsToViewportRange_beforeSaving() async {
+        let itemID = UUID()
+        let clock = TestClock()
+        let saved = LockIsolated<ReaderAppearanceSettings?>(nil)
+        let policy = ReaderLineWidthPolicy(viewportWidth: 375)
+
+        let store = TestStore(initialState: ReaderFeature.State(itemID: itemID)) {
+            ReaderFeature()
+        } withDependencies: {
+            $0.continuousClock = clock
+            $0.stowerRepository.saveReaderAppearanceSettings = { settings in
+                saved.withValue { $0 = settings }
+            }
+        }
+
+        await store.send(.viewportWidthChanged(375)) {
+            $0.viewportWidth = 375
+        }
+        await store.send(.lineWidthChanged(980)) {
+            $0.appearance.lineWidth = policy.range.upperBound
+        }
+        await store.receive(.saveAppearance)
+        await clock.advance(by: .milliseconds(200))
+        await store.receive(.saveAppearanceFinished)
+
+        #expect(saved.value?.lineWidth == policy.range.upperBound)
+    }
+
+    @Test
+    func contentAreaTapped_togglesChromeVisibility() async {
+        let itemID = UUID()
+
+        let store = TestStore(initialState: ReaderFeature.State(itemID: itemID)) {
+            ReaderFeature()
+        }
+
+        await store.send(.contentAreaTapped) {
+            $0.isChromeHidden = true
+        }
+        await store.send(.contentAreaTapped) {
+            $0.isChromeHidden = false
+        }
     }
 
     @Test
