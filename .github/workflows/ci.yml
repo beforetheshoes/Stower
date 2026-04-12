@@ -95,8 +95,9 @@ jobs:
         run: |
           xcodebuild test \
             -workspace Stower.xcworkspace \
-            -scheme StowerFeature \
+            -scheme Stower \
             -destination "platform=iOS Simulator,name=iPhone 16" \
+            -skip-testing:StowerUITests \
             -skipMacroValidation \
             -skipPackagePluginValidation \
             CODE_SIGNING_ALLOWED=NO \
