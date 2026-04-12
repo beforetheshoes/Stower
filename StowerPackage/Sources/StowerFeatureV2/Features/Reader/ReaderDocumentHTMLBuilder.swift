@@ -715,6 +715,26 @@ public enum ReaderDocumentHTMLBuilder {
     private static let runtimeJS = """
     (function() {
       var currentHighlight = null;
+      var horizontalLockScheduled = false;
+
+      function lockHorizontalScroll() {
+        if (window.scrollX !== 0) {
+          window.scrollTo(0, window.scrollY);
+        }
+      }
+
+      function scheduleHorizontalLock() {
+        if (horizontalLockScheduled) { return; }
+        horizontalLockScheduled = true;
+        window.requestAnimationFrame(function() {
+          horizontalLockScheduled = false;
+          lockHorizontalScroll();
+        });
+      }
+
+      window.addEventListener('scroll', scheduleHorizontalLock, { passive: true });
+      window.addEventListener('touchmove', scheduleHorizontalLock, { passive: true });
+      window.addEventListener('load', lockHorizontalScroll, { once: true });
 
       window.stowerHighlight = function(index) {
         if (currentHighlight) {

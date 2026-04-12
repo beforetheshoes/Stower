@@ -3,6 +3,7 @@ import SwiftUI
 
 struct ReaderAppearanceControls: View {
     let appearance: ReaderAppearanceSettings
+    let lineWidthPolicy: ReaderLineWidthPolicy
     let onFontSizeChanged: (Double) -> Void
     let onFontStyleChanged: (ReaderFontStyle) -> Void
     let onLineSpacingChanged: (Double) -> Void
@@ -71,10 +72,17 @@ struct ReaderAppearanceControls: View {
             }
 
             VStack(alignment: .leading, spacing: 8) {
-                controlTitle("Line Width", value: appearance.lineWidth.formatted(.number.precision(.fractionLength(0))))
+                controlTitle(
+                    "Line Width",
+                    value: lineWidthPolicy.clamped(appearance.lineWidth)
+                        .formatted(.number.precision(.fractionLength(0)))
+                )
                 Slider(
-                    value: Binding(get: { appearance.lineWidth }, set: { onLineWidthChanged($0) }),
-                    in: ReaderAppearanceSettings.lineWidthRange
+                    value: Binding(
+                        get: { lineWidthPolicy.clamped(appearance.lineWidth) },
+                        set: { onLineWidthChanged($0) }
+                    ),
+                    in: lineWidthPolicy.range
                 )
             }
         }

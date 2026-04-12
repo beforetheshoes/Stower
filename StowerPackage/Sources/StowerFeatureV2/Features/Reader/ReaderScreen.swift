@@ -31,6 +31,11 @@ public struct ReaderScreen: View {
     public var body: some View {
         content
             .background(store.appearance.backgroundColor)
+            .onGeometryChange(for: CGFloat.self) { proxy in
+                proxy.size.width
+            } action: { newWidth in
+                store.send(.viewportWidthChanged(Double(newWidth)))
+            }
             // Enables WKWebView's built-in find UI (iOS 26+ / macOS 26+).
             // Binding lets us toggle from the toolbar button below; the
             // system also binds this to its own Find menu item and the
@@ -38,6 +43,11 @@ public struct ReaderScreen: View {
             // same navigator.
             .findNavigator(isPresented: $isFindNavigatorPresented)
             .navigationTitle("Reader")
+#if os(macOS)
+            .toolbar(store.isChromeHidden ? .hidden : .visible, for: .windowToolbar)
+#else
+            .toolbar(store.isChromeHidden ? .hidden : .visible, for: .navigationBar)
+#endif
             .toolbar {
                 // Group 1: mode switching. Available whenever the original
                 // source HTML is on hand so the user can flip to the full
@@ -99,6 +109,7 @@ public struct ReaderScreen: View {
                     .popover(isPresented: $isAppearancePanelPresented, arrowEdge: .top) {
                         ReaderAppearanceControls(
                             appearance: store.appearance,
+                            lineWidthPolicy: store.lineWidthPolicy,
                             onFontSizeChanged: { store.send(.fontSizeChanged($0)) },
                             onFontStyleChanged: { store.send(.fontStyleChanged($0)) },
                             onLineSpacingChanged: { store.send(.lineSpacingChanged($0)) },
@@ -138,18 +149,24 @@ public struct ReaderScreen: View {
     // MARK: - Content
 
     @ViewBuilder private var content: some View {
-        if let item = store.item, let resolvedHTML = resolvedHTML(for: item) {
+        if let item = store.item, hasRenderableContent(for: item) {
             ReaderWebView(
-                html: resolvedHTML,
+                html: { resolvedHTML(for: item) ?? "" },
                 sourceURL: item.sourceURL,
                 itemID: store.itemID,
+                contentVersion: contentReloadToken(for: item),
                 appearance: store.appearance,
+                viewportWidth: store.viewportWidth,
                 isWebViewFormat: store.effectiveRenderFormat == .webView,
                 highlightedBlockIndex: store.speech.currentBlockIndex,
-                restoreBlockIndex: item.lastReadBlockIndex
-            ) { urlString in
-                store.send(.openInlineWebEmbed(urlString))
-            }
+                restoreBlockIndex: item.lastReadBlockIndex,
+                onOpenInlineEmbed: { urlString in
+                    store.send(.openInlineWebEmbed(urlString))
+                },
+                onContentTap: {
+                    handleContentTap()
+                }
+            )
         } else if let item = store.item, item.content.isEmpty {
             downloadPrompt(item: item)
         } else if store.isLoading {
@@ -163,6 +180,13 @@ public struct ReaderScreen: View {
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+    }
+
+    private func hasRenderableContent(for item: SavedItem) -> Bool {
+        if store.effectiveRenderFormat == .webView {
+            return store.sourceHTML != nil
+        }
+        return store.document != nil
     }
 
     /// Toolbar button that flips between the interactive (archive/WebView)
@@ -201,8 +225,48 @@ public struct ReaderScreen: View {
         return ReaderDocumentHTMLBuilder.buildReaderHTML(
             item: item,
             document: document,
-            appearance: store.appearance
+            appearance: store.appearance,
+            pageWidth: CGFloat(store.viewportWidth ?? 0)
         )
+    }
+
+    private func contentReloadToken(for item: SavedItem) -> Int {
+        var hasher = Hasher()
+        hasher.combine(item.id)
+        hasher.combine(item.updatedAt)
+        hasher.combine(item.renderFormat.rawValue)
+        hasher.combine(store.effectiveRenderFormat.rawValue)
+        hasher.combine(store.sourceHTML?.count)
+
+        if let document = store.document {
+            hasher.combine(document.version)
+            hasher.combine(document.title)
+            hasher.combine(document.sourceURL)
+            hasher.combine(document.canonicalURL)
+            hasher.combine(document.blocks.count)
+        }
+
+        return hasher.finalize()
+    }
+
+    private func handleContentTap() {
+        let hasPresentedControls = isAppearancePanelPresented
+            || isListenPanelPresented
+            || isAIPanelPresented
+            || isPDFViewerPresented
+            || isFindNavigatorPresented
+
+        isAppearancePanelPresented = false
+        isListenPanelPresented = false
+        isAIPanelPresented = false
+        isPDFViewerPresented = false
+        isFindNavigatorPresented = false
+
+        guard !hasPresentedControls else { return }
+
+        _ = withAnimation(.easeInOut(duration: 0.2)) {
+            store.send(.contentAreaTapped)
+        }
     }
 
     // MARK: - Download prompt

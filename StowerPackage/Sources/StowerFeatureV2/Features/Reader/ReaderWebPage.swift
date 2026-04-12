@@ -11,6 +11,7 @@ import WebKit
 struct ReaderNavigationDecider: WebPage.NavigationDeciding {
     var openExternalURL: @MainActor (URL) -> Void
     var openInlineEmbed: @MainActor (String) -> Void
+    var toggleChrome: @MainActor () -> Void
 
     @MainActor
     mutating func decidePolicy(
@@ -26,6 +27,12 @@ struct ReaderNavigationDecider: WebPage.NavigationDeciding {
                 .replacingOccurrences(of: "stower-embed://", with: "")
             let decoded = raw.removingPercentEncoding ?? raw
             openInlineEmbed(decoded)
+            return .cancel
+        }
+
+        if url.scheme == "stower-reader",
+           url.host(percentEncoded: false) == "toggle-chrome" {
+            toggleChrome()
             return .cancel
         }
 
@@ -53,14 +60,37 @@ enum ReaderWebPageFactory {
     @MainActor
     static func makePage(
         openExternalURL: @MainActor @escaping (URL) -> Void,
-        openInlineEmbed: @MainActor @escaping (String) -> Void = { _ in }
+        openInlineEmbed: @MainActor @escaping (String) -> Void = { _ in },
+        toggleChrome: @MainActor @escaping () -> Void = {}
     ) -> WebPage {
         let decider = ReaderNavigationDecider(
             openExternalURL: openExternalURL,
-            openInlineEmbed: openInlineEmbed
+            openInlineEmbed: openInlineEmbed,
+            toggleChrome: toggleChrome
         )
         return WebPage(navigationDecider: decider)
     }
+
+    static let contentTapScript = """
+        (function() {
+            if (window.__stowerContentTapHandlerInstalled) { return; }
+            window.__stowerContentTapHandlerInstalled = true;
+
+            var toggleURL = 'stower-reader://toggle-chrome';
+            var interactiveSelector = 'a, button, input, textarea, select, option, label, summary, details, iframe, video, audio, [contenteditable=\"true\"], .stower-yt-facade';
+
+            document.addEventListener('click', function(e) {
+                if (e.defaultPrevented) { return; }
+                if (window.getSelection && String(window.getSelection()).length > 0) { return; }
+
+                var target = e.target;
+                if (!target || !target.closest) { return; }
+                if (target.closest(interactiveSelector)) { return; }
+
+                window.location.href = toggleURL;
+            });
+        })();
+        """
 
     /// Highlights the block with the given index (or clears all highlights if nil).
     @MainActor
@@ -112,5 +142,10 @@ enum ReaderWebPageFactory {
             })();
             """
         _ = try? await page.callJavaScript(script)
+    }
+
+    @MainActor
+    static func installContentTapHandler(on page: WebPage) async {
+        _ = try? await page.callJavaScript(contentTapScript)
     }
 }

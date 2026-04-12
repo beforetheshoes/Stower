@@ -12,6 +12,8 @@ public struct ReaderFeature {
         public var document: ReaderDocument?
         public var sourceHTML: String?
         public var appearance: ReaderAppearanceSettings
+        var viewportWidth: Double?
+        var isChromeHidden = false
         var speech = ReaderSpeechFeature.State()
         var ai = ReaderAIFeature.State()
         public var isLoading = false
@@ -46,6 +48,10 @@ public struct ReaderFeature {
             item?.renderFormat == .webView
         }
 
+        var lineWidthPolicy: ReaderLineWidthPolicy {
+            ReaderLineWidthPolicy(viewportWidth: viewportWidth)
+        }
+
         /// Initialize with a full SavedItem (preferred — instant header render).
         public init(item: SavedItem, appearance: ReaderAppearanceSettings = .init()) {
             self.itemID = item.id
@@ -75,6 +81,7 @@ public struct ReaderFeature {
         case backgroundChanged(ReaderBackground)
         case primaryAccentChanged(FlexokiHue)
         case secondaryAccentChanged(FlexokiHue)
+        case viewportWidthChanged(Double)
         case lineWidthChanged(Double)
         case saveAppearance
         case saveAppearanceFinished
@@ -90,6 +97,7 @@ public struct ReaderFeature {
         /// Triggers a debounced save of the reading position.
         case scrollProgressChanged(Int)
         case saveReadingProgress(Int)
+        case contentAreaTapped
 
         /// User tapped the toolbar mark-read/unread button.
         case toggleReadTapped
@@ -202,15 +210,24 @@ public struct ReaderFeature {
                 state.appearance.secondaryAccent = value
                 return .send(.saveAppearance)
 
+            case .viewportWidthChanged(let width):
+                guard width.isFinite, width > 0 else {
+                    state.viewportWidth = nil
+                    return .none
+                }
+                state.viewportWidth = width
+                return .none
+
             case .lineWidthChanged(let value):
-                state.appearance.lineWidth = value
-                state.appearance.clamp()
+                state.appearance.lineWidth = state.lineWidthPolicy.clamped(value)
                 return .send(.saveAppearance)
 
             case .saveAppearance:
                 let repository = self.repository
+                let clock = self.continuousClock
                 return .run { [appearance = state.appearance] send in
                     do {
+                        try await clock.sleep(for: .milliseconds(150))
                         try await repository.saveReaderAppearanceSettings(appearance.clamped())
                         await send(.saveAppearanceFinished)
                     } catch is CancellationError {
@@ -331,6 +348,10 @@ public struct ReaderFeature {
                 return .run { [id = state.itemID] _ in
                     try? await repository.saveReadingProgress(id, blockIndex)
                 }
+
+            case .contentAreaTapped:
+                state.isChromeHidden.toggle()
+                return .none
 
             case .toggleReadTapped:
                 guard var item = state.item else { return .none }
