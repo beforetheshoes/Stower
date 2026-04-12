@@ -309,6 +309,7 @@ public struct IngestionJob: Equatable, Identifiable, Sendable {
     public enum Kind: String, Codable, Sendable {
         case url = "url"
         case text = "text"
+        case markdown = "markdown"
         case hydrate = "hydrate"
         case pdf = "pdf"
     }

@@ -13,6 +13,7 @@ let package = Package(
         .package(url: "https://github.com/pointfreeco/swift-dependencies.git", from: "1.11.0"),
         .package(url: "https://github.com/pointfreeco/sqlite-data.git", from: "1.5.0"),
         .package(url: "https://github.com/scinfu/SwiftSoup.git", from: "2.6.0"),
+        .package(url: "https://github.com/swiftlang/swift-markdown.git", from: "0.7.0"),
     ],
     targets: [
         .target(
@@ -28,6 +29,7 @@ let package = Package(
             dependencies: [
                 .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
                 .product(name: "Dependencies", package: "swift-dependencies"),
+                .product(name: "Markdown", package: "swift-markdown"),
                 .product(name: "SwiftSoup", package: "SwiftSoup"),
                 "StowerData",
             ],

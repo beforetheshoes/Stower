@@ -205,14 +205,15 @@ public struct IngestionResult: Equatable, Sendable {
         self.pdfSHA256 = pdfSHA256
     }
 
-    public static func sharedText(_ text: String) -> IngestionResult {
+    public static func sharedText(_ text: String, title: String? = nil) -> IngestionResult {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedTitle = resolvedTextImportTitle(documentTitle: nil, titleHint: title)
         let document = ReaderDocument(
-            title: "Shared Note",
+            title: resolvedTitle,
             blocks: [.paragraph([.text(trimmed)])]
         )
         return IngestionResult(
-            title: "Shared Note",
+            title: resolvedTitle,
             sourceURL: nil,
             canonicalURL: nil,
             excerpt: String(trimmed.prefix(180)),
@@ -223,6 +224,39 @@ public struct IngestionResult: Equatable, Sendable {
             readingTimeMinutes: max(1, trimmed.split(separator: " ").count / 225),
             hasRichMedia: false,
             renderFormat: .plainText,
+            processingState: .ready,
+            processingError: nil,
+            document: document,
+            plainText: trimmed,
+            media: [],
+            embeds: []
+        )
+    }
+
+    public static func structuredText(
+        title: String,
+        blocks: [ReaderBlock],
+        plainText: String,
+        sourceURL: String? = nil,
+        canonicalURL: String? = nil
+    ) -> IngestionResult {
+        let trimmed = plainText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let document = ReaderDocument(
+            title: title,
+            blocks: blocks
+        )
+        return IngestionResult(
+            title: title,
+            sourceURL: sourceURL,
+            canonicalURL: canonicalURL,
+            excerpt: String(trimmed.prefix(180)),
+            author: nil,
+            publishedAt: nil,
+            siteName: nil,
+            heroImageURL: nil,
+            readingTimeMinutes: max(1, trimmed.split(separator: " ").count / 225),
+            hasRichMedia: false,
+            renderFormat: .structuredV1,
             processingState: .ready,
             processingError: nil,
             document: document,

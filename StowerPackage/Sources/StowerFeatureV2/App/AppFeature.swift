@@ -100,6 +100,8 @@ public struct AppFeature {
     var ingestionClient
     @Dependency(\.pdfIngestionClient)
     var pdfIngestionClient
+    @Dependency(\.textIngestionClient)
+    var textIngestionClient
     @Dependency(\.defaultDatabase)
     var database
     @Dependency(\.defaultSyncEngine)
@@ -130,6 +132,7 @@ public struct AppFeature {
                 let repository = self.repository
                 let ingestionClient = self.ingestionClient
                 let pdfIngestionClient = self.pdfIngestionClient
+                let textIngestionClient = self.textIngestionClient
                 let clock = self.clock
                 let periodicSync: Effect<Action> =
                     context == .live
@@ -173,7 +176,8 @@ public struct AppFeature {
                             try await processIngestionJobs(
                                 repository: repository,
                                 ingestionClient: ingestionClient,
-                                pdfIngestionClient: pdfIngestionClient
+                                pdfIngestionClient: pdfIngestionClient,
+                                textIngestionClient: textIngestionClient
                             )
                             try await cloudSyncClient.sendChanges()
                             await send(.startupFinished)
@@ -210,11 +214,13 @@ public struct AppFeature {
                 let repository = self.repository
                 let ingestionClient = self.ingestionClient
                 let pdfIngestionClient = self.pdfIngestionClient
+                let textIngestionClient = self.textIngestionClient
                 return .run { send in
                     try? await processIngestionJobs(
                         repository: repository,
                         ingestionClient: ingestionClient,
-                        pdfIngestionClient: pdfIngestionClient
+                        pdfIngestionClient: pdfIngestionClient,
+                        textIngestionClient: textIngestionClient
                     )
                     await send(.library(.reload))
                     await send(.sidebar(.reload))
@@ -252,13 +258,15 @@ public struct AppFeature {
                     let repository = self.repository
                     let ingestionClient = self.ingestionClient
                     let pdfIngestionClient = self.pdfIngestionClient
+                    let textIngestionClient = self.textIngestionClient
                     return .run { send in
                         _ = try? await repository.enqueueHydrationJobsForMissingContent()
                         _ = try? await repository.hydratePDFItemsFromSyncedContent()
                         try? await processIngestionJobs(
                             repository: repository,
                             ingestionClient: ingestionClient,
-                            pdfIngestionClient: pdfIngestionClient
+                            pdfIngestionClient: pdfIngestionClient,
+                            textIngestionClient: textIngestionClient
                         )
                         await send(.library(.reload))
                         await send(.sidebar(.reload))
@@ -362,7 +370,8 @@ public struct AppFeature {
 private func processIngestionJobs(
     repository: StowerRepository,
     ingestionClient: URLIngestionClient,
-    pdfIngestionClient: PDFIngestionClient
+    pdfIngestionClient: PDFIngestionClient,
+    textIngestionClient: TextIngestionClient
 ) async throws {
     let jobs = try await repository.fetchPendingIngestionJobs()
     for job in jobs {
@@ -430,7 +439,21 @@ private func processIngestionJobs(
                 try? FileManager.default.removeItem(at: scratchDir)
             }
         case .text:
-            _ = try await repository.createItemFromIngestion(.sharedText(job.payload))
+            let payload = QueuedTextPayloadCodec.decode(job.payload, defaultMode: .auto)
+            let result = try await textIngestionClient.ingest(
+                payload.content,
+                payload.titleHint,
+                payload.mode
+            )
+            _ = try await repository.createItemFromIngestion(result)
+        case .markdown:
+            let payload = QueuedTextPayloadCodec.decode(job.payload, defaultMode: .markdown)
+            let result = try await textIngestionClient.ingest(
+                payload.content,
+                payload.titleHint,
+                .markdown
+            )
+            _ = try await repository.createItemFromIngestion(result)
         case .hydrate:
             let data = Data(job.payload.utf8)
             let payload = try JSONDecoder().decode(HydrationPayload.self, from: data)
