@@ -2,9 +2,16 @@ import ComposableArchitecture
 import SwiftUI
 import UniformTypeIdentifiers
 
+#if canImport(UIKit)
+import UIKit
+#elseif canImport(AppKit)
+import AppKit
+#endif
+
 public struct LibraryScreen: View {
     @Bindable var store: StoreOf<LibraryFeature>
     @Environment(\.flexokiPalette) private var palette
+    @Environment(\.openURL) private var openURL
     /// Invoked when the user taps the settings gear in the iOS toolbar.
     /// nil on macOS (the sidebar already has its own settings button).
     private let onOpenSettings: (() -> Void)?
@@ -166,6 +173,15 @@ public struct LibraryScreen: View {
                     Button("Open") {
                         store.send(.openItem(item))
                     }
+                    if let sourceURLString = item.sourceURL,
+                       let sourceURL = URL(string: sourceURLString) {
+                        Button("Open Original URL") {
+                            openURL(sourceURL)
+                        }
+                        Button("Copy Original URL") {
+                            copyToClipboard(sourceURLString)
+                        }
+                    }
                     if store.filter == .recentlyDeleted {
                         Button("Restore") {
                             store.send(.restoreFromTrash(item.id))
@@ -198,6 +214,9 @@ public struct LibraryScreen: View {
             }
         }
         .scrollContentBackground(.hidden)
+        // Obscure rows as they scroll behind the Liquid Glass nav bar so
+        // the first row stays legible against the glass material.
+        .scrollEdgeEffectStyle(.soft, for: .top)
         .navigationTitle(navigationTitle)
         .searchable(text: $store.query.sending(\.queryChanged), prompt: "Search")
         .overlay {
@@ -266,6 +285,17 @@ public struct LibraryScreen: View {
         .task {
             store.send(.onAppear)
         }
+    }
+
+    /// Writes a plain-text string to the system clipboard. Cross-platform
+    /// wrapper around `UIPasteboard` (iOS) and `NSPasteboard` (macOS).
+    private func copyToClipboard(_ value: String) {
+        #if canImport(UIKit)
+        UIPasteboard.general.string = value
+        #elseif canImport(AppKit)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(value, forType: .string)
+        #endif
     }
 
     /// Handles the result of the SwiftUI `.fileImporter` PDF picker. The
@@ -414,14 +444,10 @@ public struct LibraryScreen: View {
                 .textFieldStyle(.plain)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 7)
-                .background(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(Color.primary.opacity(0.06))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5)
-                )
+                // Liquid Glass input chip — the composer floats above the
+                // library list as frosted glass, refracting whatever rows
+                // sit behind it instead of the old flat 6% opacity fill.
+                .glassEffect(.regular, in: .rect(cornerRadius: 6))
                 .onSubmit { store.send(.saveURLTapped) }
 
             Button {
@@ -435,7 +461,7 @@ public struct LibraryScreen: View {
             }
             .disabled(store.isSaving)
             #if os(macOS)
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.glassProminent)
             #endif
 
             Button {
@@ -464,8 +490,12 @@ public struct LibraryScreen: View {
             .font(.caption2.weight(.semibold))
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background(badgeBackground(state), in: Capsule())
             .foregroundStyle(badgeForeground(state))
+            // Liquid Glass pill. The semantic state color becomes the
+            // tint on the glass capsule so warning / error / extracting
+            // still read at a glance over a scrolling list, while the
+            // capsule itself refracts the row content behind it.
+            .glassEffect(.regular.tint(badgeBackground(state)), in: .capsule)
     }
 
     private func badgeBackground(_ state: ProcessingState) -> Color {

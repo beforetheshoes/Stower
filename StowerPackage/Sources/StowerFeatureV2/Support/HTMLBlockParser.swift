@@ -171,12 +171,29 @@ func parseBlock(_ element: Element) throws -> ParsedBlocks {
     }
 }
 
+/// Top-level inline parser. Runs the recursive extraction, then trims
+/// leading/trailing whitespace from the outermost segments so the
+/// containing paragraph/heading/list item doesn't start or end with a stray
+/// space. Callers that consume inline lists as block content (paragraph,
+/// heading, list item, blockquote, callout body) should call this.
 func parseInlines(_ element: Element) throws -> [ReaderInline] {
+    try trimInlineEdges(parseInlinesRaw(element))
+}
+
+/// Recursive worker that does NOT trim outer whitespace — used for both
+/// the top-level call and for recursing into unknown wrapper tags like
+/// `<span>`. If this trimmed edges it would delete the boundary space that
+/// separates the wrapper's inner content from its siblings (e.g. the
+/// leading space on `<span> until the user...</span>` when the span
+/// follows an `<a>` in the same paragraph).
+func parseInlinesRaw(_ element: Element) throws -> [ReaderInline] {
     var inlines: [ReaderInline] = []
 
     for node in element.getChildNodes() {
         if let textNode = node as? TextNode {
-            let text = cleanText(textNode.text())
+            // Use cleanInlineText so boundary whitespace survives — this is
+            // what keeps `"word "` separate from a following `<a>link</a>`.
+            let text = cleanInlineText(textNode.text())
             if !text.isEmpty {
                 inlines.append(.text(text))
             }
@@ -194,42 +211,55 @@ func parseInlines(_ element: Element) throws -> [ReaderInline] {
             let anchorClassHints = ["headerlink", "anchor", "permalink", "heading-link", "hash-link"]
             let looksLikeAnchor = anchorClassHints.contains(where: rawClass.contains)
             let isFragmentOnly = rawHref.hasPrefix("#")
-            let label = cleanText((try? child.text()) ?? "")
+            let extracted = extractInlineElementText(child)
+            let label = extracted.label
             // Symbol-only labels (¶, #, §) almost always indicate permalinks.
-            let strippedLabel = label.trimmingCharacters(in: .whitespacesAndNewlines)
-            let symbolOnly = !strippedLabel.isEmpty &&
-                strippedLabel.unicodeScalars.allSatisfy { !$0.properties.isAlphabetic && !CharacterSet.decimalDigits.contains($0) }
+            let symbolOnly = !label.isEmpty &&
+                label.unicodeScalars.allSatisfy { !$0.properties.isAlphabetic && !CharacterSet.decimalDigits.contains($0) }
             if looksLikeAnchor || (isFragmentOnly && (label.isEmpty || symbolOnly || label.count <= 2)) {
                 continue
             }
             let href = nonEmpty(try? child.attr("abs:href")) ?? rawHref
             if !label.isEmpty, !href.isEmpty {
-                inlines.append(.link(label: label, url: href))
+                appendWithBoundarySpaces(&inlines, extracted: extracted, inline: .link(label: label, url: href))
             } else if !label.isEmpty {
-                inlines.append(.text(label))
+                appendWithBoundarySpaces(&inlines, extracted: extracted, inline: .text(label))
             }
 
         case "em", "i":
-            let value = cleanText((try? child.text()) ?? "")
-            if !value.isEmpty { inlines.append(.emphasis(value)) }
+            let extracted = extractInlineElementText(child)
+            if !extracted.label.isEmpty {
+                appendWithBoundarySpaces(&inlines, extracted: extracted, inline: .emphasis(extracted.label))
+            }
 
         case "strong", "b":
-            let value = cleanText((try? child.text()) ?? "")
-            if !value.isEmpty { inlines.append(.strong(value)) }
+            let extracted = extractInlineElementText(child)
+            if !extracted.label.isEmpty {
+                appendWithBoundarySpaces(&inlines, extracted: extracted, inline: .strong(extracted.label))
+            }
 
         case "code":
-            let value = cleanText((try? child.text()) ?? "")
-            if !value.isEmpty { inlines.append(.code(value)) }
+            let extracted = extractInlineElementText(child)
+            if !extracted.label.isEmpty {
+                appendWithBoundarySpaces(&inlines, extracted: extracted, inline: .code(extracted.label))
+            }
 
         case "del", "s":
-            let value = cleanText((try? child.text()) ?? "")
-            if !value.isEmpty { inlines.append(.strikethrough(value)) }
+            let extracted = extractInlineElementText(child)
+            if !extracted.label.isEmpty {
+                appendWithBoundarySpaces(&inlines, extracted: extracted, inline: .strikethrough(extracted.label))
+            }
 
         case "br":
             inlines.append(.text("\n"))
 
         default:
-            inlines.append(contentsOf: try parseInlines(child))
+            // Recurse through the *raw* worker so we don't strip the
+            // boundary whitespace off the wrapper's edges. Concrete
+            // example: `<span> until the user...</span>` — the leading
+            // space must survive for the paragraph render to spell
+            // correctly.
+            inlines.append(contentsOf: try parseInlinesRaw(child))
         }
     }
 
@@ -242,12 +272,85 @@ func mergeTextInlines(_ inlines: [ReaderInline]) -> [ReaderInline] {
         if case .text(let current) = inline,
            case .text(let previous)? = merged.last {
             merged.removeLast()
-            merged.append(.text(previous + " " + current))
+            // Boundary spaces are already preserved on the individual text
+            // segments by `cleanInlineText`, so simple concatenation is
+            // correct. Collapse any double-space that happens at the seam
+            // when both neighbours carried an edge space.
+            let joined = (previous + current)
+                .replacingOccurrences(of: "  ", with: " ")
+            merged.append(.text(joined))
         } else {
             merged.append(inline)
         }
     }
     return merged
+}
+
+/// Extracted text content of an inline formatting element, along with flags
+/// indicating whether the raw source had leading/trailing whitespace. Used
+/// by `parseInlines` to decide whether to emit boundary `.text(" ")` segments
+/// around a link/strong/em/code/strikethrough inline.
+struct ExtractedInlineText {
+    var label: String
+    var hasLeadingSpace: Bool
+    var hasTrailingSpace: Bool
+}
+
+/// Pulls the text content of an inline formatting element without losing
+/// the boundary whitespace. SwiftSoup's `Element.text()` trims by default,
+/// so `<a>requests </a>until` would come back as `"requests"` with the
+/// trailing space silently dropped — and then `.link("requests")` would
+/// render smooshed against the following `"until"` TextNode. Passing
+/// `trimAndNormaliseWhitespace: false` returns the raw text, which
+/// `cleanInlineText` then collapses while preserving a single leading/
+/// trailing space.
+func extractInlineElementText(_ element: Element) -> ExtractedInlineText {
+    let raw = cleanInlineText((try? element.text(trimAndNormaliseWhitespace: false)) ?? "")
+    return ExtractedInlineText(
+        label: raw.trimmingCharacters(in: .whitespacesAndNewlines),
+        hasLeadingSpace: raw.hasPrefix(" "),
+        hasTrailingSpace: raw.hasSuffix(" ")
+    )
+}
+
+/// Appends an inline formatting segment to the parse buffer, emitting
+/// `.text(" ")` boundary segments before/after when the source element had
+/// leading/trailing whitespace inside its tag (e.g. `<a>link </a>`). These
+/// boundary segments merge with adjacent TextNode `.text(...)` inlines in
+/// `mergeTextInlines`, so they end up as a single space in the final output.
+func appendWithBoundarySpaces(
+    _ inlines: inout [ReaderInline],
+    extracted: ExtractedInlineText,
+    inline: ReaderInline
+) {
+    if extracted.hasLeadingSpace { inlines.append(.text(" ")) }
+    inlines.append(inline)
+    if extracted.hasTrailingSpace { inlines.append(.text(" ")) }
+}
+
+/// Strip leading whitespace from the first text segment and trailing
+/// whitespace from the last text segment of an inline list, so that
+/// paragraphs/headings/list items don't start or end with a stray space.
+/// Drops empty `.text("")` segments that result.
+func trimInlineEdges(_ inlines: [ReaderInline]) -> [ReaderInline] {
+    var result = inlines
+    if case .text(let first)? = result.first {
+        let trimmed = String(first.drop(while: { $0 == " " }))
+        if trimmed.isEmpty {
+            result.removeFirst()
+        } else {
+            result[0] = .text(trimmed)
+        }
+    }
+    if case .text(let last)? = result.last {
+        let trimmed = String(last.reversed().drop(while: { $0 == " " }).reversed())
+        if trimmed.isEmpty {
+            result.removeLast()
+        } else {
+            result[result.count - 1] = .text(trimmed)
+        }
+    }
+    return result
 }
 
 func parseFallbackDescendants(_ body: Element) throws -> ParsedBlocks {

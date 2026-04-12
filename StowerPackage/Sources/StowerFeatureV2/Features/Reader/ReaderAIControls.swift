@@ -277,6 +277,9 @@ struct ReaderAIControls: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(10)
-        .background(Color.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+        // Liquid Glass chat-bubble. Refracts the popover's background
+        // so the transcript feels like floating cards instead of the
+        // old flat grey fill.
+        .glassEffect(.regular, in: .rect(cornerRadius: 10))
     }
 }

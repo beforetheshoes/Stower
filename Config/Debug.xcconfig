@@ -6,3 +6,27 @@
 
 // Keep Swift symbols in Debug so LLDB doesn't have to do expensive on-device symbol resolution.
 STRIP_SWIFT_SYMBOLS = NO
+
+// ==========================================
+// Dev vs Prod separation (side-by-side install)
+// ==========================================
+// Give Debug builds a distinct identity so they install side-by-side with
+// TestFlight / App Store builds and don't share a sandbox, App Group, or
+// local SQLite file. The iCloud container is intentionally the same in
+// both configurations — Apple auto-routes to the Dev CloudKit environment
+// for development-signed binaries and to Prod for distribution-signed.
+PRODUCT_BUNDLE_IDENTIFIER = com.ryanleewilliams.stower.dev
+INFOPLIST_KEY_CFBundleDisplayName = Stower Dev
+
+// `$(inherited)` preserves Xcode's default `DEBUG` flag (used by existing
+// `#if DEBUG` blocks in Bootstrap.swift) while adding our new
+// `STOWER_DEV` flag that `Bootstrap.swift` keys off of to pick the Debug
+// App Group container directory at runtime.
+SWIFT_ACTIVE_COMPILATION_CONDITIONS = $(inherited) DEBUG STOWER_DEV
+
+// Point Debug at its own entitlements files. Release still uses the
+// production entitlements from Shared.xcconfig untouched, so TestFlight /
+// App Store builds are provably identical to what shipped before this
+// change.
+CODE_SIGN_ENTITLEMENTS = Config/Stower.debug.entitlements
+CODE_SIGN_ENTITLEMENTS[sdk=macosx*] = Config/Stower-macOS.debug.entitlements

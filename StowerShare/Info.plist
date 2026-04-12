@@ -6,8 +6,12 @@
 	<string>Save to Stower</string>
 	<key>CFBundleDisplayName</key>
 	<string>Save to Stower</string>
+	<!-- Resolved from PRODUCT_BUNDLE_IDENTIFIER at build time so Debug and -->
+	<!-- Release builds can carry different bundle IDs (com.ryanleewilliams. -->
+	<!-- stower.dev.share vs com.ryanleewilliams.stower.share) and install -->
+	<!-- side-by-side on the same device. -->
 	<key>CFBundleIdentifier</key>
-	<string>com.ryanleewilliams.stower.share</string>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
 	<key>CFBundleShortVersionString</key>

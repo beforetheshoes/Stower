@@ -30,7 +30,8 @@ struct ReaderAppearanceControls: View {
             primaryAccentSection
             secondaryAccentSection
 
-            Divider().background(palette.ui)
+            // Plain system divider so it reads correctly over Liquid Glass.
+            Divider()
 
             VStack(alignment: .leading, spacing: 8) {
                 controlTitle("Font Size", value: appearance.fontSize.formatted(.number.precision(.fractionLength(0))))
@@ -78,7 +79,9 @@ struct ReaderAppearanceControls: View {
             }
         }
         .padding(16)
-        .background(palette.bg2, in: .rect(cornerRadius: 14))
+        // No custom background — the enclosing popover already renders
+        // as system Liquid Glass on iOS 26 / macOS 26. The old
+        // `.background(palette.bg2)` was fighting the material.
         .tint(palette.primary)
     }
 

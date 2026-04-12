@@ -355,7 +355,7 @@
 			baseConfigurationReferenceAnchor = 8BD71C052DEE41D800CEDD92 /* Config */;
 			baseConfigurationReferenceRelativePath = Debug.xcconfig;
 			buildSettings = {
-				CODE_SIGN_ENTITLEMENTS = StowerShare/StowerShare.entitlements;
+				CODE_SIGN_ENTITLEMENTS = StowerShare/StowerShare.debug.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -366,7 +366,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.ryanleewilliams.stower.share;
+				PRODUCT_BUNDLE_IDENTIFIER = com.ryanleewilliams.stower.dev.share;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SKIP_INSTALL = YES;
@@ -555,7 +555,6 @@
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Stower/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = Stower;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -568,7 +567,6 @@
 					"@executable_path/Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.ryanleewilliams.stower;
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SDKROOT = auto;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";

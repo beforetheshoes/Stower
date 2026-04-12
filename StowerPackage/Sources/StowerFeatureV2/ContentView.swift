@@ -45,13 +45,10 @@ public struct AppView: View {
         let palette = store.palette
 
         navigationContainer(palette: palette)
-            #if os(macOS)
-            .toolbarBackground(palette.bg2, for: .windowToolbar)
-            .toolbarBackgroundVisibility(.visible, for: .windowToolbar)
-            #else
-            .toolbarBackground(palette.bg2, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
-            #endif
+            // No custom toolbar background — Liquid Glass renders the
+            // window chrome automatically on iOS 26 / macOS 26. The
+            // `.tint(palette.primary)` below is how Flexoki branding
+            // still propagates into the glass bar.
             .tint(palette.primary)
             .preferredColorScheme(palette.colorScheme)
             .environment(\.flexokiPalette, palette)

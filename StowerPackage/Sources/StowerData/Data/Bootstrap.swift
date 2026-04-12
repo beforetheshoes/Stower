@@ -78,7 +78,23 @@ public struct CloudSyncClient: Sendable {
 // MARK: - Database Setup & Migrations
 
 public enum StowerDatabase {
+    // The Debug build configuration passes `-D STOWER_DEV` via
+    // `Config/Debug.xcconfig`, which flips the App Group container so
+    // Debug and Release builds use physically separate `stower.sqlite`
+    // files. Combined with the distinct Debug bundle identifier, this
+    // lets the Xcode Debug build ("Stower Dev") install side-by-side
+    // with a TestFlight / App Store "Stower" build on the same device
+    // without mixing CloudKit-synced articles.
+    //
+    // The CloudKit container ID is the same in both configurations —
+    // Apple's code-signing automatically routes debug binaries to the
+    // Dev CloudKit environment and distribution binaries to Prod, which
+    // is the isolation mechanism at the network layer.
+    #if STOWER_DEV
+    public static let appGroupID = "group.com.Stower.dev"
+    #else
     public static let appGroupID = "group.com.Stower"
+    #endif
     public static let cloudKitContainerID = "iCloud.Stower"
 
     public enum DatabaseError: Error, LocalizedError {

@@ -55,6 +55,10 @@ public struct SidebarScreen: View {
                 }
             }
         }
+        // Obscure list rows as they scroll behind the Liquid Glass nav
+        // bar (top) and the floating Settings footer (bottom).
+        .scrollEdgeEffectStyle(.soft, for: .top)
+        .scrollEdgeEffectStyle(.soft, for: .bottom)
         .navigationTitle("Stower")
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if onOpenSettings != nil {

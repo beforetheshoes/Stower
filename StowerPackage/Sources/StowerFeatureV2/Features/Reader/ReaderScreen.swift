@@ -39,28 +39,20 @@ public struct ReaderScreen: View {
             .findNavigator(isPresented: $isFindNavigatorPresented)
             .navigationTitle("Reader")
             .toolbar {
+                // Group 1: mode switching (only when an interactive fallback exists).
                 if store.hasInteractiveContent {
                     ToolbarItem(placement: .automatic) {
                         switchModeButton
                     }
+                    ToolbarSpacer(.fixed, placement: .automatic)
                 }
-                if store.item?.renderFormat == .pdf {
-                    ToolbarItem(placement: .automatic) {
-                        Button {
-                            isPDFViewerPresented = true
-                        } label: {
-                            Label("Original PDF", systemImage: "doc.richtext")
-                                .foregroundStyle(palette.primary)
-                        }
-                        .help("Show the original PDF in PDFKit")
-                    }
-                }
+
+                // Group 2: content-level actions — Find and (for PDFs) Original PDF.
                 ToolbarItem(placement: .automatic) {
                     Button {
                         isFindNavigatorPresented.toggle()
                     } label: {
                         Label("Find", systemImage: "magnifyingglass")
-                            .foregroundStyle(palette.primary)
                     }
                     // ⌘F — standard macOS find shortcut. The system's
                     // own Edit → Find menu item binds to the same
@@ -69,18 +61,37 @@ public struct ReaderScreen: View {
                     .keyboardShortcut("f", modifiers: .command)
                     .help("Find in reader")
                 }
+                if store.item?.renderFormat == .pdf {
+                    ToolbarItem(placement: .automatic) {
+                        Button {
+                            isPDFViewerPresented = true
+                        } label: {
+                            Label("Original PDF", systemImage: "doc.richtext")
+                        }
+                        .help("Show the original PDF in PDFKit")
+                    }
+                }
+
+                ToolbarSpacer(.fixed, placement: .automatic)
+
+                // Group 3: reading-assist tools — Listen + AI. These get the
+                // Liquid Glass prominent button style so they read as the
+                // reader's primary floating actions.
                 ToolbarItem(placement: .automatic) {
                     listenToolbarButton
                 }
                 ToolbarItem(placement: .automatic) {
                     aiToolbarButton
                 }
+
+                ToolbarSpacer(.fixed, placement: .automatic)
+
+                // Group 4: presentation tweaks.
                 ToolbarItem(placement: .automatic) {
                     Button {
                         isAppearancePanelPresented.toggle()
                     } label: {
                         Label("Appearance", systemImage: "textformat.size")
-                            .foregroundStyle(palette.primary)
                     }
                     .popover(isPresented: $isAppearancePanelPresented, arrowEdge: .top) {
                         ReaderAppearanceControls(
@@ -101,13 +112,10 @@ public struct ReaderScreen: View {
                     }
                 }
             }
-            #if os(macOS)
-            .toolbarBackground(store.appearance.surfaceColor, for: .windowToolbar)
-            .toolbarBackgroundVisibility(.visible, for: .windowToolbar)
-            #else
-            .toolbarBackground(store.appearance.surfaceColor, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
-            #endif
+            // No custom toolbar background — Liquid Glass paints the
+            // nav/window bar automatically on iOS 26 / macOS 26, and the
+            // reader's chosen background (`store.appearance.backgroundColor`
+            // on line 33) still shows through under it.
             .task(id: store.itemID) { store.send(.load) }
             .sheet(item: $store.scope(state: \.inlineEmbedURL, action: \.inlineEmbedURL)) { embedStore in
                 NavigationStack {
@@ -167,14 +175,11 @@ public struct ReaderScreen: View {
         Button {
             store.send(.switchRenderMode(nextMode))
         } label: {
-            Group {
-                if isCurrentlyInteractive {
-                    Label("Reader View", systemImage: "doc.plaintext")
-                } else {
-                    Label("Interactive View", systemImage: "safari")
-                }
+            if isCurrentlyInteractive {
+                Label("Reader View", systemImage: "doc.plaintext")
+            } else {
+                Label("Interactive View", systemImage: "safari")
             }
-            .foregroundStyle(palette.primary)
         }
         .help(isCurrentlyInteractive
               ? "Show the stripped-down reader version of this article"
@@ -240,8 +245,15 @@ extension ReaderScreen {
             isListenPanelPresented.toggle()
         } label: {
             Label("Listen", systemImage: listenButtonSymbol)
-                .foregroundStyle(isActive ? palette.secondary : palette.primary)
         }
+        // No explicit buttonStyle — the toolbar already renders items as
+        // Liquid Glass automatically on iOS 26 / macOS 26. Adding
+        // `.buttonStyle(.glass)` with a forced tint on top rendered as a
+        // solid filled capsule, which is the opposite of what we want.
+        // The active-state tint only kicks in while speech is running so
+        // the symbol shifts to the secondary accent; otherwise the button
+        // inherits the window's `palette.primary` tint naturally.
+        .tint(isActive ? palette.secondary : nil)
         .popover(isPresented: $isListenPanelPresented, arrowEdge: .top) {
             listenPanelContent
                 .frame(width: 320)
@@ -296,8 +308,11 @@ extension ReaderScreen {
             isAIPanelPresented.toggle()
         } label: {
             Label("AI tools", systemImage: aiButtonSymbol)
-                .foregroundStyle(isActive ? palette.secondary : palette.primary)
         }
+        // Same as Listen: no explicit buttonStyle (the toolbar's automatic
+        // Liquid Glass does the work), and the secondary-accent tint only
+        // fires when AI is actively summarizing or answering.
+        .tint(isActive ? palette.secondary : nil)
         .popover(isPresented: $isAIPanelPresented, arrowEdge: .top) {
             ReaderAIControls(
                 store: store.scope(state: \.ai, action: \.ai),

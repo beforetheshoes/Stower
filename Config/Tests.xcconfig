@@ -5,10 +5,22 @@
 #include "Shared.xcconfig"
 
 // ==========================================
-// Test Target Settings (Customizable by scaffold tool)
+// Test Target Settings
 // ==========================================
-PRODUCT_BUNDLE_IDENTIFIER = com.ryanleewilliams.stower
-TEST_TARGET_NAME = StowerMac
+// The UI test target gets a **stable, host-independent** bundle ID so it
+// doesn't collide with either the Release main app
+// (`com.ryanleewilliams.stower`) or the Debug main app
+// (`com.ryanleewilliams.stower.dev`). UI tests drive the host app through
+// `TEST_TARGET_NAME` (set at the target level in project.pbxproj to
+// `Stower`), not through a bundle ID prefix match, so the test bundle
+// can carry its own identifier regardless of which host configuration
+// Xcode is running against.
+//
+// NOTE: If you ever actually run `⌘U` on this target, you'll need to
+// register `com.ryanleewilliams.stower.uitests` as an App ID in the
+// developer portal. The Swift package tests (`swift test`) are
+// unaffected — they don't use this xcconfig at all.
+PRODUCT_BUNDLE_IDENTIFIER = com.ryanleewilliams.stower.uitests
 
 // Fix duplicate module name issue
 PRODUCT_MODULE_NAME = $(PRODUCT_NAME)UITests

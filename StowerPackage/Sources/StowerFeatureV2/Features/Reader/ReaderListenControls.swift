@@ -95,7 +95,10 @@ struct ReaderListenControls: View {
                     )
                     .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.borderedProminent)
+                // Liquid Glass prominent button — matches system media
+                // transport controls where a single play/pause button is
+                // the primary control surrounded by secondary transport.
+                .buttonStyle(.glassProminent)
                 .controlSize(.large)
 
                 Button(action: onSkipForward) {
@@ -124,7 +127,8 @@ struct ReaderListenControls: View {
                     Label("Listen", systemImage: "play.fill")
                         .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.borderedProminent)
+                // Liquid Glass prominent — the single starting action for TTS.
+                .buttonStyle(.glassProminent)
                 .controlSize(.large)
                 .disabled(speechBlocks.isEmpty)
             }

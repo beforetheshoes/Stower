@@ -96,3 +96,39 @@ func cleanText(_ text: String) -> String {
         .replacingOccurrences(of: "\u{FEFF}", with: "")    // zero-width no-break space
         .trimmingCharacters(in: .whitespacesAndNewlines)
 }
+
+/// Like `cleanText`, but preserves a single leading/trailing space when the
+/// original text had boundary whitespace. Used for TextNode siblings of inline
+/// formatting elements (`<a>`, `<strong>`, etc.) so that the space separating
+/// e.g. `"word "` from a following `<a>link</a>` survives parsing.
+///
+/// - Collapses any run of `\t\n\r ` or non-breaking spaces to a single space.
+/// - Does NOT trim: if the decoded input starts/ends with whitespace, the
+///   result starts/ends with a single `" "`.
+/// - Returns `" "` when the input is entirely whitespace, so a pure-whitespace
+///   text node between two elements still contributes a space boundary.
+/// - Returns `""` only when the input (after stripping removable characters
+///   like pilcrows / zero-width spaces) is empty.
+func cleanInlineText(_ text: String) -> String {
+    let unescaped = (try? Entities.unescape(text)) ?? text
+    let normalized = unescaped
+        .replacingOccurrences(of: "\u{00A0}", with: " ")   // non-breaking space
+        .replacingOccurrences(of: "\u{00B6}", with: "")    // pilcrow ¶
+        .replacingOccurrences(of: "\u{204B}", with: "")    // reversed pilcrow ⁋
+        .replacingOccurrences(of: "\u{2761}", with: "")    // curved stem paragraph ornament ❡
+        .replacingOccurrences(of: "\u{200B}", with: "")    // zero-width space
+        .replacingOccurrences(of: "\u{FEFF}", with: "")    // zero-width no-break space
+        .replacingOccurrences(of: "[\\t\\n\\r ]+", with: " ", options: .regularExpression)
+
+    if normalized.isEmpty { return "" }
+    if normalized == " " { return " " }
+
+    // Preserve boundary whitespace explicitly so string trimming elsewhere
+    // can't accidentally strip it.
+    let hasLeading = normalized.first == " "
+    let hasTrailing = normalized.last == " "
+    let trimmed = normalized.trimmingCharacters(in: .whitespacesAndNewlines)
+    if trimmed.isEmpty { return " " }
+
+    return (hasLeading ? " " : "") + trimmed + (hasTrailing ? " " : "")
+}

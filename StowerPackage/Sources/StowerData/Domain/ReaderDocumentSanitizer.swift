@@ -25,7 +25,10 @@ private func sanitizeBlock(_ block: ReaderBlock) -> ReaderBlock {
     case .blockquote(let inlines):
         return .blockquote(sanitizeInlines(inlines))
     case .callout(let title, let inlines):
-        return .callout(title: title.map(stripPilcrows), inlines: sanitizeInlines(inlines))
+        return .callout(
+            title: title.map { stripPilcrows($0).trimmingCharacters(in: .whitespacesAndNewlines) },
+            inlines: sanitizeInlines(inlines)
+        )
     case .code, .figure, .video, .embed, .table, .horizontalRule:
         return block
     }
@@ -38,6 +41,9 @@ private func sanitizeInlines(_ inlines: [ReaderInline]) -> [ReaderInline] {
     for inline in inlines {
         switch inline {
         case .text(let value):
+            // Preserve boundary whitespace — the parser intentionally emits
+            // segments like `"word "` so the downstream renderer doesn't
+            // smoosh links/bold runs against their neighbours.
             let cleaned = stripPilcrows(value)
             if !cleaned.isEmpty { output.append(.text(cleaned)) }
 
@@ -52,11 +58,11 @@ private func sanitizeInlines(_ inlines: [ReaderInline]) -> [ReaderInline] {
             output.append(.link(label: cleanedLabel, url: url))
 
         case .emphasis(let value):
-            let cleaned = stripPilcrows(value)
+            let cleaned = stripPilcrows(value).trimmingCharacters(in: .whitespacesAndNewlines)
             if !cleaned.isEmpty { output.append(.emphasis(cleaned)) }
 
         case .strong(let value):
-            let cleaned = stripPilcrows(value)
+            let cleaned = stripPilcrows(value).trimmingCharacters(in: .whitespacesAndNewlines)
             if !cleaned.isEmpty { output.append(.strong(cleaned)) }
 
         case .code(let value):
@@ -64,7 +70,7 @@ private func sanitizeInlines(_ inlines: [ReaderInline]) -> [ReaderInline] {
             output.append(.code(value))
 
         case .strikethrough(let value):
-            let cleaned = stripPilcrows(value)
+            let cleaned = stripPilcrows(value).trimmingCharacters(in: .whitespacesAndNewlines)
             if !cleaned.isEmpty { output.append(.strikethrough(cleaned)) }
         }
     }
@@ -72,6 +78,12 @@ private func sanitizeInlines(_ inlines: [ReaderInline]) -> [ReaderInline] {
     return mergeAdjacentText(output)
 }
 
+/// Strip pilcrow / zero-width characters and collapse whitespace runs, but
+/// do NOT trim. A single leading/trailing space in the input survives — that
+/// boundary whitespace is what separates a `.text(...)` segment from an
+/// adjacent inline-formatting segment (link, bold, etc.) in the rendered
+/// output. Call sites that need trimmed labels (emphasis/strong/strikethrough
+/// text, callout titles, link labels) must trim explicitly.
 private func stripPilcrows(_ text: String) -> String {
     var result = text
     let targets: [Character] = [
@@ -86,10 +98,10 @@ private func stripPilcrows(_ text: String) -> String {
     for target in targets {
         result = result.replacingOccurrences(of: String(target), with: "")
     }
-    // Collapse any runs of whitespace left behind.
+    // Collapse any runs of whitespace left behind, but preserve at most a
+    // single leading/trailing space so boundary whitespace survives.
     return result
-        .replacingOccurrences(of: "[\\t ]+", with: " ", options: .regularExpression)
-        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .replacingOccurrences(of: "[\\t\\n\\r ]+", with: " ", options: .regularExpression)
 }
 
 private func isSymbolOnly(_ text: String) -> Bool {
@@ -106,7 +118,11 @@ private func mergeAdjacentText(_ inlines: [ReaderInline]) -> [ReaderInline] {
         if case .text(let current) = inline,
            case .text(let previous)? = merged.last {
             merged.removeLast()
-            merged.append(.text(previous + " " + current))
+            // Boundary spaces are already preserved on each segment, so
+            // concatenate directly and collapse any double-space at the seam.
+            let joined = (previous + current)
+                .replacingOccurrences(of: "  ", with: " ")
+            merged.append(.text(joined))
         } else {
             merged.append(inline)
         }
