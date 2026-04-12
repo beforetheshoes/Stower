@@ -10,7 +10,6 @@ import UniformTypeIdentifiers
 /// directory on the real filesystem.
 @Suite(.serialized)
 struct PDFArchiverTests {
-
     // MARK: - Phase 1: archivePageImage writes a durable, readable JPEG
 
     @Test
@@ -148,9 +147,10 @@ struct PDFArchiverTests {
         let count = PDFArchiver.symlinkPageImages(for: id, into: targetDir)
 
         #expect(count == 2)
-        let names = try FileManager.default.contentsOfDirectory(
-            at: targetDir, includingPropertiesForKeys: nil
-        ).map(\.lastPathComponent).sorted()
+        let names = try FileManager.default
+            .contentsOfDirectory(at: targetDir, includingPropertiesForKeys: nil)
+            .map(\.lastPathComponent)
+            .sorted()
         #expect(names == ["pdf-page-0.jpg", "pdf-page-2.jpg"])
     }
 
