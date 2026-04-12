@@ -207,8 +207,13 @@ final class LocalArchiveServer: @unchecked Sendable {
         path: String,
         fileURL: URL
     ) {
-        // swiftlint:disable:next no_print_statements
-        print("[ArchiveServer] 404: \(path) → \(fileURL.path)")
+        if fileURL.lastPathComponent.hasPrefix(PDFArchiver.pageImagePrefix) {
+            // swiftlint:disable:next no_print_statements
+            print("[ArchiveServer] 404 PDF page image: \(path) — file missing at \(fileURL.path). Check ingestion fsync and on-disk verification.")
+        } else {
+            // swiftlint:disable:next no_print_statements
+            print("[ArchiveServer] 404: \(path) → \(fileURL.path)")
+        }
         let response = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
         connection.send(
             content: Data(response.utf8),

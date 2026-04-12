@@ -156,6 +156,13 @@ private func pdfIngest(url: URL) async throws -> IngestionResult {
             continue
         }
 
+        guard PDFArchiver.verifyPageImageOnDisk(for: itemID, pageIndex: pageIndex) else {
+            kPDFIngestLog.error(
+                "Page image \(pageIndex, privacy: .public) written but failed on-disk verification — skipping block"
+            )
+            continue
+        }
+
         // Emit the figure block pointing at the image on disk.
         // `MediaDescriptor.sourceURL` uses a custom `stower://pdf-page/N`
         // scheme as a marker so `ReaderDocumentHTMLBuilder.resolveMediaURL`
