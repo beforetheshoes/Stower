@@ -25,15 +25,44 @@ public enum ShareIngestionClient {
         }
     }
 
-    public static func enqueueText(_ text: String) throws {
+    public static func enqueueText(
+        _ text: String,
+        titleHint: String? = nil,
+        mode: TextImportMode = .auto
+    ) throws {
         try prepareDependencies {
             // Share extension should avoid CloudKit work.
             try $0.bootstrapStowerDatabase(enableSync: false)
         }
         @Dependency(\.stowerRepository)
         var repository
+        let payload = try QueuedTextPayloadCodec.encode(
+            QueuedTextPayload(
+                content: text,
+                mode: mode,
+                titleHint: titleHint
+            )
+        )
         Task {
-            try? await repository.enqueueIngestionJob(.text, text)
+            try? await repository.enqueueIngestionJob(.text, payload)
+        }
+    }
+
+    public static func enqueueMarkdown(_ markdown: String, titleHint: String? = nil) throws {
+        try prepareDependencies {
+            try $0.bootstrapStowerDatabase(enableSync: false)
+        }
+        @Dependency(\.stowerRepository)
+        var repository
+        let payload = try QueuedTextPayloadCodec.encode(
+            QueuedTextPayload(
+                content: markdown,
+                mode: .markdown,
+                titleHint: titleHint
+            )
+        )
+        Task {
+            try? await repository.enqueueIngestionJob(.markdown, payload)
         }
     }
 

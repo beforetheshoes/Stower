@@ -22,6 +22,8 @@ public struct LibraryFeature {
         public var availableTags: [Tag] = [] // swiftlint:disable:this prefer_let_over_var
         /// Non-nil when the user is creating a new tag inline from the tag submenu.
         public var inlineTagCreation: InlineTagCreation?
+        /// Draft for the in-app text/markdown composer.
+        public var textImportDraft: TextImportDraft?
 
         /// Library search matches against title, URL, site name, author,
         /// excerpt, AND full body text (`item.content`). The body-text
@@ -74,6 +76,22 @@ public struct LibraryFeature {
         }
     }
 
+    public struct TextImportDraft: Equatable {
+        public var text: String
+        public var mode: TextImportMode
+        public var titleHint: String?
+
+        public init(
+            text: String = "",
+            mode: TextImportMode = .auto,
+            titleHint: String? = nil
+        ) {
+            self.text = text
+            self.mode = mode
+            self.titleHint = titleHint
+        }
+    }
+
     public enum Action: Equatable {
         case onAppear
         case reload
@@ -96,6 +114,12 @@ public struct LibraryFeature {
         case saveURLFinished(SavedItem)
         case saveURLFailed(String)
         case importPDFSelected(URL)
+        case addTextTapped
+        case textImportDismissed
+        case textImportTextChanged(String)
+        case textImportModeChanged(TextImportMode)
+        case saveTextImportTapped
+        case importTextResolved(String, String?, TextImportMode)
 
         // Tag assignment
         case reloadTags
@@ -124,6 +148,8 @@ public struct LibraryFeature {
     var ingestionClient
     @Dependency(\.pdfIngestionClient)
     var pdfIngestionClient
+    @Dependency(\.textIngestionClient)
+    var textIngestionClient
 
     public var body: some ReducerOf<Self> {
         Reduce { state, action in
@@ -308,6 +334,67 @@ public struct LibraryFeature {
                 }
                 return .none
 
+            case .addTextTapped:
+                state.textImportDraft = TextImportDraft()
+                if state.saveState == .failed {
+                    state.saveState = .queued
+                    state.errorMessage = nil
+                }
+                return .none
+
+            case .textImportDismissed:
+                state.textImportDraft = nil
+                return .none
+
+            case .textImportTextChanged(let text):
+                state.textImportDraft?.text = text
+                if state.saveState == .failed {
+                    state.saveState = .queued
+                    state.errorMessage = nil
+                }
+                return .none
+
+            case .textImportModeChanged(let mode):
+                state.textImportDraft?.mode = mode
+                return .none
+
+            case .saveTextImportTapped:
+                guard let draft = state.textImportDraft else { return .none }
+                let text = draft.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !text.isEmpty else {
+                    state.errorMessage = "Enter some text or markdown."
+                    state.saveState = .failed
+                    return .none
+                }
+                state.isSaving = true
+                state.saveState = .extracting
+                state.errorMessage = nil
+                return runTextImport(
+                    text: text,
+                    titleHint: draft.titleHint,
+                    mode: draft.mode,
+                    repository: self.repository,
+                    textIngestionClient: self.textIngestionClient
+                )
+
+            case let .importTextResolved(text, titleHint, mode):
+                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else {
+                    state.errorMessage = "The selected file is empty."
+                    state.saveState = .failed
+                    return .none
+                }
+                state.isSaving = true
+                state.saveState = .extracting
+                state.errorMessage = nil
+                return runTextImport(
+                    text: trimmed,
+                    titleHint: titleHint,
+                    mode: mode,
+                    repository: self.repository,
+                    textIngestionClient: self.textIngestionClient
+                )
+
             case .saveURLTapped:
                 let sourceURL = state.sourceURL.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard let normalizedURL = normalizeSourceURL(sourceURL),
@@ -351,6 +438,7 @@ public struct LibraryFeature {
                 state.isSaving = false
                 state.saveState = .ready
                 state.sourceURL = ""
+                state.textImportDraft = nil
                 // Only pre-insert if the current filter would include the new
                 // item. Otherwise the subsequent sidebar reload will
                 // surface it in the correct bucket.
@@ -533,6 +621,25 @@ public struct LibraryFeature {
             case .deleteFinished, .openItem:
                 return .none
             }
+        }
+    }
+}
+
+private func runTextImport(
+    text: String,
+    titleHint: String?,
+    mode: TextImportMode,
+    repository: StowerRepository,
+    textIngestionClient: TextIngestionClient
+) -> Effect<LibraryFeature.Action> {
+    .run { send in
+        do {
+            let result = try await textIngestionClient.ingest(text, titleHint, mode)
+            let item = try await repository.createItemFromIngestion(result)
+            await send(.saveURLFinished(item))
+            await send(.openItem(item))
+        } catch {
+            await send(.saveURLFailed(error.localizedDescription))
         }
     }
 }

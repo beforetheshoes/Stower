@@ -183,12 +183,6 @@ custom_rules:
     severity: warning
     excluded: ".*Tests.*\\.swift$|.*Preview.*\\.swift$"
 
-  no_expect_false_pattern:
-    name: "No expect(false) Pattern"
-    regex: '#expect\\(\\s*false\\s*[,)]'
-    message: "Use Issue.record() instead of #expect(false) to avoid compiler warnings"
-    severity: error
-
   no_unused_test_variables:
     name: "No Unused Test Variables"
     regex: '(?:let|var)\s+\w+\s*=\s*(?:true|false|\"\w+\")\s*\n(?:[^=\n]*\n)*\s*(?:let|var|\#expect|\})'

@@ -1,5 +1,6 @@
 import ComposableArchitecture
 import Foundation
+@testable import StowerData
 @testable import StowerFeature
 import Testing
 
@@ -337,6 +338,79 @@ struct LibraryFeatureTests {
             $0.isSaving = false
             $0.saveState = .ready
             $0.sourceURL = ""
+            $0.items = [item]
+        }
+        await store.receive(.openItem(item))
+    }
+
+    @Test
+    func saveTextImport_usesSelectedModeAndOpensCreatedItem() async throws {
+        let item = SavedItem(title: "Imported", renderFormat: .structuredV1, content: "Body")
+        let ingested = LockIsolated<[TextImportMode]>([])
+        var initial = LibraryFeature.State()
+        initial.textImportDraft = LibraryFeature.TextImportDraft(
+            text: "# Heading",
+            mode: .markdown
+        )
+
+        let store = TestStore(initialState: initial) {
+            LibraryFeature()
+        } withDependencies: {
+            $0.textIngestionClient.ingest = { text, titleHint, mode in
+                #expect(text == "# Heading")
+                #expect(titleHint == nil)
+                ingested.withValue { $0.append(mode) }
+                return IngestionResult.structuredText(
+                    title: "Imported",
+                    blocks: [.heading(level: 1, inlines: [.text("Heading")])],
+                    plainText: "Heading"
+                )
+            }
+            $0.stowerRepository.createItemFromIngestion = { _ in item }
+        }
+
+        await store.send(.saveTextImportTapped) {
+            $0.isSaving = true
+            $0.saveState = .extracting
+        }
+        await store.receive(.saveURLFinished(item)) {
+            $0.isSaving = false
+            $0.saveState = .ready
+            $0.textImportDraft = nil
+            $0.items = [item]
+        }
+        await store.receive(.openItem(item))
+
+        #expect(ingested.value == [.markdown])
+    }
+
+    @Test
+    func importTextResolved_usesHintAndMode() async {
+        let item = SavedItem(title: "Meeting Notes", renderFormat: .structuredV1, content: "Body")
+
+        let store = TestStore(initialState: LibraryFeature.State()) {
+            LibraryFeature()
+        } withDependencies: {
+            $0.textIngestionClient.ingest = { text, titleHint, mode in
+                #expect(text == "Body text")
+                #expect(titleHint == "Meeting Notes")
+                #expect(mode == .auto)
+                return IngestionResult.structuredText(
+                    title: "Meeting Notes",
+                    blocks: [.paragraph([.text("Body text")])],
+                    plainText: "Body text"
+                )
+            }
+            $0.stowerRepository.createItemFromIngestion = { _ in item }
+        }
+
+        await store.send(.importTextResolved("Body text", "Meeting Notes", .auto)) {
+            $0.isSaving = true
+            $0.saveState = .extracting
+        }
+        await store.receive(.saveURLFinished(item)) {
+            $0.isSaving = false
+            $0.saveState = .ready
             $0.items = [item]
         }
         await store.receive(.openItem(item))

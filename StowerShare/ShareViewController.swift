@@ -145,6 +145,10 @@ final class ShareViewController: UIViewController {
                     processPDFAttachment(attachment)
                     return
                 }
+                if attachment.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+                    processPotentialTextFileAttachment(attachment)
+                    return
+                }
                 if attachment.hasItemConformingToTypeIdentifier(UTType.url.identifier) {
                     processURLAttachment(attachment)
                     return
@@ -156,7 +160,7 @@ final class ShareViewController: UIViewController {
             }
         }
 
-        finish(with: .failure("No URL, text, or PDF in the share."))
+        finish(with: .failure("No URL, text, markdown, or PDF in the share."))
     }
 
     /// Share extensions have a ~120 MB memory ceiling. `loadItem` can return
@@ -207,6 +211,39 @@ final class ShareViewController: UIViewController {
         }
     }
 
+    private func processPotentialTextFileAttachment(_ attachment: NSItemProvider) {
+        attachment.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { [weak self] item, error in
+            guard let self else { return }
+            if let error {
+                self.reportFailureOnMain("Share load failed: \(error.localizedDescription)")
+                return
+            }
+            guard let url = item as? URL else {
+                self.reportFailureOnMain("Shared file isn't readable.")
+                return
+            }
+            guard let mode = TextImportDetector.importMode(for: url) else {
+                self.reportFailureOnMain("Unsupported shared file type.")
+                return
+            }
+            do {
+                let data = try Data(contentsOf: url)
+                let text = self.decodedImportedText(from: data)
+                let titleHint = TextImportDetector.normalizedTitleHint(from: url)
+                self.enqueueOnBackground {
+                    switch mode {
+                    case .markdown:
+                        try ShareIngestionClient.enqueueMarkdown(text, titleHint: titleHint)
+                    case .auto, .plainText:
+                        try ShareIngestionClient.enqueueText(text, titleHint: titleHint, mode: mode)
+                    }
+                }
+            } catch {
+                self.reportFailureOnMain("Couldn't read shared text file: \(error.localizedDescription)")
+            }
+        }
+    }
+
     private func processTextAttachment(_ attachment: NSItemProvider) {
         attachment.loadItem(forTypeIdentifier: UTType.text.identifier, options: nil) { [weak self] item, error in
             guard let self else { return }
@@ -218,12 +255,16 @@ final class ShareViewController: UIViewController {
                 self.reportFailureOnMain("Shared item isn't text.")
                 return
             }
-            let extractedURL = self.extractURL(from: text)
             self.enqueueOnBackground {
-                if let extractedURL {
-                    try ShareIngestionClient.enqueueURL(extractedURL)
-                } else {
-                    try ShareIngestionClient.enqueueText(text)
+                switch SharedTextClassifier.classify(text) {
+                case .singleURL(let url):
+                    try ShareIngestionClient.enqueueURL(url)
+                case .text(let payload):
+                    try ShareIngestionClient.enqueueText(
+                        payload.content,
+                        titleHint: payload.titleHint,
+                        mode: payload.mode
+                    )
                 }
             }
         }
@@ -265,10 +306,20 @@ final class ShareViewController: UIViewController {
         }
     }
 
-    private func extractURL(from text: String) -> URL? {
-        let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
-        let matches = detector?.matches(in: text, options: [], range: NSRange(location: 0, length: text.utf16.count))
-        return matches?.first?.url
+    private func decodedImportedText(from data: Data) -> String {
+        if let text = String(data: data, encoding: .utf8) {
+            return text
+        }
+        if let text = String(data: data, encoding: .utf16) {
+            return text
+        }
+        if let text = String(data: data, encoding: .utf16LittleEndian) {
+            return text
+        }
+        if let text = String(data: data, encoding: .utf16BigEndian) {
+            return text
+        }
+        return String(bytes: data, encoding: .utf8) ?? ""
     }
 
     // MARK: - Timeout + completion

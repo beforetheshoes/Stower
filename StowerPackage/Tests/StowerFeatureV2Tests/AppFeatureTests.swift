@@ -87,4 +87,105 @@ struct AppFeatureTests {
 
         await store.finish()
     }
+
+    @Test
+    func startupProcessesQueuedMarkdownJob() async throws {
+        let created = LockIsolated<[IngestionResult]>([])
+        let payload = try QueuedTextPayloadCodec.encode(
+            QueuedTextPayload(
+                content: "Just a note body",
+                mode: .markdown,
+                titleHint: "Meeting Notes"
+            )
+        )
+
+        let store = TestStore(initialState: AppFeature.State()) {
+            AppFeature()
+        } withDependencies: {
+            $0.cloudSyncClient = CloudSyncClient(
+                start: {},
+                sendChanges: {},
+                scheduleSendChanges: {},
+                statusStream: { AsyncStream { continuation in continuation.finish() } }
+            )
+            $0.stowerRepository.fetchPendingIngestionJobs = {
+                [IngestionJob(kind: .markdown, payload: payload)]
+            }
+            $0.stowerRepository.createItemFromIngestion = { result in
+                created.withValue { $0.append(result) }
+                return SavedItem(title: result.title, renderFormat: result.renderFormat, content: result.plainText)
+            }
+            $0.stowerRepository.markIngestionJobProcessed = { _ in }
+            $0.stowerRepository.fetchLibrary = { _ in [] }
+            $0.stowerRepository.fetchListCounts = { .zero }
+            $0.stowerRepository.fetchTags = { [] }
+            $0.stowerRepository.observeLibraryChanges = { AsyncStream { $0.finish() } }
+            $0.stowerRepository.purgeOldTrash = { [] }
+            $0.stowerRepository.enqueueHydrationJobsForMissingContent = { 0 }
+            $0.continuousClock = ImmediateClock()
+            $0.syncDiagnosticsClient = .noop
+        }
+
+        store.exhaustivity = .off(showSkippedAssertions: false)
+
+        await store.send(AppFeature.Action.onAppear)
+        await store.receive(AppFeature.Action.startupFinished) {
+            $0.startupFinished = true
+        }
+
+        let results = created.value
+        #expect(results.count == 1)
+        #expect(results[0].title == "Meeting Notes")
+        #expect(results[0].renderFormat == .structuredV1)
+    }
+
+    @Test
+    func startupProcessesLegacyRawTextJobUsingAutoDetection() async {
+        let created = LockIsolated<[IngestionResult]>([])
+        let markdown = """
+        # Queued Heading
+
+        - one
+        - two
+        """
+
+        let store = TestStore(initialState: AppFeature.State()) {
+            AppFeature()
+        } withDependencies: {
+            $0.cloudSyncClient = CloudSyncClient(
+                start: {},
+                sendChanges: {},
+                scheduleSendChanges: {},
+                statusStream: { AsyncStream { continuation in continuation.finish() } }
+            )
+            $0.stowerRepository.fetchPendingIngestionJobs = {
+                [IngestionJob(kind: .text, payload: markdown)]
+            }
+            $0.stowerRepository.createItemFromIngestion = { result in
+                created.withValue { $0.append(result) }
+                return SavedItem(title: result.title, renderFormat: result.renderFormat, content: result.plainText)
+            }
+            $0.stowerRepository.markIngestionJobProcessed = { _ in }
+            $0.stowerRepository.fetchLibrary = { _ in [] }
+            $0.stowerRepository.fetchListCounts = { .zero }
+            $0.stowerRepository.fetchTags = { [] }
+            $0.stowerRepository.observeLibraryChanges = { AsyncStream { $0.finish() } }
+            $0.stowerRepository.purgeOldTrash = { [] }
+            $0.stowerRepository.enqueueHydrationJobsForMissingContent = { 0 }
+            $0.continuousClock = ImmediateClock()
+            $0.syncDiagnosticsClient = .noop
+        }
+
+        store.exhaustivity = .off(showSkippedAssertions: false)
+
+        await store.send(AppFeature.Action.onAppear)
+        await store.receive(AppFeature.Action.startupFinished) {
+            $0.startupFinished = true
+        }
+
+        let results = created.value
+        #expect(results.count == 1)
+        #expect(results[0].title == "Queued Heading")
+        #expect(results[0].renderFormat == .structuredV1)
+    }
 }

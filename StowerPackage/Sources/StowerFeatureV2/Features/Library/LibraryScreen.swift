@@ -22,6 +22,8 @@ public struct LibraryScreen: View {
     /// visible. Set on iPhone compact to surface the filter sheet.
     private let onOpenFilters: (() -> Void)?
     @State private var isAddURLPresented = false
+    @State private var isTextImportPresented = false
+    @State private var isTextFilePickerPresented = false
     @State private var isPDFPickerPresented = false
 
     public init(
@@ -255,15 +257,22 @@ public struct LibraryScreen: View {
             ToolbarItem(placement: .primaryAction) {
                 Menu {
                     Button {
-                        if store.saveState == .failed {
-                            store.send(.sourceURLChanged(""))
-                        }
-                        isAddURLPresented = true
+                        presentAddURLSheet()
                     } label: {
                         Label("Add URL…", systemImage: "link")
                     }
                     Button {
-                        isPDFPickerPresented = true
+                        presentTextImportSheet()
+                    } label: {
+                        Label("Add Text/Markdown…", systemImage: "square.and.pencil")
+                    }
+                    Button {
+                        presentTextFileImporter()
+                    } label: {
+                        Label("Import Text/Markdown…", systemImage: "doc.text")
+                    }
+                    Button {
+                        presentPDFImporter()
                     } label: {
                         Label("Import PDF…", systemImage: "doc.richtext")
                     }
@@ -284,6 +293,30 @@ public struct LibraryScreen: View {
             }
         }
         #endif
+        .sheet(
+            isPresented: Binding(
+                get: { isTextImportPresented && store.textImportDraft != nil },
+                set: {
+                    isTextImportPresented = $0
+                    if !$0 {
+                        store.send(.textImportDismissed)
+                    }
+                }
+            )
+        ) {
+            textImportSheet
+        }
+        .onChange(of: store.saveState) { _, newValue in
+            if isTextImportPresented, newValue == .ready, store.textImportDraft == nil {
+                isTextImportPresented = false
+            }
+        }
+        .fileImporter(
+            isPresented: $isTextFilePickerPresented,
+            allowedContentTypes: textImportContentTypes
+        ) { result in
+            handleTextImport(result)
+        }
         .fileImporter(
             isPresented: $isPDFPickerPresented,
             allowedContentTypes: [.pdf]
@@ -324,6 +357,79 @@ public struct LibraryScreen: View {
         #endif
     }
 
+    private func presentAddURLSheet() {
+        if store.saveState == .failed {
+            store.send(.sourceURLChanged(""))
+        }
+        DispatchQueue.main.async {
+            isAddURLPresented = true
+        }
+    }
+
+    private func presentTextImportSheet() {
+        store.send(.addTextTapped)
+        DispatchQueue.main.async {
+            isTextImportPresented = true
+        }
+    }
+
+    private func presentTextFileImporter() {
+        #if os(macOS)
+        presentOpenPanel(
+            allowedContentTypes: textImportContentTypes,
+            title: "Import Text or Markdown"
+        ) { url in
+            handleTextImport(.success(url))
+        }
+        #else
+        DispatchQueue.main.async {
+            isTextFilePickerPresented = true
+        }
+        #endif
+    }
+
+    private func presentPDFImporter() {
+        #if os(macOS)
+        presentOpenPanel(
+            allowedContentTypes: [.pdf],
+            title: "Import PDF"
+        ) { url in
+            handlePDFImport(.success(url))
+        }
+        #else
+        DispatchQueue.main.async {
+            isPDFPickerPresented = true
+        }
+        #endif
+    }
+
+    #if os(macOS)
+    private func presentOpenPanel(
+        allowedContentTypes: [UTType],
+        title: String,
+        onSelect: @escaping (URL) -> Void
+    ) {
+        let panel = NSOpenPanel()
+        panel.title = title
+        panel.allowedContentTypes = allowedContentTypes
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            onSelect(url)
+        }
+    }
+    #endif
+
+    private var textImportContentTypes: [UTType] {
+        let markdownTypes = [
+            UTType(filenameExtension: "md"),
+            UTType(filenameExtension: "markdown"),
+        ].compactMap { $0 }
+        return [.plainText] + markdownTypes
+    }
+
     /// Handles the result of the SwiftUI `.fileImporter` PDF picker. The
     /// picked URL is security-scoped — we must start/stop access around the
     /// copy, and we copy to a plain temp file so the reducer can consume a
@@ -361,6 +467,33 @@ public struct LibraryScreen: View {
             let ns = error as NSError
             if ns.code != NSUserCancelledError {
                 store.send(.saveURLFailed("PDF import failed: \(error.localizedDescription)"))
+            }
+        }
+    }
+
+    private func handleTextImport(_ result: Result<URL, Error>) {
+        switch result {
+        case .success(let pickedURL):
+            let accessed = pickedURL.startAccessingSecurityScopedResource()
+            defer {
+                if accessed { pickedURL.stopAccessingSecurityScopedResource() }
+            }
+            guard let mode = TextImportDetector.importMode(for: pickedURL) else {
+                store.send(.saveURLFailed("Unsupported text file type."))
+                return
+            }
+            do {
+                let data = try Data(contentsOf: pickedURL)
+                let text = decodedImportedText(from: data)
+                let titleHint = TextImportDetector.normalizedTitleHint(from: pickedURL)
+                store.send(.importTextResolved(text, titleHint, mode))
+            } catch {
+                store.send(.saveURLFailed("Couldn't read text file: \(error.localizedDescription)"))
+            }
+        case .failure(let error):
+            let ns = error as NSError
+            if ns.code != NSUserCancelledError {
+                store.send(.saveURLFailed("Text import failed: \(error.localizedDescription)"))
             }
         }
     }
@@ -416,6 +549,92 @@ public struct LibraryScreen: View {
         .presentationDragIndicator(.visible)
     }
     #endif
+
+    @ViewBuilder private var textImportSheet: some View {
+        NavigationStack {
+            VStack(spacing: 16) {
+                Picker(
+                    "Format",
+                    selection: Binding(
+                        get: { store.textImportDraft?.mode ?? .auto },
+                        set: { store.send(.textImportModeChanged($0)) }
+                    )
+                ) {
+                    Text("Auto").tag(TextImportMode.auto)
+                    Text("Plain Text").tag(TextImportMode.plainText)
+                    Text("Markdown").tag(TextImportMode.markdown)
+                }
+                .pickerStyle(.segmented)
+
+                TextEditor(
+                    text: Binding(
+                        get: { store.textImportDraft?.text ?? "" },
+                        set: { store.send(.textImportTextChanged($0)) }
+                    )
+                )
+                .font(store.textImportDraft?.mode == .markdown ? .body.monospaced() : .body)
+                .padding(12)
+                .frame(maxWidth: .infinity, minHeight: 280, maxHeight: .infinity)
+                .glassEffect(.regular, in: .rect(cornerRadius: 12))
+
+                if store.saveState == .failed, let error = store.errorMessage {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(palette.error)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    Text("Paste plain text or markdown. Auto mode detects markdown-like syntax for text imports.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .padding()
+            .navigationTitle("Add Text/Markdown")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #else
+            .frame(minWidth: 640, idealWidth: 720, maxWidth: 900, minHeight: 460, idealHeight: 560)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        isTextImportPresented = false
+                        store.send(.textImportDismissed)
+                    }
+                    .disabled(store.isSaving)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    if store.isSaving {
+                        ProgressView()
+                    } else {
+                        Button("Save") {
+                            store.send(.saveTextImportTapped)
+                        }
+                        .disabled(store.textImportDraft?.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+                    }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+    }
+
+    private func decodedImportedText(from data: Data) -> String {
+        if let text = String(data: data, encoding: .utf8) {
+            return text
+        }
+        if let text = String(data: data, encoding: .utf16) {
+            return text
+        }
+        if let text = String(data: data, encoding: .utf16LittleEndian) {
+            return text
+        }
+        if let text = String(data: data, encoding: .utf16BigEndian) {
+            return text
+        }
+        return String(bytes: data, encoding: .utf8) ?? ""
+    }
 
     // MARK: - Tag Pills
 
@@ -526,7 +745,7 @@ public struct LibraryScreen: View {
 
     @ViewBuilder private var urlComposer: some View {
         HStack(spacing: 10) {
-            TextField("Paste Source URL", text: $store.sourceURL.sending(\.sourceURLChanged))
+            TextField("Paste article URL", text: $store.sourceURL.sending(\.sourceURLChanged))
                 .autocorrectionDisabled()
                 #if os(iOS)
                 // iOS TextField defaults to `.sentences` which capitalizes
@@ -544,6 +763,48 @@ public struct LibraryScreen: View {
                 .glassEffect(.regular, in: .rect(cornerRadius: 6))
                 .onSubmit { store.send(.saveURLTapped) }
 
+            #if os(macOS)
+            Button {
+                store.send(.saveURLTapped)
+            } label: {
+                if store.isSaving {
+                    ProgressView()
+                } else {
+                    Label("Add", systemImage: "plus.circle.fill")
+                }
+            }
+            .disabled(store.isSaving)
+            .buttonStyle(.glassProminent)
+            .fixedSize()
+
+            Menu {
+                Section("Text") {
+                    Button {
+                        presentTextImportSheet()
+                    } label: {
+                        Label("Write or Paste Text…", systemImage: "square.and.pencil")
+                    }
+                }
+
+                Section("Import") {
+                    Button {
+                        presentTextFileImporter()
+                    } label: {
+                        Label("Import Text/Markdown…", systemImage: "doc.text")
+                    }
+
+                    Button {
+                        presentPDFImporter()
+                    } label: {
+                        Label("Import PDF…", systemImage: "doc.richtext")
+                    }
+                }
+            } label: {
+                Label("More", systemImage: "ellipsis.circle")
+            }
+            .fixedSize()
+            .disabled(store.isSaving)
+            #else
             Button {
                 store.send(.saveURLTapped)
             } label: {
@@ -554,16 +815,7 @@ public struct LibraryScreen: View {
                 }
             }
             .disabled(store.isSaving)
-            #if os(macOS)
-            .buttonStyle(.glassProminent)
             #endif
-
-            Button {
-                isPDFPickerPresented = true
-            } label: {
-                Label("Import PDF", systemImage: "doc.richtext")
-            }
-            .disabled(store.isSaving)
         }
     }
 
