@@ -68,6 +68,70 @@ struct ReaderFeatureTests {
     }
 
     @Test
+    func readingProgress_usesLiveBlockIndexEvenWhenTopPositionIsNotPersisted() async {
+        let itemID = UUID()
+        let clock = TestClock()
+        let item = SavedItem(id: itemID, title: "Read", content: "Body")
+        let document = ReaderDocument(
+            title: "Read",
+            blocks: [
+                .paragraph([.text("A")]),
+                .paragraph([.text("B")]),
+                .paragraph([.text("C")]),
+                .paragraph([.text("D")]),
+            ]
+        )
+
+        var initialState = ReaderFeature.State(
+            item: item,
+            appearance: ReaderAppearanceSettings()
+        )
+        initialState.document = document
+
+        let store = TestStore(initialState: initialState) {
+            ReaderFeature()
+        } withDependencies: {
+            $0.continuousClock = clock
+        }
+        store.exhaustivity = .off(showSkippedAssertions: false)
+
+        #expect(store.state.readingProgress?.percentComplete == 0)
+
+        await store.send(.scrollProgressChanged(2)) {
+            $0.currentBlockIndex = 2
+            $0.item?.lastReadBlockIndex = 2
+            $0.item?.isRead = true
+        }
+
+        #expect(store.state.readingProgress?.percentComplete == 50)
+    }
+
+    @Test
+    func readingProgress_hidesForInteractiveAndCompleteContent() {
+        let webViewItem = SavedItem(
+            title: "Interactive",
+            renderFormat: .webView,
+            content: "Body",
+            progressUnitCount: 5,
+            isRead: true
+        )
+        var state = ReaderFeature.State(item: webViewItem)
+        state.currentBlockIndex = 2
+        #expect(state.readingProgress == nil)
+
+        let structured = SavedItem(
+            title: "Complete",
+            renderFormat: .structuredV1,
+            content: "Body",
+            progressUnitCount: 5,
+            isRead: true
+        )
+        state = ReaderFeature.State(item: structured)
+        state.currentBlockIndex = 4
+        #expect(state.readingProgress == nil)
+    }
+
+    @Test
     func load_populatesItemAndDocument() async {
         let itemID = UUID()
         let item = SavedItem(id: itemID, title: "Read", content: "Body")

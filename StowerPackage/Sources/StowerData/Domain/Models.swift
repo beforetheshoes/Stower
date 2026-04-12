@@ -22,6 +22,9 @@ public struct SavedItem: Equatable, Identifiable, Sendable {
     public var updatedAt: Date
     /// Block index of the last-read position for scroll restoration. Nil means unread or at the top.
     public var lastReadBlockIndex: Int?
+    /// Total number of readable content units used to derive reading progress.
+    /// For document-backed content this is typically `ReaderDocument.blocks.count`.
+    public var progressUnitCount: Int?
     public var isRead: Bool
     public var isStarred: Bool
     /// When set, this item is in the Recently Deleted bucket and will be
@@ -51,6 +54,7 @@ public struct SavedItem: Equatable, Identifiable, Sendable {
         createdAt: Date = .now,
         updatedAt: Date = .now,
         lastReadBlockIndex: Int? = nil,
+        progressUnitCount: Int? = nil,
         isRead: Bool = false,
         isStarred: Bool = false,
         deletedAt: Date? = nil,
@@ -75,10 +79,48 @@ public struct SavedItem: Equatable, Identifiable, Sendable {
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.lastReadBlockIndex = lastReadBlockIndex
+        self.progressUnitCount = progressUnitCount
         self.isRead = isRead
         self.isStarred = isStarred
         self.deletedAt = deletedAt
         self.tagIDs = tagIDs
+    }
+}
+
+public struct ReadingProgressSnapshot: Equatable, Sendable {
+    public let currentUnitIndex: Int
+    public let totalUnitCount: Int
+
+    public init?(currentUnitIndex: Int, totalUnitCount: Int) {
+        guard totalUnitCount > 1 else { return nil }
+        let clampedIndex = min(max(currentUnitIndex, 0), totalUnitCount - 1)
+        guard clampedIndex < totalUnitCount - 1 else { return nil }
+        self.currentUnitIndex = clampedIndex
+        self.totalUnitCount = totalUnitCount
+    }
+
+    public var fractionComplete: Double {
+        Double(currentUnitIndex) / Double(totalUnitCount)
+    }
+
+    public var percentComplete: Int {
+        Int((fractionComplete * 100).rounded())
+    }
+}
+
+extension SavedItem {
+    public var libraryReadingProgress: ReadingProgressSnapshot? {
+        guard renderFormat != .webView,
+              isRead,
+              let lastReadBlockIndex,
+              let progressUnitCount
+        else {
+            return nil
+        }
+        return ReadingProgressSnapshot(
+            currentUnitIndex: lastReadBlockIndex,
+            totalUnitCount: progressUnitCount
+        )
     }
 }
 

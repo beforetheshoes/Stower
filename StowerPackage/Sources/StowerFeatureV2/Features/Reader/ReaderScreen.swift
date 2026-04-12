@@ -31,6 +31,11 @@ public struct ReaderScreen: View {
     public var body: some View {
         content
             .background(store.appearance.backgroundColor)
+            .safeAreaInset(edge: .top, spacing: 0) {
+                if let progress = store.readingProgress {
+                    readerProgressHeader(progress)
+                }
+            }
             .onGeometryChange(for: CGFloat.self) { proxy in
                 proxy.size.width
             } action: { newWidth in
@@ -266,6 +271,36 @@ public struct ReaderScreen: View {
 
         _ = withAnimation(.easeInOut(duration: 0.2)) {
             store.send(.contentAreaTapped)
+        }
+    }
+
+    @ViewBuilder
+    private func readerProgressHeader(_ progress: ReadingProgressSnapshot) -> some View {
+        HStack(spacing: 10) {
+            Text("\(progress.percentComplete)%")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(palette.tx2)
+                .monospacedDigit()
+
+            GeometryReader { geometry in
+                let width = max(geometry.size.width, 0)
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(palette.ui.opacity(0.35))
+                    Capsule()
+                        .fill(palette.primary)
+                        .frame(width: width * progress.fractionComplete)
+                }
+            }
+            .frame(height: 6)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(palette.bg.opacity(0.96))
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(palette.ui.opacity(0.3))
+                .frame(height: 1)
         }
     }
 

@@ -13,6 +13,7 @@ public struct ReaderFeature {
         public var sourceHTML: String?
         public var appearance: ReaderAppearanceSettings
         var viewportWidth: Double?
+        var currentBlockIndex: Int?
         var isChromeHidden = false
         var speech = ReaderSpeechFeature.State()
         var ai = ReaderAIFeature.State()
@@ -52,11 +53,32 @@ public struct ReaderFeature {
             ReaderLineWidthPolicy(viewportWidth: viewportWidth)
         }
 
+        public var totalProgressUnitCount: Int? {
+            if let document, !document.blocks.isEmpty {
+                return document.blocks.count
+            }
+            return item?.progressUnitCount
+        }
+
+        public var readingProgress: ReadingProgressSnapshot? {
+            guard effectiveRenderFormat != .webView,
+                  let totalProgressUnitCount,
+                  let currentBlockIndex
+            else {
+                return nil
+            }
+            return ReadingProgressSnapshot(
+                currentUnitIndex: currentBlockIndex,
+                totalUnitCount: totalProgressUnitCount
+            )
+        }
+
         /// Initialize with a full SavedItem (preferred — instant header render).
         public init(item: SavedItem, appearance: ReaderAppearanceSettings = .init()) {
             self.itemID = item.id
             self.item = item
             self.appearance = appearance
+            self.currentBlockIndex = item.lastReadBlockIndex ?? 0
         }
 
         /// Initialize with just an ID (fallback — requires DB load).
@@ -136,6 +158,7 @@ public struct ReaderFeature {
                 if state.document != nil,
                    state.item?.id == state.itemID {
                     state.isLoading = false
+                    state.currentBlockIndex = state.item?.lastReadBlockIndex ?? 0
                     return .send(.speech(.loadPreferences))
                 }
 
@@ -167,6 +190,7 @@ public struct ReaderFeature {
                 if let item { state.item = item }
                 state.document = document
                 state.sourceHTML = sourceHTML
+                state.currentBlockIndex = state.item?.lastReadBlockIndex ?? 0
                 return .merge(
                     archiveIfNeeded(item: state.item, sourceHTML: sourceHTML),
                     startProgressPollingEffect(),
@@ -315,6 +339,7 @@ public struct ReaderFeature {
                 // Block index 0 means "at the top" — don't persist it (treat
                 // as "no restore state") so new opens don't get a false restore.
                 guard blockIndex >= 0 else { return .none }
+                state.currentBlockIndex = blockIndex
                 state.item?.lastReadBlockIndex = blockIndex > 0 ? blockIndex : nil
 
                 // Auto-mark as read the first time the user scrolls past the

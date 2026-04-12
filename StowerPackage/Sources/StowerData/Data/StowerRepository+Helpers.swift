@@ -5,6 +5,18 @@ import SQLiteData
 // MARK: - Domain Mapping
 
 extension StowerRepository {
+    static func progressUnitCount(from local: SavedItemContentLocalTable?) -> Int? {
+        guard let local,
+              !local.documentJSON.isEmpty,
+              let data = local.documentJSON.data(using: .utf8),
+              let document = try? JSONDecoder().decode(ReaderDocument.self, from: data),
+              !document.blocks.isEmpty
+        else {
+            return nil
+        }
+        return document.blocks.count
+    }
+
     static func toDomain(
         sync: SavedItemSyncTable,
         local: SavedItemContentLocalTable?,
@@ -30,6 +42,7 @@ extension StowerRepository {
             createdAt: sync.createdAt,
             updatedAt: sync.updatedAt,
             lastReadBlockIndex: sync.lastReadBlockIndex,
+            progressUnitCount: progressUnitCount(from: local),
             isRead: sync.isRead,
             isStarred: sync.isStarred,
             deletedAt: sync.deletedAt,
@@ -58,6 +71,7 @@ extension StowerRepository {
             createdAt: draft.createdAt,
             updatedAt: draft.updatedAt,
             lastReadBlockIndex: draft.lastReadBlockIndex,
+            progressUnitCount: progressUnitCount(from: local),
             isRead: draft.isRead,
             isStarred: draft.isStarred,
             deletedAt: draft.deletedAt

@@ -119,6 +119,10 @@ public struct LibraryScreen: View {
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
+
+                            if let progress = item.libraryReadingProgress {
+                                libraryProgressRow(progress)
+                            }
                         }
                     }
                     .contentShape(Rectangle())
@@ -449,6 +453,29 @@ public struct LibraryScreen: View {
     private func tagPillColor(_ hex: String?) -> Color {
         guard let hex, !hex.isEmpty else { return palette.secondary }
         return Color(hex: hex)
+    }
+
+    @ViewBuilder
+    private func libraryProgressRow(_ progress: ReadingProgressSnapshot) -> some View {
+        HStack(spacing: 8) {
+            GeometryReader { geometry in
+                let width = max(geometry.size.width, 0)
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(palette.ui.opacity(0.28))
+                    Capsule()
+                        .fill(palette.primaryMuted)
+                        .frame(width: width * progress.fractionComplete)
+                }
+            }
+            .frame(height: 4)
+
+            Text("\(progress.percentComplete)%")
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(palette.tx2)
+                .monospacedDigit()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: - Tags Submenu
