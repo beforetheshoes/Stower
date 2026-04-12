@@ -16,6 +16,8 @@ public struct SidebarFeature {
         /// Bound to the "New Tag" sheet.
         public var isCreatingTag: Bool = false
         public var newTagName: String = ""
+        /// Selected color hex for tag creation — pre-populated with a suggestion.
+        public var newTagColorHex: String = ""
         /// Non-nil when the user is renaming a tag — holds the working name.
         public var renamingTag: RenameState?
 
@@ -41,6 +43,7 @@ public struct SidebarFeature {
         case newTagTapped
         case newTagDismissed
         case newTagNameChanged(String)
+        case newTagColorChanged(String)
         case newTagConfirmed
         case tagCreated(Tag)
 
@@ -115,26 +118,37 @@ public struct SidebarFeature {
             case .newTagTapped:
                 state.isCreatingTag = true
                 state.newTagName = ""
+                let existingHexes = state.tags.compactMap(\.colorHex)
+                state.newTagColorHex = TagColorSuggester.suggestColor(
+                    existingHexValues: existingHexes
+                )
                 return .none
 
             case .newTagDismissed:
                 state.isCreatingTag = false
                 state.newTagName = ""
+                state.newTagColorHex = ""
                 return .none
 
             case .newTagNameChanged(let value):
                 state.newTagName = value
                 return .none
 
+            case .newTagColorChanged(let hex):
+                state.newTagColorHex = hex
+                return .none
+
             case .newTagConfirmed:
                 let name = state.newTagName.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !name.isEmpty else { return .none }
+                let colorHex = state.newTagColorHex.isEmpty ? nil : state.newTagColorHex
                 state.isCreatingTag = false
                 state.newTagName = ""
+                state.newTagColorHex = ""
                 let repository = self.repository
                 return .run { send in
                     do {
-                        let tag = try await repository.createTag(name, nil)
+                        let tag = try await repository.createTag(name, colorHex)
                         await send(.tagCreated(tag))
                     } catch {
                         await send(.failed(error.localizedDescription))

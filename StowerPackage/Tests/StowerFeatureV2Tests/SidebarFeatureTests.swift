@@ -50,6 +50,7 @@ struct SidebarFeatureTests {
     func newTag_confirmCreatesAndReloads() async {
         let tag = Tag(name: "ai")
         let counts = LibraryListCounts(all: 0)
+        let expectedColor = TagColorSuggester.suggestColor(existingHexValues: [])
 
         let store = TestStore(initialState: SidebarFeature.State()) {
             SidebarFeature()
@@ -62,6 +63,7 @@ struct SidebarFeatureTests {
         await store.send(.newTagTapped) {
             $0.isCreatingTag = true
             $0.newTagName = ""
+            $0.newTagColorHex = expectedColor
         }
         await store.send(.newTagNameChanged("ai")) {
             $0.newTagName = "ai"
@@ -69,6 +71,7 @@ struct SidebarFeatureTests {
         await store.send(.newTagConfirmed) {
             $0.isCreatingTag = false
             $0.newTagName = ""
+            $0.newTagColorHex = ""
         }
         await store.receive(.tagCreated(tag))
         await store.receive(.reload) { $0.isLoading = true }
@@ -77,6 +80,56 @@ struct SidebarFeatureTests {
             $0.counts = counts
             $0.tags = [tag]
         }
+    }
+
+    @Test
+    func newTagConfirmed_passesAutoColor() async {
+        let existingTag = Tag(name: "work", colorHex: FlexokiRaw.shade(.red, 600))
+        let expectedColor = TagColorSuggester.suggestColor(
+            existingHexValues: [FlexokiRaw.shade(.red, 600)]
+        )
+
+        let receivedColor = LockIsolated<String?>(nil)
+        let newTag = Tag(name: "personal", colorHex: expectedColor)
+
+        var state = SidebarFeature.State()
+        state.tags = [existingTag]
+
+        let store = TestStore(initialState: state) {
+            SidebarFeature()
+        } withDependencies: {
+            $0.stowerRepository.createTag = { _, color in
+                receivedColor.setValue(color)
+                return newTag
+            }
+            $0.stowerRepository.fetchListCounts = { .zero }
+            $0.stowerRepository.fetchTags = { [existingTag, newTag] }
+        }
+
+        await store.send(.newTagTapped) {
+            $0.isCreatingTag = true
+            $0.newTagName = ""
+            $0.newTagColorHex = expectedColor
+        }
+        await store.send(.newTagNameChanged("personal")) {
+            $0.newTagName = "personal"
+        }
+        await store.send(.newTagConfirmed) {
+            $0.isCreatingTag = false
+            $0.newTagName = ""
+            $0.newTagColorHex = ""
+        }
+        await store.receive(.tagCreated(newTag))
+        await store.receive(.reload) { $0.isLoading = true }
+        await store.receive(.loaded(.zero, [existingTag, newTag])) {
+            $0.isLoading = false
+            $0.counts = .zero
+            $0.tags = [existingTag, newTag]
+        }
+
+        // Red is taken, so orange-600 should have been passed.
+        #expect(receivedColor.value == expectedColor)
+        #expect(receivedColor.value == FlexokiRaw.shade(.orange, 600))
     }
 
     @Test

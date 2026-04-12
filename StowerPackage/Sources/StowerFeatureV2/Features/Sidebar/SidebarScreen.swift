@@ -74,19 +74,23 @@ public struct SidebarScreen: View {
                 .padding(12)
             }
         }
-        .alert(
-            "New Tag",
-            isPresented: Binding(
-                get: { store.isCreatingTag },
-                set: { if !$0 { store.send(.newTagDismissed) } }
+        .sheet(isPresented: Binding(
+            get: { store.isCreatingTag },
+            set: { if !$0 { store.send(.newTagDismissed) } }
+        )) {
+            NewTagSheet(
+                name: Binding(
+                    get: { store.newTagName },
+                    set: { store.send(.newTagNameChanged($0)) }
+                ),
+                colorHex: Binding(
+                    get: { store.newTagColorHex },
+                    set: { store.send(.newTagColorChanged($0)) }
+                ),
+                palette: palette,
+                onCancel: { store.send(.newTagDismissed) },
+                onCreate: { store.send(.newTagConfirmed) }
             )
-        ) {
-            TextField("Tag name", text: Binding(
-                get: { store.newTagName },
-                set: { store.send(.newTagNameChanged($0)) }
-            ))
-            Button("Cancel", role: .cancel) { store.send(.newTagDismissed) }
-            Button("Create") { store.send(.newTagConfirmed) }
         }
         .alert(
             "Rename Tag",
@@ -196,9 +200,7 @@ public struct SidebarScreen: View {
     }
 
     private func tagColor(_ hex: String?) -> Color {
-        // Color parsing is a follow-up; for now every tag uses the current
-        // palette's secondary accent so tags visually contrast with the
-        // primary-tinted system tint without clashing.
-        palette.secondary
+        guard let hex, !hex.isEmpty else { return palette.secondary }
+        return Color(hex: hex)
     }
 }

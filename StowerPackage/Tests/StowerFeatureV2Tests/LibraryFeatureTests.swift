@@ -241,6 +241,77 @@ struct LibraryFeatureTests {
         }
     }
 
+    // MARK: - Inline Tag Creation
+
+    @Test
+    func inlineCreateTag_createsAndAssigns() async {
+        let item = SavedItem(title: "Article", content: "")
+        let newTag = Tag(name: "reading", colorHex: FlexokiRaw.shade(.red, 600))
+        var initial = LibraryFeature.State()
+        initial.items = [item]
+        initial.availableTags = []
+
+        let store = TestStore(initialState: initial) {
+            LibraryFeature()
+        } withDependencies: {
+            $0.stowerRepository.createTag = { _, _ in newTag }
+            $0.stowerRepository.addTag = { _, _ in }
+            $0.stowerRepository.fetchTags = { [newTag] }
+        }
+
+        let suggestedColor = TagColorSuggester.suggestColor(existingHexValues: [])
+        await store.send(.inlineCreateTagTapped(item.id)) {
+            $0.inlineTagCreation = LibraryFeature.InlineTagCreation(
+                itemID: item.id,
+                colorHex: suggestedColor
+            )
+        }
+        await store.send(.inlineCreateTagNameChanged("reading")) {
+            $0.inlineTagCreation?.name = "reading"
+        }
+        await store.send(.inlineCreateTagConfirmed) {
+            $0.inlineTagCreation = nil
+        }
+        await store.receive(.inlineTagCreated(newTag, item.id)) {
+            $0.availableTags = [newTag]
+            $0.items[0].tagIDs = [newTag.id]
+        }
+        await store.receive(.reloadTags)
+        await store.receive(.tagsLoaded([newTag]))
+    }
+
+    @Test
+    func inlineCreateTag_emptyName_isNoOp() async {
+        let item = SavedItem(title: "Article", content: "")
+        var initial = LibraryFeature.State()
+        initial.items = [item]
+        initial.inlineTagCreation = LibraryFeature.InlineTagCreation(itemID: item.id)
+
+        let store = TestStore(initialState: initial) {
+            LibraryFeature()
+        }
+
+        await store.send(.inlineCreateTagConfirmed) {
+            $0.inlineTagCreation = nil
+        }
+        // No effects — createTag and addTag should NOT be called.
+    }
+
+    @Test
+    func inlineCreateTag_dismiss_clearsState() async {
+        let item = SavedItem(title: "Article", content: "")
+        var initial = LibraryFeature.State()
+        initial.inlineTagCreation = LibraryFeature.InlineTagCreation(itemID: item.id, name: "wip")
+
+        let store = TestStore(initialState: initial) {
+            LibraryFeature()
+        }
+
+        await store.send(.inlineCreateTagDismissed) {
+            $0.inlineTagCreation = nil
+        }
+    }
+
     @Test
     func saveURLAddsHttpsWhenSchemeMissing() async {
         let item = SavedItem(title: "Saved", sourceURL: "https://example.com/post", content: "Body")

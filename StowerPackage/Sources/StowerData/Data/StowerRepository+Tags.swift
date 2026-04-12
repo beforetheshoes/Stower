@@ -30,6 +30,24 @@ extension StowerRepository {
         }
     }
 
+    static func _fetchTagIDsByItem(
+        database: any DatabaseWriter
+    ) -> @Sendable ([UUID]) async throws -> [UUID: [UUID]] {
+        { (itemIDs: [UUID]) async throws -> [UUID: [UUID]] in
+            guard !itemIDs.isEmpty else { return [:] }
+            return try await database.read { db -> [UUID: [UUID]] in
+                let junctions: [ItemTagSyncTable] = try ItemTagSyncTable
+                    .where { $0.itemID.in(itemIDs) }
+                    .fetchAll(db)
+                var result: [UUID: [UUID]] = [:] // swiftlint:disable:this prefer_let_over_var
+                for row in junctions {
+                    result[row.itemID, default: []].append(row.tagID)
+                }
+                return result
+            }
+        }
+    }
+
     // MARK: Mutations
 
     /// Creates a tag, returning the existing row if a case-insensitive name

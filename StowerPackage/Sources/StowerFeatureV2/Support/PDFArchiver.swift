@@ -96,7 +96,7 @@ enum PDFArchiver {
         // drive's volatile write cache.
         let fd = open(destination.path, O_RDONLY)
         if fd >= 0 {
-            fcntl(fd, F_FULLFSYNC)
+            _ = fcntl(fd, F_FULLFSYNC)
             close(fd)
         }
     }

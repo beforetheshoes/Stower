@@ -144,6 +144,64 @@ struct RepositoryFilterTests {
     }
 
     @Test
+    func diagnostics_includesTagAndJunctionCounts() async throws {
+        let database = try StowerDatabase.makeDatabase()
+        let repository = StowerRepository.live(database: database, cloudSyncClient: .noop)
+
+        let item = try await repository.createItemFromIngestion(.sharedText("Alpha"))
+        let tag = try await repository.createTag("work", nil)
+        try await repository.addTag(item.id, tag.id)
+
+        // Query tag/junction counts directly — the full makeDiagnosticsLoad
+        // also queries iCloud metadata tables that are unavailable in the
+        // test-only in-memory database.
+        let (tagCount, junctionCount) = try await database.read { db -> (Int, Int) in
+            let tags = try TagSyncTable.fetchCount(db)
+            let junctions = try ItemTagSyncTable.fetchCount(db)
+            return (tags, junctions)
+        }
+
+        #expect(tagCount == 1)
+        #expect(junctionCount == 1)
+
+        // Verify the SyncDiagnostics model accepts the new fields.
+        let diagnostics = SyncDiagnostics(
+            syncedItemsCount: 1,
+            pendingChangesCount: 0,
+            metadataCount: 0,
+            syncedTagsCount: tagCount,
+            syncedItemTagsCount: junctionCount
+        )
+        #expect(diagnostics.syncedTagsCount == 1)
+        #expect(diagnostics.syncedItemTagsCount == 1)
+    }
+
+    @Test
+    func migration_v6_replacesUniqueIndexes() async throws {
+        let database = try StowerDatabase.makeDatabase()
+
+        let indexes: [String] = try await database.read { db in
+            try String.fetchAll(
+                db,
+                sql: """
+                    SELECT "name" FROM "sqlite_master"
+                    WHERE "type" = 'index'
+                      AND "tbl_name" IN ('tagSyncTables', 'itemTagSyncTables')
+                    ORDER BY "name"
+                    """
+            )
+        }
+
+        // v5 UNIQUE indexes must NOT exist (dropped by v6).
+        #expect(!indexes.contains("idx_tagSyncTables_name"))
+        #expect(!indexes.contains("idx_itemTagSyncTables_item_tag"))
+
+        // v6 non-unique replacements MUST exist.
+        #expect(indexes.contains("idx_tagSyncTables_name_lower"))
+        #expect(indexes.contains("idx_itemTagSyncTables_item_tag_pair"))
+    }
+
+    @Test
     func observeLibraryChanges_firesOnMutation() async throws {
         let repository = try makeRepository()
         let stream = repository.observeLibraryChanges()

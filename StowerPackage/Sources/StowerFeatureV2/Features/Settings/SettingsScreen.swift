@@ -33,6 +33,14 @@ public struct SettingsScreen: View {
                         Text("\(diagnostics.syncedItemsCount)")
                             .foregroundStyle(.secondary)
                     }
+                    LabeledContent("Synced tags") {
+                        Text("\(diagnostics.syncedTagsCount)")
+                            .foregroundStyle(.secondary)
+                    }
+                    LabeledContent("Synced item-tag links") {
+                        Text("\(diagnostics.syncedItemTagsCount)")
+                            .foregroundStyle(.secondary)
+                    }
                     LabeledContent("Pending changes") {
                         Text("\(diagnostics.pendingChangesCount)")
                             .foregroundStyle(.secondary)

@@ -21,6 +21,18 @@ extension StowerDatabase {
 
         do {
             let delegate = syncEngineDelegate ?? StowerSyncEngineDelegate { continuation.yield($0) }
+            // TagSyncTable and ItemTagSyncTable are fully self-contained
+            // sync tables — unlike SavedPDFContentSyncTable (which has
+            // _hydratePDFItemsFromSyncedContent), they have no post-receive
+            // hydration step because the domain model reads directly from
+            // the sync tables.
+            //
+            // Known limitation: deleting a tag on Device A removes its
+            // ItemTagSyncTable junction rows locally, but Device B only
+            // receives the TagSyncTable deletion via CloudKit — the orphaned
+            // junction rows on Device B are not automatically cleaned up.
+            // TODO: Add a _reconcileOrphanedJunctionRows sweep on launch or
+            // after sync to garbage-collect junctions referencing deleted tags.
             let syncEngine: SyncEngine = try SyncEngine(
                 for: database,
                 tables: SavedItemSyncTable.self,

@@ -6,6 +6,8 @@ import SQLiteData
 
 public struct SyncDiagnostics: Equatable, Sendable {
     public var syncedItemsCount: Int
+    public var syncedTagsCount: Int
+    public var syncedItemTagsCount: Int
     public var pendingChangesCount: Int
     public var metadataCount: Int
     public let sampleItems: [SyncItemSummary]
@@ -14,9 +16,13 @@ public struct SyncDiagnostics: Equatable, Sendable {
         syncedItemsCount: Int,
         pendingChangesCount: Int,
         metadataCount: Int,
+        syncedTagsCount: Int = 0,
+        syncedItemTagsCount: Int = 0,
         sampleItems: [SyncItemSummary] = []
     ) {
         self.syncedItemsCount = syncedItemsCount
+        self.syncedTagsCount = syncedTagsCount
+        self.syncedItemTagsCount = syncedItemTagsCount
         self.pendingChangesCount = pendingChangesCount
         self.metadataCount = metadataCount
         self.sampleItems = sampleItems
