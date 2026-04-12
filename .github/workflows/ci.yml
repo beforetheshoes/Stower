@@ -15,7 +15,6 @@ jobs:
     name: Lint
     runs-on: macos-latest
     timeout-minutes: 20
-    continue-on-error: true
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -75,7 +74,6 @@ jobs:
     name: Test
     runs-on: macos-latest
     timeout-minutes: 20
-    continue-on-error: true
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -104,5 +102,4 @@ jobs:
             CODE_SIGN_IDENTITY="-" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
-            -quiet \
-            || true
+            -quiet
