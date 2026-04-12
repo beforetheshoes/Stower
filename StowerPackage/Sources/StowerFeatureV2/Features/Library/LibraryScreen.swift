@@ -81,6 +81,8 @@ public struct LibraryScreen: View {
                                 }
                             }
 
+                            tagPillsRow(for: item)
+
                             // When the query matches body text (not title),
                             // surface the hit as a snippet so the user can
                             // tell why the row showed up in results. Nil
@@ -284,6 +286,24 @@ public struct LibraryScreen: View {
         ) { result in
             handlePDFImport(result)
         }
+        .sheet(isPresented: Binding(
+            get: { store.inlineTagCreation != nil },
+            set: { if !$0 { store.send(.inlineCreateTagDismissed) } }
+        )) {
+            NewTagSheet(
+                name: Binding(
+                    get: { store.inlineTagCreation?.name ?? "" },
+                    set: { store.send(.inlineCreateTagNameChanged($0)) }
+                ),
+                colorHex: Binding(
+                    get: { store.inlineTagCreation?.colorHex ?? "" },
+                    set: { store.send(.inlineCreateTagColorChanged($0)) }
+                ),
+                palette: palette,
+                onCancel: { store.send(.inlineCreateTagDismissed) },
+                onCreate: { store.send(.inlineCreateTagConfirmed) }
+            )
+        }
         .task {
             store.send(.onAppear)
         }
@@ -393,27 +413,68 @@ public struct LibraryScreen: View {
     }
     #endif
 
+    // MARK: - Tag Pills
+
+    @ViewBuilder
+    private func tagPillsRow(for item: SavedItem) -> some View {
+        let tags = resolvedTags(for: item)
+        if !tags.isEmpty {
+            let visible = Array(tags.prefix(3))
+            let overflow = tags.count - visible.count
+            HStack(spacing: 4) {
+                ForEach(visible) { tag in
+                    let color = tagPillColor(tag.colorHex)
+                    Text(tag.name)
+                        .font(.caption2.weight(.medium))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .foregroundStyle(color)
+                        .background(color.opacity(0.15), in: .capsule)
+                }
+                if overflow > 0 {
+                    Text("+\(overflow)")
+                        .font(.caption2)
+                        .foregroundStyle(palette.tx2)
+                }
+            }
+        }
+    }
+
+    private func resolvedTags(for item: SavedItem) -> [Tag] {
+        item.tagIDs.compactMap { id in
+            store.availableTags.first { $0.id == id }
+        }
+    }
+
+    private func tagPillColor(_ hex: String?) -> Color {
+        guard let hex, !hex.isEmpty else { return palette.secondary }
+        return Color(hex: hex)
+    }
+
+    // MARK: - Tags Submenu
+
     @ViewBuilder
     private func tagsSubmenu(for item: SavedItem) -> some View {
-        if store.availableTags.isEmpty {
-            Button("Tags…", systemImage: "tag") { }
-                .disabled(true)
-        } else {
-            Menu {
-                ForEach(store.availableTags) { tag in
-                    Button {
-                        store.send(.toggleTagOnItem(item.id, tag.id))
-                    } label: {
-                        if item.tagIDs.contains(tag.id) {
-                            Label(tag.name, systemImage: "checkmark")
-                        } else {
-                            Text(tag.name)
-                        }
+        Menu {
+            ForEach(store.availableTags) { tag in
+                Button {
+                    store.send(.toggleTagOnItem(item.id, tag.id))
+                } label: {
+                    if item.tagIDs.contains(tag.id) {
+                        Label(tag.name, systemImage: "checkmark")
+                    } else {
+                        Text(tag.name)
                     }
                 }
-            } label: {
-                Label("Tags", systemImage: "tag")
             }
+            Divider()
+            Button {
+                store.send(.inlineCreateTagTapped(item.id))
+            } label: {
+                Label("New Tag\u{2026}", systemImage: "plus")
+            }
+        } label: {
+            Label("Tags", systemImage: "tag")
         }
     }
 

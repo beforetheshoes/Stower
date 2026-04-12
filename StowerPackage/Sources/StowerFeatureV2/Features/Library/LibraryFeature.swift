@@ -20,6 +20,8 @@ public struct LibraryFeature {
         /// All tags known to the repository — drives the "Tags" submenu in the
         /// library row context menu. Refreshed lazily via observeLibraryChanges.
         public var availableTags: [Tag] = [] // swiftlint:disable:this prefer_let_over_var
+        /// Non-nil when the user is creating a new tag inline from the tag submenu.
+        public var inlineTagCreation: InlineTagCreation?
 
         /// Library search matches against title, URL, site name, author,
         /// excerpt, AND full body text (`item.content`). The body-text
@@ -60,6 +62,18 @@ public struct LibraryFeature {
         public init() {}
     }
 
+    public struct InlineTagCreation: Equatable {
+        public var itemID: UUID
+        public var name: String = ""
+        public var colorHex: String = ""
+
+        public init(itemID: UUID, name: String = "", colorHex: String = "") {
+            self.itemID = itemID
+            self.name = name
+            self.colorHex = colorHex
+        }
+    }
+
     public enum Action: Equatable {
         case onAppear
         case reload
@@ -86,8 +100,18 @@ public struct LibraryFeature {
         // Tag assignment
         case reloadTags
         case tagsLoaded([Tag])
+        case refreshTagIDs
+        case tagIDsRefreshed([UUID: [UUID]])
         case toggleTagOnItem(UUID, UUID)
         case observedChange
+
+        // Inline tag creation
+        case inlineCreateTagTapped(UUID)
+        case inlineCreateTagNameChanged(String)
+        case inlineCreateTagColorChanged(String)
+        case inlineCreateTagConfirmed
+        case inlineCreateTagDismissed
+        case inlineTagCreated(Tag, UUID)
     }
 
     private enum CancelID: Hashable {
@@ -118,10 +142,13 @@ public struct LibraryFeature {
                 )
 
             case .observedChange:
-                // Background ping: refresh tag list only. Don't re-fetch items
-                // because that would clobber scroll position and any pending
-                // optimistic mutations.
-                return .send(.reloadTags)
+                // Refresh tag list and re-populate tagIDs on existing items.
+                // We avoid re-fetching the full item list to preserve scroll
+                // position and pending optimistic mutations.
+                return .merge(
+                    .send(.reloadTags),
+                    .send(.refreshTagIDs)
+                )
 
             case .reloadTags:
                 let repository = self.repository
@@ -137,6 +164,25 @@ public struct LibraryFeature {
 
             case .tagsLoaded(let tags):
                 state.availableTags = tags
+                return .none
+
+            case .refreshTagIDs:
+                let ids = state.items.map(\.id)
+                let repository = self.repository
+                return .run { send in
+                    let mapping = try await repository.fetchTagIDsByItem(ids)
+                    await send(.tagIDsRefreshed(mapping))
+                }
+
+            case .tagIDsRefreshed(let mapping):
+                for idx in state.items.indices {
+                    let itemID = state.items[idx].id
+                    if let tagIDs = mapping[itemID] {
+                        state.items[idx].tagIDs = tagIDs
+                    } else {
+                        state.items[idx].tagIDs = []
+                    }
+                }
                 return .none
 
             case let .toggleTagOnItem(itemID, tagID):
@@ -173,6 +219,53 @@ public struct LibraryFeature {
                         // observeLibraryChanges ping will reconcile if needed.
                     }
                 }
+
+            case .inlineCreateTagTapped(let itemID):
+                let suggestedColor = TagColorSuggester.suggestColor(
+                    existingHexValues: state.availableTags.compactMap(\.colorHex)
+                )
+                state.inlineTagCreation = InlineTagCreation(
+                    itemID: itemID,
+                    colorHex: suggestedColor
+                )
+                return .none
+
+            case .inlineCreateTagNameChanged(let name):
+                state.inlineTagCreation?.name = name
+                return .none
+
+            case .inlineCreateTagColorChanged(let hex):
+                state.inlineTagCreation?.colorHex = hex
+                return .none
+
+            case .inlineCreateTagDismissed:
+                state.inlineTagCreation = nil
+                return .none
+
+            case .inlineCreateTagConfirmed:
+                guard let creation = state.inlineTagCreation else { return .none }
+                let name = creation.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                let itemID = creation.itemID
+                let colorHex = creation.colorHex.isEmpty ? nil : creation.colorHex
+                state.inlineTagCreation = nil
+                guard !name.isEmpty else { return .none }
+
+                let repository = self.repository
+                return .run { send in
+                    let tag = try await repository.createTag(name, colorHex)
+                    try await repository.addTag(itemID, tag.id)
+                    await send(.inlineTagCreated(tag, itemID))
+                }
+
+            case let .inlineTagCreated(tag, itemID):
+                if !state.availableTags.contains(where: { $0.id == tag.id }) {
+                    state.availableTags.append(tag)
+                }
+                if let idx = state.items.firstIndex(where: { $0.id == itemID }),
+                   !state.items[idx].tagIDs.contains(tag.id) {
+                    state.items[idx].tagIDs.append(tag.id)
+                }
+                return .send(.reloadTags)
 
             case .reload:
                 state.isLoading = true

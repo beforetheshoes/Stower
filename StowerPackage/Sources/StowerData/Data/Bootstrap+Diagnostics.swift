@@ -6,6 +6,8 @@ extension StowerDatabase {
         { () async throws -> SyncDiagnostics in
             try await database.read { db -> SyncDiagnostics in
                 let syncedCount: Int = try SavedItemSyncTable.fetchCount(db)
+                let tagCount: Int = try TagSyncTable.fetchCount(db)
+                let itemTagCount: Int = try ItemTagSyncTable.fetchCount(db)
                 let sample: [SyncItemSummary] = try SavedItemSyncTable
                     .order { $0.updatedAt.desc() }
                     .fetchAll(db)
@@ -26,6 +28,8 @@ extension StowerDatabase {
                     syncedItemsCount: syncedCount,
                     pendingChangesCount: pendingCount,
                     metadataCount: metadataCount,
+                    syncedTagsCount: tagCount,
+                    syncedItemTagsCount: itemTagCount,
                     sampleItems: Array(sample)
                 )
             }

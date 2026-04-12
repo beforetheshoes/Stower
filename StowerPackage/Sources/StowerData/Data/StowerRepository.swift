@@ -39,6 +39,7 @@ public struct StowerRepository: Sendable {
     // MARK: - Tags
     public var fetchTags: @Sendable () async throws -> [Tag]
     public var fetchTagIDs: @Sendable (UUID) async throws -> [UUID]
+    public var fetchTagIDsByItem: @Sendable ([UUID]) async throws -> [UUID: [UUID]]
     public var createTag: @Sendable (String, String?) async throws -> Tag
     public var renameTag: @Sendable (UUID, String) async throws -> Void
     public var deleteTag: @Sendable (UUID) async throws -> Void
@@ -108,6 +109,7 @@ extension StowerRepository {
             fetchListCounts: { .zero },
             fetchTags: { [] },
             fetchTagIDs: { _ in [] },
+            fetchTagIDsByItem: { _ in [:] },
             createTag: { name, _ in Tag(name: name) },
             renameTag: { _, _ in },
             deleteTag: { _ in },
@@ -231,6 +233,7 @@ extension StowerRepository {
             fetchListCounts: _fetchListCounts(database: database),
             fetchTags: _fetchTags(database: database),
             fetchTagIDs: _fetchTagIDs(database: database),
+            fetchTagIDsByItem: _fetchTagIDsByItem(database: database),
             createTag: _createTag(database: database, scheduleSync: scheduleSyncAndNotify),
             renameTag: _renameTag(database: database, scheduleSync: scheduleSyncAndNotify),
             deleteTag: _deleteTag(database: database, scheduleSync: scheduleSyncAndNotify),
