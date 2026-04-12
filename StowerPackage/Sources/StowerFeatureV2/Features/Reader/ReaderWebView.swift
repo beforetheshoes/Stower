@@ -225,16 +225,9 @@ public struct ReaderWebView: View {
         }
 
         // Symlink PDF page images from the archive into the scratch dir.
-        // Idempotent: if a symlink already exists from a previous load,
-        // `removeItem` clears it so the fresh one points at the current
-        // archive file. Safe to fail silently — if symlinks can't be
-        // created the HTML just renders with broken images, which is no
-        // worse than the pre-PDF-page baseline.
-        for source in PDFArchiver.pageImageURLs(for: itemID) {
-            let link = scratchDir.appendingPathComponent(source.lastPathComponent)
-            try? FileManager.default.removeItem(at: link)
-            try? FileManager.default.createSymbolicLink(at: link, withDestinationURL: source)
-        }
+        // Skips any source file that doesn't exist on disk to prevent
+        // dangling symlinks (which would cause the local server to 404).
+        PDFArchiver.symlinkPageImages(for: itemID, into: scratchDir)
 
         let server = LocalArchiveServer(archiveDir: scratchDir, articlePath: "/", originURL: nil)
         guard let port = try? await server.start() else { return nil }

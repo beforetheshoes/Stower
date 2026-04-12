@@ -365,6 +365,21 @@ private func maybeIngestAsPDF(url: URL) async throws -> IngestionResult? {
     // Override source/canonical to the real URL so URL-based dedup and
     // hydrate-on-second-device both work. The pdfSHA256 stays on the result
     // so AppFeature.processIngestionJobs can locate the staged file below.
+    //
+    // Because pdfIngest() wrote page images keyed on the SHA-based canonical
+    // URL, and createItemFromIngestion will compute the item ID from the
+    // HTTP URL below, we must relocate the page images to the correct
+    // archive directory. Without this, the reader would look for images
+    // under the HTTP-based item ID and find an empty directory.
+    if let hash = result.pdfSHA256 {
+        let shaCanonical = "pdf-sha256:\(hash)"
+        let shaItemID = StowerRepository.stableItemID(from: shaCanonical)
+        let urlItemID = StowerRepository.stableItemID(from: url.absoluteString)
+        if shaItemID != urlItemID {
+            try? PDFArchiver.relocatePageImages(from: shaItemID, to: urlItemID)
+        }
+    }
+
     result.sourceURL = url.absoluteString
     result.canonicalURL = url.absoluteString
     result.document.sourceURL = url.absoluteString

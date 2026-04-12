@@ -88,6 +88,30 @@ enum PDFArchiver {
         guard CGImageDestinationFinalize(dest) else {
             throw ArchiveError.imageDestinationFinalizeFailed
         }
+
+        // Flush to durable storage so downstream readers (symlink creation,
+        // block emission, local archive server) never see a zero-length or
+        // partial file. F_FULLFSYNC forces the drive to commit to persistent
+        // media — plain fsync() on Apple platforms only flushes to the
+        // drive's volatile write cache.
+        let fd = open(destination.path, O_RDONLY)
+        if fd >= 0 {
+            fcntl(fd, F_FULLFSYNC)
+            close(fd)
+        }
+    }
+
+    /// Returns `true` iff the page image file exists on disk with non-zero
+    /// size. Used as a gate before emitting reader blocks that reference the
+    /// file — ensures downstream consumers never point at empty or missing
+    /// images.
+    static func verifyPageImageOnDisk(for itemID: UUID, pageIndex: Int) -> Bool {
+        let url = pageImageURL(for: itemID, pageIndex: pageIndex)
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let size = attrs[.size] as? UInt64 else {
+            return false
+        }
+        return size > 0
     }
 
     /// Removes the archived PDF and every `pdf-page-N.jpg` file for an
@@ -128,6 +152,52 @@ enum PDFArchiver {
             .sorted { lhs, rhs in
                 pageIndex(from: lhs) < pageIndex(from: rhs)
             }
+    }
+
+    /// Moves all `pdf-page-N.jpg` files from one item's archive directory to
+    /// another's. Used when the canonical URL (and therefore the stable item
+    /// ID) is overridden after page images have already been written — e.g.
+    /// when `URLIngestionClient` replaces the `pdf-sha256:` canonical URL
+    /// with the original HTTP URL for dedup purposes.
+    ///
+    /// No-op when source and destination IDs are equal or when the source
+    /// directory contains no page images.
+    static func relocatePageImages(from sourceItemID: UUID, to destinationItemID: UUID) throws {
+        guard sourceItemID != destinationItemID else { return }
+        let sourceURLs = pageImageURLs(for: sourceItemID)
+        guard !sourceURLs.isEmpty else { return }
+
+        let destDir = AssetArchiver.archiveDirectory(for: destinationItemID)
+        try FileManager.default.createDirectory(at: destDir, withIntermediateDirectories: true)
+
+        for source in sourceURLs {
+            let dest = destDir.appendingPathComponent(source.lastPathComponent)
+            if FileManager.default.fileExists(atPath: dest.path) {
+                try FileManager.default.removeItem(at: dest)
+            }
+            try FileManager.default.moveItem(at: source, to: dest)
+        }
+    }
+
+    /// Symlinks all existing page images for `itemID` from the archive into
+    /// `targetDir`. Skips any source file that does not exist on disk,
+    /// preventing dangling symlinks that would cause the local archive server
+    /// to 404. Returns the count of successfully created symlinks.
+    @discardableResult
+    static func symlinkPageImages(for itemID: UUID, into targetDir: URL) -> Int {
+        var count = 0
+        for source in pageImageURLs(for: itemID) {
+            guard FileManager.default.fileExists(atPath: source.path) else { continue }
+            let link = targetDir.appendingPathComponent(source.lastPathComponent)
+            try? FileManager.default.removeItem(at: link)
+            do {
+                try FileManager.default.createSymbolicLink(at: link, withDestinationURL: source)
+                count += 1
+            } catch {
+                // Partial symlinks are better than crashing the reader.
+            }
+        }
+        return count
     }
 
     /// Parses the numeric index out of a `pdf-page-N.jpg` URL for sorting.
