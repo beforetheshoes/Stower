@@ -233,15 +233,9 @@ extension ArticleAIClient {
     // extra headroom keeps even mis-estimated inputs from colliding with
     // the real context ceiling.
     //
-    // Uses `SystemLanguageModel.contextSize` when available (iOS 26.4+),
-    // otherwise falls back to the known 4 096-token window.
+    // Hard-codes 4096 tokens — the current on-device model window size.
     private static func computeInputBudget() -> Int {
-        let total: Int
-        if #available(iOS 26.4, macOS 26.4, *) {
-            total = SystemLanguageModel.default.contextSize
-        } else {
-            total = 4096
-        }
+        let total = 4096
         let instructionsReserve = 256
         let responseReserve = 768
         return max(512, total - instructionsReserve - responseReserve)
