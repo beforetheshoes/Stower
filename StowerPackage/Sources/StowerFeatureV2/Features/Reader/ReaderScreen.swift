@@ -39,8 +39,11 @@ public struct ReaderScreen: View {
             .findNavigator(isPresented: $isFindNavigatorPresented)
             .navigationTitle("Reader")
             .toolbar {
-                // Group 1: mode switching (only when an interactive fallback exists).
-                if store.hasInteractiveContent {
+                // Group 1: mode switching. Available whenever the original
+                // source HTML is on hand so the user can flip to the full
+                // web view — useful for SVG-heavy pages, interactive
+                // embeds, or anything the structured parser strips.
+                if store.sourceHTML != nil {
                     ToolbarItem(placement: .automatic) {
                         switchModeButton
                     }

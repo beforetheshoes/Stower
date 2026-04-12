@@ -78,23 +78,21 @@ public struct CloudSyncClient: Sendable {
 // MARK: - Database Setup & Migrations
 
 public enum StowerDatabase {
-    // The Debug build configuration passes `-D STOWER_DEV` via
-    // `Config/Debug.xcconfig`, which flips the App Group container so
-    // Debug and Release builds use physically separate `stower.sqlite`
-    // files. Combined with the distinct Debug bundle identifier, this
-    // lets the Xcode Debug build ("Stower Dev") install side-by-side
-    // with a TestFlight / App Store "Stower" build on the same device
-    // without mixing CloudKit-synced articles.
+    // The App Group ID is derived at runtime from the host app's bundle
+    // identifier. Debug builds use `com.ryanleewilliams.stower.dev`
+    // (set via `Config/Debug.xcconfig`), which maps to the `.dev` App
+    // Group so Debug and Release use physically separate `stower.sqlite`
+    // files and can install side-by-side. A compile-time `#if` flag
+    // can't be used here because Xcode doesn't propagate target-level
+    // `SWIFT_ACTIVE_COMPILATION_CONDITIONS` to Swift package dependencies.
     //
     // The CloudKit container ID is the same in both configurations —
     // Apple's code-signing automatically routes debug binaries to the
-    // Dev CloudKit environment and distribution binaries to Prod, which
-    // is the isolation mechanism at the network layer.
-    #if STOWER_DEV
-    public static let appGroupID = "group.com.Stower.dev"
-    #else
-    public static let appGroupID = "group.com.Stower"
-    #endif
+    // Dev CloudKit environment and distribution binaries to Prod.
+    public static var appGroupID: String {
+        let isDevBuild = Bundle.main.bundleIdentifier?.contains(".dev") == true
+        return isDevBuild ? "group.com.Stower.dev" : "group.com.Stower"
+    }
     public static let cloudKitContainerID = "iCloud.Stower"
 
     public enum DatabaseError: Error, LocalizedError {
@@ -112,12 +110,19 @@ public enum StowerDatabase {
         var configuration = Configuration()
         configuration.foreignKeysEnabled = true
         configuration.prepareDatabase { db in
-            do { try db.attachMetadatabase() } catch {
+            do {
+                try db.attachMetadatabase(containerIdentifier: cloudKitContainerID)
+            } catch {
                 #if DEBUG
                 print("⚠️ SQLiteData metadatabase unavailable: \(error)")
                 #endif
             }
         }
+
+        #if DEBUG
+        print("🔧 Bootstrap: appGroupID = \(appGroupID)")
+        print("🔧 Bootstrap: cloudKitContainerID = \(cloudKitContainerID)")
+        #endif
 
         // In .live, the database lives in the App Group container so the share
         // extension and the main app can both read and write the same file.

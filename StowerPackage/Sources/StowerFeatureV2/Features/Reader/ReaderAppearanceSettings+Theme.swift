@@ -163,6 +163,7 @@ extension ReaderAppearanceSettings {
           margin: 0 auto !important;
           padding: 20px 20px 60px 20px !important;
           word-break: break-word;
+          text-align: \(justification == .justified ? "justify" : "left") !important;
         }
         a { color: var(--stower-primary) !important; text-decoration-color: color-mix(in srgb, var(--stower-primary) 45%, transparent); }
         a:hover { color: var(--stower-primary-muted) !important; }

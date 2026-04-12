@@ -275,6 +275,14 @@ public struct ReaderFeature {
 
             case .switchRenderMode(let format):
                 state.renderModeOverride = format
+                // When the user flips to web view on an article that
+                // wasn't originally ingested as `.webView`, the external
+                // assets (CSS, JS, images, SVGs) haven't been archived
+                // yet. Kick off archiving now so the web view works
+                // offline after this first switch.
+                if format == .webView {
+                    return archiveForWebView(item: state.item, sourceHTML: state.sourceHTML)
+                }
                 return .none
 
             case .scrollProgressChanged(let blockIndex):
@@ -338,8 +346,35 @@ public struct ReaderFeature {
     }
 
     /// Triggers asset archiving if the article is a webView format but has no local archive.
+    /// Called on initial load — only fires for articles ingested as `.webView` to avoid
+    /// wastefully downloading assets for articles the user reads in structured view.
+    /// For manual switches to web view, `archiveForWebView` is called directly.
     private func archiveIfNeeded(item: SavedItem?, sourceHTML: String?) -> Effect<Action> {
         guard let item, item.renderFormat == .webView,
+              let html = sourceHTML, !html.isEmpty,
+              !AssetArchiver.archiveExists(for: item.id),
+              let source = item.sourceURL,
+              let baseURL = URL(string: source) else {
+            return .none
+        }
+        let itemID = item.id
+        return .run { _ in
+            await AssetArchiver.archiveAssets(
+                html: html,
+                baseURL: baseURL,
+                itemID: itemID
+            )
+        }
+    }
+
+    /// Archives assets for any article the user manually switches to web view,
+    /// regardless of its original `renderFormat`. Unlike `archiveIfNeeded`
+    /// (which only fires for `.webView`-ingested articles on load), this has
+    /// no format gate — so SVG-rich or interactive pages that were ingested as
+    /// `.structuredV1` still get their CSS/JS/images downloaded once the user
+    /// flips the switch. No-ops if an archive already exists.
+    private func archiveForWebView(item: SavedItem?, sourceHTML: String?) -> Effect<Action> {
+        guard let item,
               let html = sourceHTML, !html.isEmpty,
               !AssetArchiver.archiveExists(for: item.id),
               let source = item.sourceURL,
