@@ -56,13 +56,11 @@ public struct ReaderProgressClient: Sendable {
 }
 
 extension ReaderProgressClient {
-    public static let live = Self(
-        topBlockIndex: {
-            await ReaderProgressCoordinator.shared.topBlockIndex()
-        }
-    )
+    public static let live = Self {
+        await ReaderProgressCoordinator.shared.topBlockIndex()
+    }
 
-    public static let noop = Self(topBlockIndex: { nil })
+    public static let noop = Self { nil }
 }
 
 // MARK: - Dependency registration

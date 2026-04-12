@@ -1,7 +1,7 @@
 import ComposableArchitecture
 import Foundation
-import Testing
 @testable import StowerFeature
+import Testing
 
 @MainActor
 @Suite
@@ -51,9 +51,12 @@ struct LibraryFeatureTests {
         } withDependencies: {
             $0.stowerRepository.fetchLibrary = { filter in
                 switch filter {
-                case .read: return [readItem]
-                case .unread: return [unreadItem]
-                default: return [unreadItem, readItem]
+                case .read:
+                    return [readItem]
+                case .unread:
+                    return [unreadItem]
+                default:
+                    return [unreadItem, readItem]
                 }
             }
         }

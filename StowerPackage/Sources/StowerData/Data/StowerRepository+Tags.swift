@@ -2,7 +2,6 @@ import Foundation
 import SQLiteData
 
 extension StowerRepository {
-
     // MARK: Fetch
 
     static func _fetchTags(
@@ -73,14 +72,17 @@ extension StowerRepository {
         database: any DatabaseWriter,
         scheduleSync: @escaping @Sendable () -> Void
     ) -> @Sendable (UUID, String) async throws -> Void {
-        { (id: UUID, newName: String) async throws -> Void in
+        { (id: UUID, newName: String) async throws in
             let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
             let now = Date.now
-            try await database.write { db -> Void in
-                try TagSyncTable.find(id).update {
-                    $0.name = #bind(trimmed)
-                    $0.updatedAt = #bind(now)
-                }.execute(db)
+            try await database.write { db in
+                try TagSyncTable
+                    .find(id)
+                    .update {
+                        $0.name = #bind(trimmed)
+                        $0.updatedAt = #bind(now)
+                    }
+                    .execute(db)
             }
             scheduleSync()
         }
@@ -90,8 +92,8 @@ extension StowerRepository {
         database: any DatabaseWriter,
         scheduleSync: @escaping @Sendable () -> Void
     ) -> @Sendable (UUID) async throws -> Void {
-        { (id: UUID) async throws -> Void in
-            try await database.write { db -> Void in
+        { (id: UUID) async throws in
+            try await database.write { db in
                 try ItemTagSyncTable.where { $0.tagID.eq(id) }.delete().execute(db)
                 try TagSyncTable.find(id).delete().execute(db)
             }
@@ -103,8 +105,8 @@ extension StowerRepository {
         database: any DatabaseWriter,
         scheduleSync: @escaping @Sendable () -> Void
     ) -> @Sendable (UUID, UUID) async throws -> Void {
-        { (itemID: UUID, tagID: UUID) async throws -> Void in
-            try await database.write { db -> Void in
+        { (itemID: UUID, tagID: UUID) async throws in
+            try await database.write { db in
                 // Dedupe: the unique index would reject a duplicate, but we
                 // pre-check so the caller sees a clean no-op on double-add.
                 let existing: [ItemTagSyncTable] = try ItemTagSyncTable
@@ -127,8 +129,8 @@ extension StowerRepository {
         database: any DatabaseWriter,
         scheduleSync: @escaping @Sendable () -> Void
     ) -> @Sendable (UUID, UUID) async throws -> Void {
-        { (itemID: UUID, tagID: UUID) async throws -> Void in
-            try await database.write { db -> Void in
+        { (itemID: UUID, tagID: UUID) async throws in
+            try await database.write { db in
                 try ItemTagSyncTable
                     .where { $0.itemID.eq(itemID) && $0.tagID.eq(tagID) }
                     .delete()

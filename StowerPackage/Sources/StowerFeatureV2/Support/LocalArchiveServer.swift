@@ -108,13 +108,13 @@ final class LocalArchiveServer: @unchecked Sendable {
     ) {
         connection.start(queue: queue)
 
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { data, _, _, error in
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 65_536) { data, _, _, error in
             guard let data, error == nil else {
                 connection.cancel()
                 return
             }
 
-            let requestString = String(decoding: data, as: UTF8.self)
+            let requestString = String(bytes: data, encoding: .utf8) ?? ""
 
             guard let firstLine = requestString.split(separator: "\r\n").first else {
                 connection.cancel()
@@ -142,7 +142,7 @@ final class LocalArchiveServer: @unchecked Sendable {
                 : decodedPath
 
             if normalizedRequest == normalizedArticlePath
-                || normalizedRequest == ""
+                || normalizedRequest.isEmpty
                 || normalizedRequest == "/" {
                 fileURL = archiveDir.appendingPathComponent("index.html")
             } else {
@@ -207,6 +207,7 @@ final class LocalArchiveServer: @unchecked Sendable {
         path: String,
         fileURL: URL
     ) {
+        // swiftlint:disable:next no_print_statements
         print("[ArchiveServer] 404: \(path) → \(fileURL.path)")
         let response = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
         connection.send(
@@ -259,6 +260,7 @@ final class LocalArchiveServer: @unchecked Sendable {
                 withIntermediateDirectories: true
             )
             try? data.write(to: destination)
+            // swiftlint:disable:next no_print_statements
             print("[ArchiveServer] fetched-through: \(path)")
             return data
         } catch {
@@ -270,26 +272,46 @@ final class LocalArchiveServer: @unchecked Sendable {
 
     private static func mimeType(for ext: String) -> String {
         switch ext.lowercased() {
-        case "html", "htm": return "text/html; charset=utf-8"
-        case "js", "mjs": return "application/javascript; charset=utf-8"
-        case "css": return "text/css; charset=utf-8"
-        case "json": return "application/json; charset=utf-8"
-        case "svg": return "image/svg+xml"
-        case "png": return "image/png"
-        case "jpg", "jpeg": return "image/jpeg"
-        case "gif": return "image/gif"
-        case "webp": return "image/webp"
-        case "avif": return "image/avif"
-        case "ico": return "image/x-icon"
-        case "woff": return "font/woff"
-        case "woff2": return "font/woff2"
-        case "ttf": return "font/ttf"
-        case "otf": return "font/otf"
-        case "eot": return "application/vnd.ms-fontobject"
-        case "map": return "application/json"
-        case "xml": return "application/xml"
-        case "txt": return "text/plain"
-        default: return "application/octet-stream"
+        case "html", "htm":
+            return "text/html; charset=utf-8"
+        case "js", "mjs":
+            return "application/javascript; charset=utf-8"
+        case "css":
+            return "text/css; charset=utf-8"
+        case "json":
+            return "application/json; charset=utf-8"
+        case "svg":
+            return "image/svg+xml"
+        case "png":
+            return "image/png"
+        case "jpg", "jpeg":
+            return "image/jpeg"
+        case "gif":
+            return "image/gif"
+        case "webp":
+            return "image/webp"
+        case "avif":
+            return "image/avif"
+        case "ico":
+            return "image/x-icon"
+        case "woff":
+            return "font/woff"
+        case "woff2":
+            return "font/woff2"
+        case "ttf":
+            return "font/ttf"
+        case "otf":
+            return "font/otf"
+        case "eot":
+            return "application/vnd.ms-fontobject"
+        case "map":
+            return "application/json"
+        case "xml":
+            return "application/xml"
+        case "txt":
+            return "text/plain"
+        default:
+            return "application/octet-stream"
         }
     }
 }

@@ -1,8 +1,8 @@
 import ComposableArchitecture
 import Foundation
-import Testing
 @testable import StowerData
 @testable import StowerFeature
+import Testing
 
 @MainActor
 @Suite
@@ -19,7 +19,7 @@ struct AppFeatureTests {
 
         // 2) Verify fetchLibrary returns it
         let library = try await repository.fetchLibrary(.all)
-        #expect(library.contains(where: { $0.id == created.id }))
+        #expect(library.contains { $0.id == created.id })
 
         // 3) Test the reader load flow with TCA
         let store = TestStore(initialState: ReaderFeature.State(itemID: created.id)) {

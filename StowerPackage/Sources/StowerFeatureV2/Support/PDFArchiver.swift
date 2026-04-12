@@ -139,7 +139,7 @@ enum PDFArchiver {
         guard name.hasPrefix(pageImagePrefix) else { return .max }
         let stripped = name
             .dropFirst(pageImagePrefix.count)
-            .prefix(while: { $0.isNumber })
+            .prefix { $0.isNumber }
         return Int(stripped) ?? .max
     }
 

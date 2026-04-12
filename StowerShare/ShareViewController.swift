@@ -305,9 +305,12 @@ final class ShareViewController: UIViewController {
         apply(phase: phase)
         let hold: TimeInterval
         switch phase {
-        case .loading: hold = 0.0
-        case .success: hold = 0.9
-        case .failure: hold = 1.8
+        case .loading:
+            hold = 0.0
+        case .success:
+            hold = 0.9
+        case .failure:
+            hold = 1.8
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + hold) { [weak self] in
             self?.completeRequest()

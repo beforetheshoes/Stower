@@ -8,14 +8,13 @@ import Foundation
 /// code that both the ingestion pipeline (in `StowerFeatureV2`) and the reader
 /// renderer call into. No regex — everything flows through `URLComponents`.
 public enum YouTubeURLDetector {
-
     /// The structural form of the original link. The reader renderer uses this
     /// to pick between a 16:9 or 9:16 wrapper.
     public enum Form: String, Sendable, Equatable {
-        case watch            // youtube.com/watch?v=…
-        case shortsVertical   // youtube.com/shorts/…
-        case embed            // youtube.com/embed/… or /v/…
-        case youtuBe          // youtu.be/…
+        case watch = "watch"
+        case shortsVertical = "shortsVertical"
+        case embed = "embed"
+        case youtuBe = "youtuBe"
     }
 
     public struct Match: Sendable, Equatable {
@@ -57,7 +56,7 @@ public enum YouTubeURLDetector {
                 return isValidVideoID(id) ? Match(videoID: id, form: .shortsVertical) : nil
             }
             // /embed/ID or /v/ID
-            if (pathComponents.first == "embed" || pathComponents.first == "v"),
+            if pathComponents.first == "embed" || pathComponents.first == "v",
                pathComponents.count >= 2 {
                 let id = pathComponents[1]
                 return isValidVideoID(id) ? Match(videoID: id, form: .embed) : nil

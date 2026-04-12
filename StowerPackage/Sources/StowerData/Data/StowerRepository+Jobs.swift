@@ -3,17 +3,19 @@ import SQLiteData
 
 extension StowerRepository {
     static func _enqueueIngestionJob(database: any DatabaseWriter) -> @Sendable (IngestionJob.Kind, String) async throws -> Void {
-        { (kind: IngestionJob.Kind, payload: String) async throws -> Void in
-            try await database.write { db -> Void in
-                try IngestionJobLocalTable.insert {
-                    IngestionJobLocalTable.Draft(
-                        id: UUID(),
-                        kind: kind.rawValue,
-                        payload: payload,
-                        createdAt: .now,
-                        processedAt: nil
-                    )
-                }.execute(db)
+        { (kind: IngestionJob.Kind, payload: String) async throws in
+            try await database.write { db in
+                try IngestionJobLocalTable
+                    .insert {
+                        IngestionJobLocalTable.Draft(
+                            id: UUID(),
+                            kind: kind.rawValue,
+                            payload: payload,
+                            createdAt: .now,
+                            processedAt: nil
+                        )
+                    }
+                    .execute(db)
             }
         }
     }
@@ -34,11 +36,14 @@ extension StowerRepository {
     }
 
     static func _markIngestionJobProcessed(database: any DatabaseWriter) -> @Sendable (UUID) async throws -> Void {
-        { (id: UUID) async throws -> Void in
-            try await database.write { db -> Void in
-                try IngestionJobLocalTable.find(id).update {
-                    $0.processedAt = #bind(Date.now as Date?)
-                }.execute(db)
+        { (id: UUID) async throws in
+            try await database.write { db in
+                try IngestionJobLocalTable
+                    .find(id)
+                    .update {
+                        $0.processedAt = #bind(Date.now as Date?)
+                    }
+                    .execute(db)
             }
         }
     }
@@ -53,7 +58,7 @@ extension StowerRepository {
     /// and copies the extracted `documentJSON`/`plainText` across.
     static func _hydratePDFItemsFromSyncedContent(database: any DatabaseWriter) -> @Sendable () async throws -> Int {
         { () async throws -> Int in
-            let now: Date = Date.now
+            let now = Date.now
             return try await database.write { db -> Int in
                 let pdfRows: [SavedPDFContentSyncTable] = try SavedPDFContentSyncTable.fetchAll(db)
                 var hydrated = 0
@@ -70,31 +75,36 @@ extension StowerRepository {
                     }
 
                     if existing != nil {
-                        try SavedItemContentLocalTable.find(pdfRow.id).update {
-                            $0.renderFormat = RenderFormat.pdf.rawValue
-                            $0.documentVersion = 1
-                            $0.plainText = pdfRow.plainText
-                            $0.documentJSON = pdfRow.documentJSON
-                            $0.localStatus = "available"
-                            $0.localError = nil as String?
-                            $0.updatedAt = now
-                        }.execute(db)
+                        try SavedItemContentLocalTable
+                            .find(pdfRow.id)
+                            .update {
+                                $0.renderFormat = RenderFormat.pdf.rawValue
+                                $0.documentVersion = 1
+                                $0.plainText = pdfRow.plainText
+                                $0.documentJSON = pdfRow.documentJSON
+                                $0.localStatus = "available"
+                                $0.localError = nil as String?
+                                $0.updatedAt = now
+                            }
+                            .execute(db)
                     } else {
-                        try SavedItemContentLocalTable.insert {
-                            SavedItemContentLocalTable.Draft(
-                                itemID: pdfRow.id,
-                                renderFormat: RenderFormat.pdf.rawValue,
-                                documentVersion: 1,
-                                plainText: pdfRow.plainText,
-                                documentJSON: pdfRow.documentJSON,
-                                sourceHTMLHash: "",
-                                sourceHTML: "",
-                                localStatus: "available",
-                                localError: nil,
-                                createdAt: now,
-                                updatedAt: now
-                            )
-                        }.execute(db)
+                        try SavedItemContentLocalTable
+                            .insert {
+                                SavedItemContentLocalTable.Draft(
+                                    itemID: pdfRow.id,
+                                    renderFormat: RenderFormat.pdf.rawValue,
+                                    documentVersion: 1,
+                                    plainText: pdfRow.plainText,
+                                    documentJSON: pdfRow.documentJSON,
+                                    sourceHTMLHash: "",
+                                    sourceHTML: "",
+                                    localStatus: "available",
+                                    localError: nil,
+                                    createdAt: now,
+                                    updatedAt: now
+                                )
+                            }
+                            .execute(db)
                     }
                     hydrated += 1
                 }
@@ -105,7 +115,7 @@ extension StowerRepository {
 
     static func _enqueueHydrationJobsForMissingContent(database: any DatabaseWriter) -> @Sendable () async throws -> Int {
         { () async throws -> Int in
-            let now: Date = Date.now
+            let now = Date.now
             return try await database.write { db -> Int in
                 let synced: [SavedItemSyncTable] = try SavedItemSyncTable
                     .where { !$0.isArchived }
@@ -118,35 +128,39 @@ extension StowerRepository {
                     guard !localIDs.contains(item.id) else { continue }
                     guard let url = item.sourceURL, !url.isEmpty else { continue }
 
-                    try SavedItemContentLocalTable.insert {
-                        SavedItemContentLocalTable.Draft(
-                            itemID: item.id,
-                            renderFormat: "structuredV1",
-                            documentVersion: 1,
-                            plainText: "",
-                            documentJSON: "",
-                            sourceHTMLHash: "",
-                            sourceHTML: "",
-                            localStatus: "notDownloaded",
-                            localError: nil,
-                            createdAt: now,
-                            updatedAt: now
-                        )
-                    }.execute(db)
+                    try SavedItemContentLocalTable
+                        .insert {
+                            SavedItemContentLocalTable.Draft(
+                                itemID: item.id,
+                                renderFormat: "structuredV1",
+                                documentVersion: 1,
+                                plainText: "",
+                                documentJSON: "",
+                                sourceHTMLHash: "",
+                                sourceHTML: "",
+                                localStatus: "notDownloaded",
+                                localError: nil,
+                                createdAt: now,
+                                updatedAt: now
+                            )
+                        }
+                        .execute(db)
 
-                    let payload: String = try String(
-                        decoding: JSONEncoder().encode(HydrationPayload(itemID: item.id, url: url)),
-                        as: UTF8.self
-                    )
-                    try IngestionJobLocalTable.insert {
-                        IngestionJobLocalTable.Draft(
-                            id: UUID(),
-                            kind: IngestionJob.Kind.hydrate.rawValue,
-                            payload: payload,
-                            createdAt: now,
-                            processedAt: nil
-                        )
-                    }.execute(db)
+                    let payload = try String(
+                        bytes: JSONEncoder().encode(HydrationPayload(itemID: item.id, url: url)),
+                        encoding: .utf8
+                    ) ?? ""
+                    try IngestionJobLocalTable
+                        .insert {
+                            IngestionJobLocalTable.Draft(
+                                id: UUID(),
+                                kind: IngestionJob.Kind.hydrate.rawValue,
+                                payload: payload,
+                                createdAt: now,
+                                processedAt: nil
+                            )
+                        }
+                        .execute(db)
                     enqueued += 1
                 }
                 return enqueued

@@ -2,9 +2,11 @@ import Foundation
 import SwiftSoup
 
 struct ParsedBlocks {
+    // swiftlint:disable prefer_let_over_var
     var blocks: [ReaderBlock]
     var media: [MediaDescriptor]
     var embeds: [EmbedDescriptor]
+    // swiftlint:enable prefer_let_over_var
 }
 
 func parseBlocks(root: Element, baseURL: URL) throws -> ParsedBlocks {
@@ -13,22 +15,26 @@ func parseBlocks(root: Element, baseURL: URL) throws -> ParsedBlocks {
         return ParsedBlocks(blocks: [], media: [], embeds: [])
     }
 
-    try body.select(
+    let toRemove = try body.select(
         "script, style, svg, canvas, template, nav, footer, header, aside, form, button, [aria-hidden=true], [hidden], .sr-only, .visually-hidden, .screen-reader-text, .sidebar, .related, .share, .comments"
-    ).remove()
+    )
+    try toRemove.remove()
 
     // Remove permalink/headerlink anchors commonly added next to headings by
     // static site generators (MkDocs, Sphinx, Hugo, Jekyll, Docusaurus, etc.).
     // These typically render as "¶" or "#" and link back to the heading's anchor.
-    try body.select(
+    let anchorLinks = try body.select(
         "a.headerlink, a.anchor, a.anchorlink, a.anchor-link, a.anchor_link, a.permalink, a.heading-link, a.heading_link, a.hash-link, a.header-link, .headerlink, .anchorjs-link"
-    ).remove()
-    try body.select("h1 > a[href^=#], h2 > a[href^=#], h3 > a[href^=#], h4 > a[href^=#], h5 > a[href^=#], h6 > a[href^=#]")
-        .remove()
+    )
+    try anchorLinks.remove()
+    let headingAnchors = try body.select("h1 > a[href^=#], h2 > a[href^=#], h3 > a[href^=#], h4 > a[href^=#], h5 > a[href^=#], h6 > a[href^=#]")
+    try headingAnchors.remove()
 
+    // swiftlint:disable prefer_let_over_var
     var blocks: [ReaderBlock] = []
     var media: [MediaDescriptor] = []
     var embeds: [EmbedDescriptor] = []
+    // swiftlint:enable prefer_let_over_var
 
     for childNode in body.getChildNodes() {
         guard let child = childNode as? Element else { continue }
@@ -66,9 +72,11 @@ func parseBlock(_ element: Element) throws -> ParsedBlocks {
 
     case "p":
         let inlines = try parseInlines(element)
+        // swiftlint:disable prefer_let_over_var
         var blocks: [ReaderBlock] = inlines.isEmpty ? [] : [.paragraph(inlines)]
         var media: [MediaDescriptor] = []
         var embeds: [EmbedDescriptor] = []
+        // swiftlint:enable prefer_let_over_var
 
         let mediaNodes = try element.select("img,picture,video,iframe,figure").array()
         for mediaNode in mediaNodes {
@@ -187,6 +195,7 @@ func parseInlines(_ element: Element) throws -> [ReaderInline] {
 /// leading space on `<span> until the user...</span>` when the span
 /// follows an `<a>` in the same paragraph).
 func parseInlinesRaw(_ element: Element) throws -> [ReaderInline] {
+    // swiftlint:disable:next prefer_let_over_var
     var inlines: [ReaderInline] = []
 
     for node in element.getChildNodes() {
@@ -267,6 +276,7 @@ func parseInlinesRaw(_ element: Element) throws -> [ReaderInline] {
 }
 
 func mergeTextInlines(_ inlines: [ReaderInline]) -> [ReaderInline] {
+    // swiftlint:disable:next prefer_let_over_var
     var merged: [ReaderInline] = []
     for inline in inlines {
         if case .text(let current) = inline,
@@ -335,7 +345,7 @@ func appendWithBoundarySpaces(
 func trimInlineEdges(_ inlines: [ReaderInline]) -> [ReaderInline] {
     var result = inlines
     if case .text(let first)? = result.first {
-        let trimmed = String(first.drop(while: { $0 == " " }))
+        let trimmed = String(first.drop { $0 == " " })
         if trimmed.isEmpty {
             result.removeFirst()
         } else {
@@ -343,7 +353,7 @@ func trimInlineEdges(_ inlines: [ReaderInline]) -> [ReaderInline] {
         }
     }
     if case .text(let last)? = result.last {
-        let trimmed = String(last.reversed().drop(while: { $0 == " " }).reversed())
+        let trimmed = String(last.reversed().drop { $0 == " " }.reversed())
         if trimmed.isEmpty {
             result.removeLast()
         } else {
@@ -354,9 +364,11 @@ func trimInlineEdges(_ inlines: [ReaderInline]) -> [ReaderInline] {
 }
 
 func parseFallbackDescendants(_ body: Element) throws -> ParsedBlocks {
+    // swiftlint:disable prefer_let_over_var
     var blocks: [ReaderBlock] = []
     var media: [MediaDescriptor] = []
     var embeds: [EmbedDescriptor] = []
+    // swiftlint:enable prefer_let_over_var
 
     let candidates = try body.select("h1,h2,h3,h4,h5,h6,p,blockquote,pre,ul,ol,img,video,iframe,figure").array()
     for element in candidates {

@@ -35,8 +35,10 @@ enum ReaderTextLayoutSupport {
     }
 
     static func listSpeechTextAndRanges(items: [[ReaderInline]]) -> (text: String, itemRanges: [NSRange]) {
+        // swiftlint:disable prefer_let_over_var
         var itemRanges: [NSRange] = []
         var pieces: [String] = []
+        // swiftlint:enable prefer_let_over_var
         pieces.reserveCapacity(items.count)
 
         var cursorUTF16 = 0
@@ -85,7 +87,7 @@ enum ReaderTextLayoutSupport {
         switch inline {
         case .text(let value):
             return AttributedString(value)
-        case .link(let label, let url):
+        case let .link(label, url):
             var link = AttributedString(label)
             link.link = URL(string: url)
             return link
@@ -110,15 +112,20 @@ enum ReaderTextLayoutSupport {
 
     private static func shouldInsertSpace(previous: Character?, next: Character) -> Bool {
         guard let previous else { return false }
-        if previous.isWhitespace || next.isWhitespace { return false }
+        if previous.isWhitespace || next.isWhitespace {
+            return false
+        }
 
         let noLeadingSpaceBefore: Set<Character> = [",", ".", "!", "?", ";", ":", ")", "]", "}", "”", "’", "%"]
-        if noLeadingSpaceBefore.contains(next) { return false }
+        if noLeadingSpaceBefore.contains(next) {
+            return false
+        }
 
         let noTrailingSpaceAfter: Set<Character> = ["(", "[", "{", "“", "‘", "/", "-"]
-        if noTrailingSpaceAfter.contains(previous) { return false }
+        if noTrailingSpaceAfter.contains(previous) {
+            return false
+        }
 
         return true
     }
 }
-

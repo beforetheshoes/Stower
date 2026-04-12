@@ -4,7 +4,9 @@ import SwiftSoup
 func imageDescriptor(_ element: Element, captionHint: String?) throws -> MediaDescriptor? {
     let source = bestImageSource(element)
     guard let source else { return nil }
-    if source.lowercased().hasPrefix("data:") { return nil }
+    if source.lowercased().hasPrefix("data:") {
+        return nil
+    }
 
     let width = Int((try? element.attr("width")) ?? "")
     let height = Int((try? element.attr("height")) ?? "")
@@ -97,7 +99,9 @@ func bestImageSource(_ element: Element) -> String? {
     ]
 
     for candidate in candidates {
-        if let candidate { return candidate }
+        if let candidate {
+            return candidate
+        }
     }
     return nil
 }
@@ -138,27 +142,49 @@ func bestSourceFromSrcSet(_ element: Element) -> String? {
 
 func isLikelyAvatarImage(combined: String, width: Int?, height: Int?) -> Bool {
     let avatarTokens = ["avatar", "profile", "author-image", "headshot", "gravatar"]
-    if avatarTokens.contains(where: combined.contains) { return true }
-    if let width, let height, width <= 64, height <= 64 { return true }
-    if let width, width <= 48 { return true }
-    if let height, height <= 48 { return true }
+    if avatarTokens.contains(where: combined.contains) {
+        return true
+    }
+    if let width, let height, width <= 64, height <= 64 {
+        return true
+    }
+    if let width, width <= 48 {
+        return true
+    }
+    if let height, height <= 48 {
+        return true
+    }
     return false
 }
 
 func guessMimeType(_ urlString: String) -> String? {
     let lower = urlString.lowercased()
-    if lower.hasSuffix(".jpg") || lower.hasSuffix(".jpeg") { return "image/jpeg" }
-    if lower.hasSuffix(".png") { return "image/png" }
-    if lower.hasSuffix(".gif") { return "image/gif" }
-    if lower.hasSuffix(".webp") { return "image/webp" }
-    if lower.hasSuffix(".mp4") { return "video/mp4" }
-    if lower.hasSuffix(".m3u8") { return "application/x-mpegURL" }
+    if lower.hasSuffix(".jpg") || lower.hasSuffix(".jpeg") {
+        return "image/jpeg"
+    }
+    if lower.hasSuffix(".png") {
+        return "image/png"
+    }
+    if lower.hasSuffix(".gif") {
+        return "image/gif"
+    }
+    if lower.hasSuffix(".webp") {
+        return "image/webp"
+    }
+    if lower.hasSuffix(".mp4") {
+        return "video/mp4"
+    }
+    if lower.hasSuffix(".m3u8") {
+        return "application/x-mpegURL"
+    }
     return nil
 }
 
 func providerName(_ urlString: String) -> String {
     guard let host = URL(string: urlString)?.host else { return "Embed" }
     let parts = host.split(separator: ".")
-    if parts.count >= 2 { return parts[parts.count - 2].capitalized }
+    if parts.count >= 2 {
+        return parts[parts.count - 2].capitalized
+    }
     return host.capitalized
 }

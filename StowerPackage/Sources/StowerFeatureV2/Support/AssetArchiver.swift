@@ -6,7 +6,6 @@ import Foundation
 /// The archive is stored at `Documents/StowerArchive/{itemID}/` with the original
 /// URL path structure preserved, so a WKURLSchemeHandler can serve them.
 enum AssetArchiver {
-
     /// Archives all assets referenced by the HTML page.
     /// Returns the set of archived file paths relative to the archive root.
     @discardableResult
@@ -52,10 +51,8 @@ enum AssetArchiver {
                 if let jsContent = try? String(contentsOf: filePath, encoding: .utf8) {
                     let jsFileURL = URL(string: "/" + asset.relativePath, relativeTo: baseURL)?.absoluteURL ?? baseURL
                     let imports = discoverJSImports(in: jsContent, baseURL: jsFileURL)
-                    for importURL in imports {
-                        if !fetched.contains(importURL.absoluteString) {
-                            nextLevel.insert(importURL)
-                        }
+                    for importURL in imports where !fetched.contains(importURL.absoluteString) {
+                        nextLevel.insert(importURL)
                     }
                 }
             }
@@ -67,10 +64,8 @@ enum AssetArchiver {
                 if let cssContent = try? String(contentsOf: filePath, encoding: .utf8) {
                     let cssFileURL = URL(string: "/" + asset.relativePath, relativeTo: baseURL)?.absoluteURL ?? baseURL
                     let refs = discoverCSSURLs(in: cssContent, baseURL: cssFileURL)
-                    for refURL in refs {
-                        if !fetched.contains(refURL.absoluteString) {
-                            nextLevel.insert(refURL)
-                        }
+                    for refURL in refs where !fetched.contains(refURL.absoluteString) {
+                        nextLevel.insert(refURL)
                     }
                 }
             }
@@ -338,6 +333,7 @@ enum AssetArchiver {
                     await fetchAndSaveOne(url: url, baseURL: baseURL, archiveDir: archiveDir, session: session)
                 }
             }
+            // swiftlint:disable:next prefer_let_over_var
             var results: [ArchivedAsset] = []
             for await asset in group {
                 if let asset { results.append(asset) }

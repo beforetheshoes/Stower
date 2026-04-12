@@ -77,6 +77,7 @@ public struct YouTubeIngestionClient: Sendable {
 
             // 5. Compose the ReaderDocument: video card, then description
             //    paragraphs.
+            // swiftlint:disable:next prefer_let_over_var
             var blocks: [ReaderBlock] = [.video(media: descriptor)]
             blocks.append(contentsOf: descriptionBlocks(description))
 
@@ -240,7 +241,7 @@ private func fetchWatchPageHTML(
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             return nil
         }
-        return String(decoding: data, as: UTF8.self)
+        return String(bytes: data, encoding: .utf8)
     } catch {
         return nil
     }
@@ -354,7 +355,7 @@ private func descriptionBlocks(_ description: String?) -> [ReaderBlock] {
     guard !trimmed.isEmpty else { return [] }
 
     return trimmed
-        .split(omittingEmptySubsequences: false, whereSeparator: { $0.isNewline })
+        .split(omittingEmptySubsequences: false) { $0.isNewline }
         .map { $0.trimmingCharacters(in: .whitespaces) }
         .filter { !$0.isEmpty }
         .map { .paragraph([.text($0)]) }

@@ -16,15 +16,15 @@ public func sanitizeLoadedBlocks(_ blocks: [ReaderBlock]) -> [ReaderBlock] {
 
 private func sanitizeBlock(_ block: ReaderBlock) -> ReaderBlock {
     switch block {
-    case .paragraph(let inlines):
+    case let .paragraph(inlines):
         return .paragraph(sanitizeInlines(inlines))
-    case .heading(let level, let inlines):
+    case let .heading(level, inlines):
         return .heading(level: level, inlines: sanitizeInlines(inlines))
-    case .list(let ordered, let items):
+    case let .list(ordered, items):
         return .list(ordered: ordered, items: items.map(sanitizeInlines))
-    case .blockquote(let inlines):
+    case let .blockquote(inlines):
         return .blockquote(sanitizeInlines(inlines))
-    case .callout(let title, let inlines):
+    case let .callout(title, inlines):
         return .callout(
             title: title.map { stripPilcrows($0).trimmingCharacters(in: .whitespacesAndNewlines) },
             inlines: sanitizeInlines(inlines)
@@ -35,19 +35,19 @@ private func sanitizeBlock(_ block: ReaderBlock) -> ReaderBlock {
 }
 
 private func sanitizeInlines(_ inlines: [ReaderInline]) -> [ReaderInline] {
-    var output: [ReaderInline] = []
+    var output: [ReaderInline] = [] // swiftlint:disable:this prefer_let_over_var
     output.reserveCapacity(inlines.count)
 
     for inline in inlines {
         switch inline {
-        case .text(let value):
+        case let .text(value):
             // Preserve boundary whitespace — the parser intentionally emits
             // segments like `"word "` so the downstream renderer doesn't
             // smoosh links/bold runs against their neighbours.
             let cleaned = stripPilcrows(value)
             if !cleaned.isEmpty { output.append(.text(cleaned)) }
 
-        case .link(let label, let url):
+        case let .link(label, url):
             let cleanedLabel = stripPilcrows(label).trimmingCharacters(in: .whitespacesAndNewlines)
             if cleanedLabel.isEmpty { continue }
             // Drop fragment-only links with symbol-only or very short labels —
@@ -57,19 +57,19 @@ private func sanitizeInlines(_ inlines: [ReaderInline]) -> [ReaderInline] {
             }
             output.append(.link(label: cleanedLabel, url: url))
 
-        case .emphasis(let value):
+        case let .emphasis(value):
             let cleaned = stripPilcrows(value).trimmingCharacters(in: .whitespacesAndNewlines)
             if !cleaned.isEmpty { output.append(.emphasis(cleaned)) }
 
-        case .strong(let value):
+        case let .strong(value):
             let cleaned = stripPilcrows(value).trimmingCharacters(in: .whitespacesAndNewlines)
             if !cleaned.isEmpty { output.append(.strong(cleaned)) }
 
-        case .code(let value):
+        case let .code(value):
             // Don't strip pilcrows from code — they may be meaningful literals.
             output.append(.code(value))
 
-        case .strikethrough(let value):
+        case let .strikethrough(value):
             let cleaned = stripPilcrows(value).trimmingCharacters(in: .whitespacesAndNewlines)
             if !cleaned.isEmpty { output.append(.strikethrough(cleaned)) }
         }
@@ -112,7 +112,7 @@ private func isSymbolOnly(_ text: String) -> Bool {
 }
 
 private func mergeAdjacentText(_ inlines: [ReaderInline]) -> [ReaderInline] {
-    var merged: [ReaderInline] = []
+    var merged: [ReaderInline] = [] // swiftlint:disable:this prefer_let_over_var
     merged.reserveCapacity(inlines.count)
     for inline in inlines {
         if case .text(let current) = inline,

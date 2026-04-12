@@ -10,8 +10,10 @@ import AppKit
 
 public struct LibraryScreen: View {
     @Bindable var store: StoreOf<LibraryFeature>
-    @Environment(\.flexokiPalette) private var palette
-    @Environment(\.openURL) private var openURL
+    @Environment(\.flexokiPalette)
+    private var palette
+    @Environment(\.openURL)
+    private var openURL
     /// Invoked when the user taps the settings gear in the iOS toolbar.
     /// nil on macOS (the sidebar already has its own settings button).
     private let onOpenSettings: (() -> Void)?
@@ -214,7 +216,7 @@ public struct LibraryScreen: View {
             }
         }
         .scrollContentBackground(.hidden)
-        // Obscure rows as they scroll behind the Liquid Glass nav bar so
+        // Obscure rows as they scroll beneath the Liquid Glass nav bar so
         // the first row stays legible against the glass material.
         .scrollEdgeEffectStyle(.soft, for: .top)
         .navigationTitle(navigationTitle)
@@ -341,8 +343,7 @@ public struct LibraryScreen: View {
 
     #if os(iOS)
     /// Modal URL-entry form shown when the user taps the toolbar "+".
-    @ViewBuilder
-    private var addURLSheet: some View {
+    @ViewBuilder private var addURLSheet: some View {
         NavigationStack {
             Form {
                 Section {
@@ -418,19 +419,24 @@ public struct LibraryScreen: View {
 
     private var navigationTitle: String {
         switch store.filter {
-        case .all: return "All"
-        case .unread: return "Unread"
-        case .read: return "Read"
-        case .starred: return "Starred"
-        case .untagged: return "Untagged"
-        case .recentlyDeleted: return "Recently Deleted"
-        case .tag(let id):
-            return store.availableTags.first(where: { $0.id == id })?.name ?? "Tag"
+        case .all:
+            return "All"
+        case .unread:
+            return "Unread"
+        case .read:
+            return "Read"
+        case .starred:
+            return "Starred"
+        case .untagged:
+            return "Untagged"
+        case .recentlyDeleted:
+            return "Recently Deleted"
+        case let .tag(id):
+            return store.availableTags.first { $0.id == id }?.name ?? "Tag"
         }
     }
 
-    @ViewBuilder
-    private var urlComposer: some View {
+    @ViewBuilder private var urlComposer: some View {
         HStack(spacing: 10) {
             TextField("Paste Source URL", text: $store.sourceURL.sending(\.sourceURLChanged))
                 .autocorrectionDisabled()
@@ -446,7 +452,7 @@ public struct LibraryScreen: View {
                 .padding(.vertical, 7)
                 // Liquid Glass input chip — the composer floats above the
                 // library list as frosted glass, refracting whatever rows
-                // sit behind it instead of the old flat 6% opacity fill.
+                // sit beneath it instead of the old flat 6% opacity fill.
                 .glassEffect(.regular, in: .rect(cornerRadius: 6))
                 .onSubmit { store.send(.saveURLTapped) }
 
@@ -480,8 +486,10 @@ public struct LibraryScreen: View {
     /// the other.
     private func shouldShowBadge(for state: ProcessingState) -> Bool {
         switch state {
-        case .ready, .queued: return false
-        case .extracting, .partial, .failed: return true
+        case .ready, .queued:
+            return false
+        case .extracting, .partial, .failed:
+            return true
         }
     }
 
@@ -494,27 +502,37 @@ public struct LibraryScreen: View {
             // Liquid Glass pill. The semantic state color becomes the
             // tint on the glass capsule so warning / error / extracting
             // still read at a glance over a scrolling list, while the
-            // capsule itself refracts the row content behind it.
+            // capsule itself refracts the row content beneath it.
             .glassEffect(.regular.tint(badgeBackground(state)), in: .capsule)
     }
 
     private func badgeBackground(_ state: ProcessingState) -> Color {
         switch state {
-        case .ready: return palette.success.opacity(0.16)
-        case .partial: return palette.warning.opacity(0.16)
-        case .failed: return palette.error.opacity(0.16)
-        case .extracting: return palette.info.opacity(0.16)
-        case .queued: return palette.tx3.opacity(0.16)
+        case .ready:
+            return palette.success.opacity(0.16)
+        case .partial:
+            return palette.warning.opacity(0.16)
+        case .failed:
+            return palette.error.opacity(0.16)
+        case .extracting:
+            return palette.info.opacity(0.16)
+        case .queued:
+            return palette.tx3.opacity(0.16)
         }
     }
 
     private func badgeForeground(_ state: ProcessingState) -> Color {
         switch state {
-        case .ready: return palette.success
-        case .partial: return palette.warning
-        case .failed: return palette.error
-        case .extracting: return palette.info
-        case .queued: return palette.tx2
+        case .ready:
+            return palette.success
+        case .partial:
+            return palette.warning
+        case .failed:
+            return palette.error
+        case .extracting:
+            return palette.info
+        case .queued:
+            return palette.tx2
         }
     }
 }
@@ -566,6 +584,7 @@ private struct LibraryItemThumbnail: View {
             Image(systemName: "doc.text")
                 .font(.title2)
                 .foregroundStyle(.secondary.opacity(0.45))
+                .accessibilityLabel("Document placeholder")
         }
     }
 

@@ -3,13 +3,14 @@ import SwiftUI
 
 public struct SidebarScreen: View {
     @Bindable var store: StoreOf<SidebarFeature>
-    @Environment(\.flexokiPalette) private var palette
+    @Environment(\.flexokiPalette)
+    private var palette
     /// Optional hook so the parent (AppFeature) can present Settings on demand.
-    public var onOpenSettings: (() -> Void)? = nil
+    public var onOpenSettings: (() -> Void)?
     /// When non-nil, rows render as Buttons instead of NavigationLinks. Used
     /// by the iPhone filter sheet, where the sidebar is presented modally and
     /// row selection should dismiss the sheet rather than push a column.
-    public var onSelect: ((LibraryFilter) -> Void)? = nil
+    public var onSelect: ((LibraryFilter) -> Void)?
 
     public init(
         store: StoreOf<SidebarFeature>,
@@ -55,7 +56,7 @@ public struct SidebarScreen: View {
                 }
             }
         }
-        // Obscure list rows as they scroll behind the Liquid Glass nav
+        // Obscure list rows as they scroll beneath the Liquid Glass nav
         // bar (top) and the floating Settings footer (bottom).
         .scrollEdgeEffectStyle(.soft, for: .top)
         .scrollEdgeEffectStyle(.soft, for: .bottom)
@@ -125,6 +126,7 @@ public struct SidebarScreen: View {
                     if store.selection == filter {
                         Image(systemName: "checkmark")
                             .foregroundStyle(palette.primary)
+                            .accessibilityLabel("Selected")
                     }
                 }
             }
@@ -168,6 +170,7 @@ public struct SidebarScreen: View {
                         if store.selection == filter {
                             Image(systemName: "checkmark")
                                 .foregroundStyle(palette.primary)
+                                .accessibilityLabel("Selected")
                         }
                     }
                 }
@@ -196,6 +199,6 @@ public struct SidebarScreen: View {
         // Color parsing is a follow-up; for now every tag uses the current
         // palette's secondary accent so tags visually contrast with the
         // primary-tinted system tint without clashing.
-        return palette.secondary
+        palette.secondary
     }
 }

@@ -62,10 +62,12 @@ final class ImageLoader: @unchecked Sendable {
 
                 let image = try Self.makeImage(from: data, targetPixelSize: targetPixelSize)
                 guard !Task.isCancelled else { return }
-                await MainActor.run { self?.phase = .success(image) }
+                let loader = self
+                await MainActor.run { loader?.phase = .success(image) }
             } catch {
                 guard !Task.isCancelled else { return }
-                await MainActor.run { self?.phase = .failure(error) }
+                let loader = self
+                await MainActor.run { loader?.phase = .failure(error) }
             }
         }
     }
@@ -102,12 +104,14 @@ final class ImageLoader: @unchecked Sendable {
         guard let source = CGImageSourceCreateWithData(data as CFData, sourceOptions as CFDictionary) else {
             return nil
         }
+        // swiftlint:disable collection_alignment
         let thumbnailOptions: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceShouldCacheImmediately: true,
             kCGImageSourceCreateThumbnailWithTransform: true,
-            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
         ]
+        // swiftlint:enable collection_alignment
         return CGImageSourceCreateThumbnailAtIndex(source, 0, thumbnailOptions as CFDictionary)
     }
 

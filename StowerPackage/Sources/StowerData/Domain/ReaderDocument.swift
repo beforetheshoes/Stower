@@ -1,19 +1,20 @@
+// swiftlint:disable function_default_parameter_at_end
 import Foundation
 
 public enum RenderFormat: String, Codable, Equatable, Sendable {
-    case structuredV1
-    case htmlFallback
-    case plainText
-    case webView
-    case pdf
+    case structuredV1 = "structuredV1"
+    case htmlFallback = "htmlFallback"
+    case plainText = "plainText"
+    case webView = "webView"
+    case pdf = "pdf"
 }
 
 public enum ProcessingState: String, Codable, Equatable, Sendable {
-    case queued
-    case extracting
-    case ready
-    case failed
-    case partial
+    case queued = "queued"
+    case extracting = "extracting"
+    case ready = "ready"
+    case failed = "failed"
+    case partial = "partial"
 }
 
 public struct ReaderDocument: Codable, Equatable, Sendable {
@@ -63,10 +64,10 @@ public enum ReaderInline: Codable, Equatable, Sendable {
 
 public struct MediaDescriptor: Codable, Equatable, Sendable {
     public enum Kind: String, Codable, Equatable, Sendable {
-        case image
-        case video
-        case audio
-        case embed
+        case image = "image"
+        case video = "video"
+        case audio = "audio"
+        case embed = "embed"
     }
 
     public var kind: Kind
@@ -231,3 +232,4 @@ public struct IngestionResult: Equatable, Sendable {
         )
     }
 }
+// swiftlint:enable function_default_parameter_at_end

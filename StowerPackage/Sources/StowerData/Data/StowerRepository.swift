@@ -152,7 +152,9 @@ extension StowerRepository {
 
         let baseLoadDocument = _loadReaderDocument(database: database)
         let cachedLoadDocument: @Sendable (UUID) async throws -> ReaderDocument? = { id in
-            if let cached = documentCache.get(id) { return cached }
+            if let cached = documentCache.get(id) {
+                return cached
+            }
             let document = try await baseLoadDocument(id)
             if let document { documentCache.set(id, document: document) }
             return document
@@ -267,7 +269,7 @@ extension StowerRepository {
 /// Mutation closures call `ping()`; consumers subscribe via `stream()`.
 final class LibraryChangeBroadcast: @unchecked Sendable {
     private let lock = NSLock()
-    private var continuations: [UUID: AsyncStream<Void>.Continuation] = [:]
+    private var continuations: [UUID: AsyncStream<Void>.Continuation] = [:] // swiftlint:disable:this prefer_let_over_var
 
     func stream() -> AsyncStream<Void> {
         AsyncStream { continuation in

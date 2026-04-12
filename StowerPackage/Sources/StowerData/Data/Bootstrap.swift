@@ -1,5 +1,5 @@
-import Foundation
 import Dependencies
+import Foundation
 import SQLiteData
 
 // MARK: - Diagnostics Types
@@ -8,7 +8,7 @@ public struct SyncDiagnostics: Equatable, Sendable {
     public var syncedItemsCount: Int
     public var pendingChangesCount: Int
     public var metadataCount: Int
-    public var sampleItems: [SyncItemSummary]
+    public let sampleItems: [SyncItemSummary]
 
     public init(
         syncedItemsCount: Int,
@@ -42,9 +42,9 @@ public struct SyncDiagnosticsClient: Sendable {
         self.load = load
     }
 
-    public static let noop = Self(load: {
+    public static let noop = Self {
         .init(syncedItemsCount: 0, pendingChangesCount: 0, metadataCount: 0, sampleItems: [])
-    })
+    }
 }
 
 // MARK: - CloudSync Client Type
@@ -114,13 +114,16 @@ public enum StowerDatabase {
                 try db.attachMetadatabase(containerIdentifier: cloudKitContainerID)
             } catch {
                 #if DEBUG
+                // swiftlint:disable:next no_print_statements
                 print("⚠️ SQLiteData metadatabase unavailable: \(error)")
                 #endif
             }
         }
 
         #if DEBUG
+        // swiftlint:disable:next no_print_statements
         print("🔧 Bootstrap: appGroupID = \(appGroupID)")
+        // swiftlint:disable:next no_print_statements
         print("🔧 Bootstrap: cloudKitContainerID = \(cloudKitContainerID)")
         #endif
 
@@ -128,7 +131,8 @@ public enum StowerDatabase {
         // extension and the main app can both read and write the same file.
         // In .preview / .test, SQLiteData ignores `path` and uses a tempfile.
         let resolvedPath: String?
-        @Dependency(\.context) var context
+        @Dependency(\.context)
+        var context
         if context == .live {
             let url = try resolveAppGroupDatabaseURL()
             try migrateLegacySandboxDatabaseIfNeeded(to: url)
@@ -182,6 +186,7 @@ public enum StowerDatabase {
         }
 
         #if DEBUG
+        // swiftlint:disable:next no_print_statements
         print("ℹ️ Migrated legacy Stower database from \(legacyURL.path) to \(destination.path)")
         #endif
     }
@@ -201,15 +206,33 @@ public enum StowerDatabase {
     private static func migrate(database: any DatabaseWriter) throws {
         var migrator = DatabaseMigrator()
         migrator.eraseDatabaseOnSchemaChange = false
-        migrator.registerMigration("create-stower-v2-reader") { db in try migration_v1(db) }
-        migrator.registerMigration("cloudkit-split-sync-v1") { db in try migration_v2(db) }
-        migrator.registerMigration("add-source-html-to-content") { db in try migration_v3(db) }
-        migrator.registerMigration("add-last-read-block-index") { db in try migration_v4(db) }
-        migrator.registerMigration("add-isread-isstarred-softdelete-and-tags") { db in try migration_v5(db) }
-        migrator.registerMigration("drop-unique-indexes-from-sync-tables") { db in try migration_v6(db) }
-        migrator.registerMigration("add-ai-summary-columns") { db in try migration_v7(db) }
-        migrator.registerMigration("add-pdf-support") { db in try migration_v8(db) }
-        migrator.registerMigration("flexoki-background-accents") { db in try migration_v9(db) }
+        migrator.registerMigration("create-stower-v2-reader") { db in
+            try migration_v1(db)
+        }
+        migrator.registerMigration("cloudkit-split-sync-v1") { db in
+            try migration_v2(db)
+        }
+        migrator.registerMigration("add-source-html-to-content") { db in
+            try migration_v3(db)
+        }
+        migrator.registerMigration("add-last-read-block-index") { db in
+            try migration_v4(db)
+        }
+        migrator.registerMigration("add-isread-isstarred-softdelete-and-tags") { db in
+            try migration_v5(db)
+        }
+        migrator.registerMigration("drop-unique-indexes-from-sync-tables") { db in
+            try migration_v6(db)
+        }
+        migrator.registerMigration("add-ai-summary-columns") { db in
+            try migration_v7(db)
+        }
+        migrator.registerMigration("add-pdf-support") { db in
+            try migration_v8(db)
+        }
+        migrator.registerMigration("flexoki-background-accents") { db in
+            try migration_v9(db)
+        }
         try migrator.migrate(database)
     }
 

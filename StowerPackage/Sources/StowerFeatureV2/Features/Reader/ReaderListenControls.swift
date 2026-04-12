@@ -7,7 +7,8 @@ import UIKit
 // Rendered as the contents of a popover anchored to the Reader toolbar's Listen
 // button. Kept in its own file to keep ReaderScreen type-check times under control.
 struct ReaderListenControls: View {
-    @Environment(\.flexokiPalette) private var palette
+    @Environment(\.flexokiPalette)
+    private var palette
     let speech: ReaderSpeechFeature.State
     let speechBlocks: [SpeechBlock]
     let onListen: () -> Void
@@ -19,7 +20,7 @@ struct ReaderListenControls: View {
     let onRateChanged: (Float) -> Void
     let onVoiceChanged: (String?) -> Void
 
-    @State private var catalog: ReaderSpeechVoiceCatalog.Catalog = ReaderSpeechVoiceCatalog.Catalog(
+    @State private var catalog = ReaderSpeechVoiceCatalog.Catalog(
         preferredGroups: [],
         otherGroups: [],
         onlyDefaultQualityForPreferred: false
@@ -68,8 +69,7 @@ struct ReaderListenControls: View {
         return current >= last
     }
 
-    @ViewBuilder
-    private var playbackRow: some View {
+    @ViewBuilder private var playbackRow: some View {
         HStack(spacing: 10) {
             if speech.isSpeaking {
                 Button(action: onSkipBackward) {
@@ -144,8 +144,7 @@ struct ReaderListenControls: View {
         )
     }
 
-    @ViewBuilder
-    private var speedSection: some View {
+    @ViewBuilder private var speedSection: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Speed")
                 .font(.caption)
@@ -166,13 +165,12 @@ struct ReaderListenControls: View {
     /// a value that's no longer in the bucket list.
     private func roundedSpeedBucket(for rate: Float) -> Float {
         let buckets: [Float] = [0.8, 1.0, 1.2, 1.5]
-        return buckets.min(by: { abs($0 - rate) < abs($1 - rate) }) ?? 1.0
+        return buckets.min { abs($0 - rate) < abs($1 - rate) } ?? 1.0
     }
 
     // MARK: - Voice
 
-    @ViewBuilder
-    private var voiceSection: some View {
+    @ViewBuilder private var voiceSection: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Voice")
                 .font(.caption)
@@ -183,6 +181,7 @@ struct ReaderListenControls: View {
                 HStack(spacing: 8) {
                     Image(systemName: "waveform")
                         .foregroundStyle(.secondary)
+                        .accessibilityLabel("Voice")
                     Text(currentVoiceLabel)
                         .lineLimit(1)
                         .foregroundStyle(.primary)
@@ -190,6 +189,7 @@ struct ReaderListenControls: View {
                     Image(systemName: "chevron.up.chevron.down")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
@@ -201,8 +201,7 @@ struct ReaderListenControls: View {
         }
     }
 
-    @ViewBuilder
-    private var voiceMenuContents: some View {
+    @ViewBuilder private var voiceMenuContents: some View {
         Button("Automatic") { onVoiceChanged(nil) }
         Divider()
         ForEach(catalog.preferredGroups) { group in
@@ -229,14 +228,13 @@ struct ReaderListenControls: View {
     private var currentVoiceLabel: String {
         guard let id = speech.selectedVoiceID else { return "Automatic" }
         let all = catalog.preferredGroups.flatMap(\.voices) + catalog.otherGroups.flatMap(\.voices)
-        return all.first(where: { $0.id == id })?.displayName ?? "Automatic"
+        return all.first { $0.id == id }?.displayName ?? "Automatic"
     }
 
     // MARK: - Download voices footer
 
     #if os(iOS)
-    @ViewBuilder
-    private var downloadVoicesRow: some View {
+    @ViewBuilder private var downloadVoicesRow: some View {
         Button {
             openVoiceSettings()
         } label: {
@@ -258,8 +256,7 @@ struct ReaderListenControls: View {
 
     // MARK: - Footer messages
 
-    @ViewBuilder
-    private var footerMessages: some View {
+    @ViewBuilder private var footerMessages: some View {
         if let error = speech.errorMessage {
             Text(error)
                 .font(.caption)

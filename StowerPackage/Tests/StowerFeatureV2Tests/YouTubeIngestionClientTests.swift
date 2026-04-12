@@ -1,11 +1,10 @@
 import Foundation
-import Testing
-@testable import StowerFeature
 import StowerData
+@testable import StowerFeature
+import Testing
 
 @Suite
 struct YouTubeIngestionClientTests {
-
     private static let videoID = "dQw4w9WgXcQ"
     private static let watchURL = URL(string: "https://www.youtube.com/watch?v=\(videoID)")!
 
@@ -66,8 +65,8 @@ struct YouTubeIngestionClientTests {
     /// Returns 404 for anything else so a regression would surface loudly.
     private static func makeFetch(
         oembedBody: String?,
-        oembedStatus: Int = 200,
         watchBody: String?,
+        oembedStatus: Int = 200,
         watchStatus: Int = 200
     ) -> @Sendable (URLRequest) async throws -> (Data, URLResponse) {
         { request in
@@ -138,8 +137,13 @@ struct YouTubeIngestionClientTests {
         let paragraphTexts: [String] = blocks.dropFirst().compactMap { block in
             guard case let .paragraph(inlines) = block else { return nil }
             return inlines.compactMap { inline in
-                if case let .text(value) = inline { return value } else { return nil }
-            }.joined()
+                if case let .text(value) = inline {
+                    return value
+                } else {
+                    return nil
+                }
+            }
+            .joined()
         }
         #expect(paragraphTexts == [
             "First paragraph of the full description.",
@@ -220,8 +224,8 @@ struct YouTubeIngestionClientTests {
         let client = YouTubeIngestionClient.make(
             fetch: Self.makeFetch(
                 oembedBody: "",
-                oembedStatus: 401,
-                watchBody: Self.watchPageHTMLWithoutPlayerResponse
+                watchBody: Self.watchPageHTMLWithoutPlayerResponse,
+                oembedStatus: 401
             ),
             downloadImage: { _ in Data([0xFF, 0xD8, 0xFF]) },
             imageStorageDirectory: scratch

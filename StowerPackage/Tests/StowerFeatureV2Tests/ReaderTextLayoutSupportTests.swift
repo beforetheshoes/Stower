@@ -1,6 +1,6 @@
 import Foundation
-import Testing
 @testable import StowerFeature
+import Testing
 
 @Suite
 struct ReaderTextLayoutSupportTests {
@@ -9,7 +9,7 @@ struct ReaderTextLayoutSupportTests {
         let inlines: [ReaderInline] = [
             .text("Hello"),
             .strong("world"),
-            .emphasis("again")
+            .emphasis("again"),
         ]
 
         let output = ReaderTextLayoutSupport.makeInlineAttributedString(from: inlines)
@@ -28,7 +28,7 @@ struct ReaderTextLayoutSupportTests {
             .emphasis("em"),
             .strong("strong"),
             .code("code"),
-            .strikethrough("strike")
+            .strikethrough("strike"),
         ]
         let attributed = ReaderTextLayoutSupport.makeInlineAttributedString(from: inlines)
         let rendered = String(attributed.characters)

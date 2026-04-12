@@ -1,6 +1,6 @@
 import Foundation
-import Testing
 @testable import StowerFeature
+import Testing
 
 @Suite
 struct AddItemExtractorTests {
@@ -35,8 +35,8 @@ struct AddItemExtractorTests {
         #expect(result.siteName == "Terry Godier")
         #expect(result.processingState == .ready || result.processingState == .partial)
         #expect(result.document.blocks.count >= 3)
-        #expect(result.media.contains(where: { $0.kind == .image }))
-        #expect(result.embeds.contains(where: { $0.provider == "Youtube" || $0.provider == "YouTube" }))
+        #expect(result.media.contains { $0.kind == .image })
+        #expect(result.embeds.contains { $0.provider == "Youtube" || $0.provider == "YouTube" })
     }
 
     @Test
@@ -65,7 +65,7 @@ struct AddItemExtractorTests {
         }
 
         #expect(paragraphCount >= 2)
-        #expect(result.media.contains(where: { $0.kind == .image }))
+        #expect(result.media.contains { $0.kind == .image })
         #expect(!result.plainText.contains("All Items 47 Daring Fireball"))
     }
 
@@ -116,9 +116,9 @@ struct AddItemExtractorTests {
             URL(string: "https://example.com/images")!
         )
 
-        #expect(!result.media.contains(where: { $0.sourceURL.contains("avatar") }))
-        #expect(result.media.contains(where: { $0.sourceURL.contains("hero.webp") }))
-        #expect(result.media.contains(where: { $0.caption == "Revenue trend, 2020-2026" }))
+        #expect(!result.media.contains { $0.sourceURL.contains("avatar") })
+        #expect(result.media.contains { $0.sourceURL.contains("hero.webp") })
+        #expect(result.media.contains { $0.caption == "Revenue trend, 2020-2026" })
     }
 
     @Test
@@ -140,7 +140,7 @@ struct AddItemExtractorTests {
             URL(string: "https://example.com/noscript")!
         )
 
-        #expect(result.media.contains(where: { $0.sourceURL.contains("fallback-image.jpg") }))
+        #expect(result.media.contains { $0.sourceURL.contains("fallback-image.jpg") })
     }
 
     @Test
@@ -167,9 +167,11 @@ struct AddItemExtractorTests {
             URL(string: "https://example.com/substack-image-links")!
         )
 
-        #expect(result.media.contains(where: { $0.sourceURL.contains("ec5279eb-e12f-408f-8727-ffcc7b1f3ba7") }))
+        #expect(result.media.contains { $0.sourceURL.contains("ec5279eb-e12f-408f-8727-ffcc7b1f3ba7") })
         #expect(result.document.blocks.contains { block in
-            if case .figure = block { return true }
+            if case .figure = block {
+                return true
+            }
             return false
         })
     }

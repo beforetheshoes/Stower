@@ -1,12 +1,11 @@
 import Foundation
-import Testing
 @testable import StowerFeature
+import Testing
 
 /// Tests here must run serialized because `StubProtocol` keeps a static
 /// URL→response registry that would race under the default parallel runner.
 @Suite(.serialized)
 struct ArchiveServerFetchThroughTests {
-
     // MARK: - Metadata sidecar
 
     @Test
@@ -75,8 +74,8 @@ struct ArchiveServerFetchThroughTests {
         StubProtocol.reset()
         StubProtocol.register(
             url: "https://stub.test/api/get-metrics",
-            status: 404,
-            body: Data()
+            body: Data(),
+            status: 404
         )
 
         let session = makeStubSession()
@@ -141,7 +140,7 @@ final class StubProtocol: URLProtocol {
     }
 
     private static let lock = NSLock()
-    nonisolated(unsafe) private static var registry: [String: StubbedResponse] = [:]
+    nonisolated(unsafe) private static var registry: [String: StubbedResponse] = [:] // swiftlint:disable:this prefer_let_over_var
 
     static func reset() {
         lock.lock()
@@ -149,20 +148,20 @@ final class StubProtocol: URLProtocol {
         lock.unlock()
     }
 
-    static func register(url: String, status: Int = 200, body: Data) {
+    static func register(url: String, body: Data, status: Int = 200) {
         lock.lock()
         registry[url] = StubbedResponse(status: status, body: body)
         lock.unlock()
     }
 
-    override class func canInit(with request: URLRequest) -> Bool {
+    override static func canInit(with request: URLRequest) -> Bool {
         guard let url = request.url?.absoluteString else { return false }
         lock.lock()
         defer { lock.unlock() }
         return registry[url] != nil
     }
 
-    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override static func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
         guard let url = request.url, let urlString = request.url?.absoluteString else {

@@ -59,7 +59,7 @@ extension ReaderSpeechClient {
         )
     }()
 
-    public static let test: ReaderSpeechClient = ReaderSpeechClient(
+    public static let test = ReaderSpeechClient(
         start: { _, _ in
             AsyncThrowingStream { continuation in
                 continuation.finish()
@@ -104,6 +104,7 @@ private final class LiveReaderSpeechSynthDriver: NSObject {
         let blockIndex: Int
         let sequence: Int
     }
+    // swiftlint:disable:next prefer_let_over_var
     private var utteranceToPosition: [ObjectIdentifier: UtterancePosition] = [:]
     private var isCancelled = false
 
@@ -174,7 +175,7 @@ private final class LiveReaderSpeechSynthDriver: NSObject {
         continuation = nil
     }
 
-    fileprivate func handleDidStart(utteranceID: ObjectIdentifier) {
+    private func handleDidStart(utteranceID: ObjectIdentifier) {
         guard !isCancelled else { return }
         guard let position = utteranceToPosition[utteranceID] else { return }
         continuation?.yield(
@@ -182,7 +183,7 @@ private final class LiveReaderSpeechSynthDriver: NSObject {
         )
     }
 
-    fileprivate func handleWillSpeak(_ characterRange: NSRange, utteranceID: ObjectIdentifier) {
+    private func handleWillSpeak(_ characterRange: NSRange, utteranceID: ObjectIdentifier) {
         guard !isCancelled else { return }
         guard let position = utteranceToPosition[utteranceID] else { return }
         continuation?.yield(
@@ -194,7 +195,7 @@ private final class LiveReaderSpeechSynthDriver: NSObject {
         )
     }
 
-    fileprivate func handleDidFinish(utteranceID: ObjectIdentifier) {
+    private func handleDidFinish(utteranceID: ObjectIdentifier) {
         guard !isCancelled else { return }
         utteranceToPosition[utteranceID] = nil
 
@@ -242,7 +243,7 @@ private final class LiveReaderSpeechSynthDriver: NSObject {
     /// `AVSpeechUtteranceMaximumSpeechRate` keeps us inside the legal
     /// rate range even if the upstream multiplier somehow escapes its
     /// clamp.
-    fileprivate static func avSpeechRate(fromMultiplier multiplier: Float) -> Float {
+    private static func avSpeechRate(fromMultiplier multiplier: Float) -> Float {
         let clamped = max(0.2, min(multiplier, 2.0))
         let raw: Float
         if clamped < 1.0 {

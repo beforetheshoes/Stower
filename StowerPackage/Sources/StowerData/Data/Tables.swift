@@ -4,7 +4,7 @@ import SQLiteData
 // MARK: - Synced (CloudKit) Tables
 
 @Table
-public nonisolated struct SavedItemSyncTable: Hashable, Identifiable, Sendable {
+nonisolated public struct SavedItemSyncTable: Hashable, Identifiable, Sendable {
     public let id: UUID
     public var title: String = ""
     public var sourceURL: String?
@@ -35,7 +35,7 @@ public nonisolated struct SavedItemSyncTable: Hashable, Identifiable, Sendable {
 
 /// A user-created tag. CloudKit-synced; case-insensitively unique by name.
 @Table
-public nonisolated struct TagSyncTable: Hashable, Identifiable, Sendable {
+nonisolated public struct TagSyncTable: Hashable, Identifiable, Sendable {
     public let id: UUID
     public var name: String = ""
     public var colorHex: String?
@@ -46,7 +46,7 @@ public nonisolated struct TagSyncTable: Hashable, Identifiable, Sendable {
 /// Junction row assigning a tag to a saved item. Its own `id` so CloudKit
 /// records have a stable name; uniqueness is enforced by a composite index.
 @Table
-public nonisolated struct ItemTagSyncTable: Hashable, Identifiable, Sendable {
+nonisolated public struct ItemTagSyncTable: Hashable, Identifiable, Sendable {
     public let id: UUID
     public var itemID: UUID
     public var tagID: UUID
@@ -56,7 +56,7 @@ public nonisolated struct ItemTagSyncTable: Hashable, Identifiable, Sendable {
 // MARK: - Local-Only Tables
 
 @Table
-public nonisolated struct SavedItemContentLocalTable: Hashable, Identifiable, Sendable {
+nonisolated public struct SavedItemContentLocalTable: Hashable, Identifiable, Sendable {
     @Column(primaryKey: true)
     public let itemID: UUID
 
@@ -89,7 +89,7 @@ public nonisolated struct SavedItemContentLocalTable: Hashable, Identifiable, Se
 /// local content table without re-fetching the (unavailable) PDF bytes.
 /// Never populated for URL/text items — those hydrate from the source URL.
 @Table
-public nonisolated struct SavedPDFContentSyncTable: Hashable, Identifiable, Sendable {
+nonisolated public struct SavedPDFContentSyncTable: Hashable, Identifiable, Sendable {
     public let id: UUID
     public var documentJSON: String = ""
     public var plainText: String = ""
@@ -98,7 +98,7 @@ public nonisolated struct SavedPDFContentSyncTable: Hashable, Identifiable, Send
 }
 
 @Table
-public nonisolated struct SavedMediaLocalTable: Hashable, Identifiable, Sendable {
+nonisolated public struct SavedMediaLocalTable: Hashable, Identifiable, Sendable {
     public let id: UUID
     public var itemID: UUID
     public var kind: String = "image"
@@ -116,7 +116,7 @@ public nonisolated struct SavedMediaLocalTable: Hashable, Identifiable, Sendable
 }
 
 @Table
-public nonisolated struct SavedEmbedLocalTable: Hashable, Identifiable, Sendable {
+nonisolated public struct SavedEmbedLocalTable: Hashable, Identifiable, Sendable {
     public let id: UUID
     public var itemID: UUID
     public var provider: String = ""
@@ -128,7 +128,7 @@ public nonisolated struct SavedEmbedLocalTable: Hashable, Identifiable, Sendable
 }
 
 @Table
-public nonisolated struct SavedImageRefLocalTable: Hashable, Identifiable, Sendable {
+nonisolated public struct SavedImageRefLocalTable: Hashable, Identifiable, Sendable {
     public let id: UUID
     public var itemID: UUID
     public var sourceURL: String?
@@ -140,10 +140,10 @@ public nonisolated struct SavedImageRefLocalTable: Hashable, Identifiable, Senda
 }
 
 @Table
-public nonisolated struct SavedImageAssetLocalTable: Hashable, Identifiable, Sendable {
+nonisolated public struct SavedImageAssetLocalTable: Hashable, Identifiable, Sendable {
     public let id: UUID
     public var itemID: UUID
-    public var imageData: Data = Data()
+    public var imageData: Data = Data() // swiftlint:disable:this redundant_type_annotation
     public var width: Int = 0
     public var height: Int = 0
     public var format: String = "jpg"
@@ -151,7 +151,7 @@ public nonisolated struct SavedImageAssetLocalTable: Hashable, Identifiable, Sen
 }
 
 @Table
-public nonisolated struct ImageDownloadSettingsLocalTable: Hashable, Identifiable, Sendable {
+nonisolated public struct ImageDownloadSettingsLocalTable: Hashable, Identifiable, Sendable {
     public let id: UUID
     public var globalAutoDownload: Bool = false
     public var askForNewSources: Bool = true
@@ -159,7 +159,7 @@ public nonisolated struct ImageDownloadSettingsLocalTable: Hashable, Identifiabl
 }
 
 @Table
-public nonisolated struct ReaderAppearanceSettingsLocalTable: Hashable, Identifiable, Sendable {
+nonisolated public struct ReaderAppearanceSettingsLocalTable: Hashable, Identifiable, Sendable {
     public let id: UUID
     public var fontSize: Double = 19
     public var fontStyle: String = "newYork"
@@ -175,11 +175,10 @@ public nonisolated struct ReaderAppearanceSettingsLocalTable: Hashable, Identifi
 }
 
 @Table
-public nonisolated struct IngestionJobLocalTable: Hashable, Identifiable, Sendable {
+nonisolated public struct IngestionJobLocalTable: Hashable, Identifiable, Sendable {
     public let id: UUID
     public var kind: String = "url"
     public var payload: String = ""
     public var createdAt: Date = .now
     public var processedAt: Date?
 }
-

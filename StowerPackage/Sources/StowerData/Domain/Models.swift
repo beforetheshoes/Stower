@@ -1,3 +1,4 @@
+// swiftlint:disable function_default_parameter_at_end
 import Foundation
 
 public struct SavedItem: Equatable, Identifiable, Sendable {
@@ -28,7 +29,7 @@ public struct SavedItem: Equatable, Identifiable, Sendable {
     public var deletedAt: Date?
     /// IDs of tags assigned to this item. Populated by repository reads via a
     /// batched junction-table query (never N+1).
-    public var tagIDs: [UUID]
+    public var tagIDs: [UUID] // swiftlint:disable:this prefer_let_over_var
 
     public init(
         id: UUID = UUID(),
@@ -104,11 +105,11 @@ public struct ImageDownloadSettings: Equatable, Sendable {
 }
 
 public enum ReaderFontStyle: String, Codable, CaseIterable, Equatable, Sendable {
-    case newYork
-    case timesNewRoman
-    case helveticaNeue
-    case avenirNext
-    case menlo
+    case newYork = "newYork"
+    case timesNewRoman = "timesNewRoman"
+    case helveticaNeue = "helveticaNeue"
+    case avenirNext = "avenirNext"
+    case menlo = "menlo"
 
     public var displayName: String {
         switch self {
@@ -127,8 +128,8 @@ public enum ReaderFontStyle: String, Codable, CaseIterable, Equatable, Sendable 
 }
 
 public enum ReaderJustification: String, Codable, CaseIterable, Equatable, Sendable {
-    case leading
-    case justified
+    case leading = "leading"
+    case justified = "justified"
 }
 
 /// The background palette driving the whole app — not just the reader.
@@ -136,17 +137,21 @@ public enum ReaderJustification: String, Codable, CaseIterable, Equatable, Senda
 /// switch it into light mode. Sepia is a custom warm-cream palette tuned to
 /// harmonise with Flexoki accent hues.
 public enum ReaderBackground: String, Codable, CaseIterable, Equatable, Sendable {
-    case paper
-    case white
-    case sepia
-    case black
+    case paper = "paper"
+    case white = "white"
+    case sepia = "sepia"
+    case black = "black"
 
     public var displayName: String {
         switch self {
-        case .paper: return "Paper"
-        case .white: return "White"
-        case .sepia: return "Sepia"
-        case .black: return "Black"
+        case .paper:
+            return "Paper"
+        case .white:
+            return "White"
+        case .sepia:
+            return "Sepia"
+        case .black:
+            return "Black"
         }
     }
 
@@ -156,11 +161,16 @@ public enum ReaderBackground: String, Codable, CaseIterable, Equatable, Sendable
     /// inserted by older app versions mid-migration, sync replay, etc.).
     public static func fromStored(_ raw: String?) -> ReaderBackground {
         guard let raw else { return .paper }
-        if let exact = ReaderBackground(rawValue: raw) { return exact }
+        if let exact = ReaderBackground(rawValue: raw) {
+            return exact
+        }
         switch raw {
-        case "dark": return .black
-        case "white": return .white
-        default: return .paper
+        case "dark":
+            return .black
+        case "white":
+            return .white
+        default:
+            return .paper
         }
     }
 }
@@ -169,18 +179,33 @@ public enum ReaderBackground: String, Codable, CaseIterable, Equatable, Sendable
 /// different shades depending on whether the current background is light or
 /// dark — see `FlexokiRaw.accent(_:isDark:)`.
 public enum FlexokiHue: String, Codable, CaseIterable, Equatable, Sendable {
-    case red, orange, yellow, green, cyan, blue, purple, magenta
+    case red = "red"
+    case orange = "orange"
+    case yellow = "yellow"
+    case green = "green"
+    case cyan = "cyan"
+    case blue = "blue"
+    case purple = "purple"
+    case magenta = "magenta"
 
     public var displayName: String {
         switch self {
-        case .red: return "Red"
-        case .orange: return "Orange"
-        case .yellow: return "Yellow"
-        case .green: return "Green"
-        case .cyan: return "Cyan"
-        case .blue: return "Blue"
-        case .purple: return "Purple"
-        case .magenta: return "Magenta"
+        case .red:
+            return "Red"
+        case .orange:
+            return "Orange"
+        case .yellow:
+            return "Yellow"
+        case .green:
+            return "Green"
+        case .cyan:
+            return "Cyan"
+        case .blue:
+            return "Blue"
+        case .purple:
+            return "Purple"
+        case .magenta:
+            return "Magenta"
         }
     }
 
@@ -240,10 +265,10 @@ public struct ReaderAppearanceSettings: Equatable, Sendable {
 
 public struct IngestionJob: Equatable, Identifiable, Sendable {
     public enum Kind: String, Codable, Sendable {
-        case url
-        case text
-        case hydrate
-        case pdf
+        case url = "url"
+        case text = "text"
+        case hydrate = "hydrate"
+        case pdf = "pdf"
     }
 
     public let id: UUID
@@ -268,3 +293,4 @@ public struct HydrationPayload: Codable, Equatable, Sendable {
         self.url = url
     }
 }
+// swiftlint:enable function_default_parameter_at_end

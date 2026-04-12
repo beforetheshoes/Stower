@@ -7,6 +7,7 @@ public struct LibraryFeature {
 
     @ObservableState
     public struct State: Equatable {
+        // swiftlint:disable:next prefer_let_over_var
         public var items: [SavedItem] = []
         public var query = ""
         public var sourceURL = ""
@@ -18,7 +19,7 @@ public struct LibraryFeature {
         public var filter: LibraryFilter = .all
         /// All tags known to the repository — drives the "Tags" submenu in the
         /// library row context menu. Refreshed lazily via observeLibraryChanges.
-        public var availableTags: [Tag] = []
+        public var availableTags: [Tag] = [] // swiftlint:disable:this prefer_let_over_var
 
         /// Library search matches against title, URL, site name, author,
         /// excerpt, AND full body text (`item.content`). The body-text
@@ -30,14 +31,28 @@ public struct LibraryFeature {
         /// library window, which is fine at typical library sizes; a
         /// future optimization could push this into a SQLite FTS5 index.
         public var filteredItems: [SavedItem] {
-            guard !query.isEmpty else { return items }
+            guard !query.isEmpty else {
+                return items
+            }
             return items.filter { item in
-                if item.title.localizedStandardContains(query) { return true }
-                if let url = item.sourceURL, url.localizedStandardContains(query) { return true }
-                if let site = item.siteName, site.localizedStandardContains(query) { return true }
-                if let author = item.author, author.localizedStandardContains(query) { return true }
-                if let excerpt = item.excerpt, excerpt.localizedStandardContains(query) { return true }
-                if !item.content.isEmpty, item.content.localizedStandardContains(query) { return true }
+                if item.title.localizedStandardContains(query) {
+                    return true
+                }
+                if let url = item.sourceURL, url.localizedStandardContains(query) {
+                    return true
+                }
+                if let site = item.siteName, site.localizedStandardContains(query) {
+                    return true
+                }
+                if let author = item.author, author.localizedStandardContains(query) {
+                    return true
+                }
+                if let excerpt = item.excerpt, excerpt.localizedStandardContains(query) {
+                    return true
+                }
+                if !item.content.isEmpty, item.content.localizedStandardContains(query) {
+                    return true
+                }
                 return false
             }
         }
@@ -79,9 +94,12 @@ public struct LibraryFeature {
         case observeChanges
     }
 
-    @Dependency(\.stowerRepository) var repository
-    @Dependency(\.urlIngestionClient) var ingestionClient
-    @Dependency(\.pdfIngestionClient) var pdfIngestionClient
+    @Dependency(\.stowerRepository)
+    var repository
+    @Dependency(\.urlIngestionClient)
+    var ingestionClient
+    @Dependency(\.pdfIngestionClient)
+    var pdfIngestionClient
 
     public var body: some ReducerOf<Self> {
         Reduce { state, action in
@@ -121,7 +139,7 @@ public struct LibraryFeature {
                 state.availableTags = tags
                 return .none
 
-            case .toggleTagOnItem(let itemID, let tagID):
+            case let .toggleTagOnItem(itemID, tagID):
                 guard let idx = state.items.firstIndex(where: { $0.id == itemID }) else {
                     return .none
                 }
@@ -450,12 +468,19 @@ private func normalizeSourceURL(_ value: String) -> String? {
 /// whether newly-saved items should be pre-inserted at the top of the list.
 private func shouldShowInFilter(_ item: SavedItem, filter: LibraryFilter) -> Bool {
     switch filter {
-    case .all: return item.deletedAt == nil
-    case .unread: return item.deletedAt == nil && !item.isRead
-    case .read: return item.deletedAt == nil && item.isRead
-    case .starred: return item.deletedAt == nil && item.isStarred
-    case .untagged: return item.deletedAt == nil && item.tagIDs.isEmpty
-    case .recentlyDeleted: return item.deletedAt != nil
-    case .tag(let id): return item.deletedAt == nil && item.tagIDs.contains(id)
+    case .all:
+        return item.deletedAt == nil
+    case .unread:
+        return item.deletedAt == nil && !item.isRead
+    case .read:
+        return item.deletedAt == nil && item.isRead
+    case .starred:
+        return item.deletedAt == nil && item.isStarred
+    case .untagged:
+        return item.deletedAt == nil && item.tagIDs.isEmpty
+    case .recentlyDeleted:
+        return item.deletedAt != nil
+    case let .tag(id):
+        return item.deletedAt == nil && item.tagIDs.contains(id)
     }
 }

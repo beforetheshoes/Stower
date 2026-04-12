@@ -1,11 +1,10 @@
 import Foundation
-import Testing
-@testable import StowerFeature
 import StowerData
+@testable import StowerFeature
+import Testing
 
 @Suite
 struct YouTubeURLDetectorTests {
-
     private static let validID = "dQw4w9WgXcQ"
 
     @Test(arguments: [

@@ -1,5 +1,5 @@
-import SwiftUI
 import StowerData
+import SwiftUI
 
 struct ReaderAppearanceControls: View {
     let appearance: ReaderAppearanceSettings
@@ -87,8 +87,7 @@ struct ReaderAppearanceControls: View {
 
     // MARK: - Swatch sections
 
-    @ViewBuilder
-    private var backgroundSection: some View {
+    @ViewBuilder private var backgroundSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             controlTitle("Background", value: appearance.background.displayName)
             HStack(spacing: 12) {
@@ -106,8 +105,7 @@ struct ReaderAppearanceControls: View {
         }
     }
 
-    @ViewBuilder
-    private var primaryAccentSection: some View {
+    @ViewBuilder private var primaryAccentSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             controlTitle("Primary Accent", value: appearance.primaryAccent.displayName)
             AccentSwatchRow(
@@ -120,8 +118,7 @@ struct ReaderAppearanceControls: View {
         }
     }
 
-    @ViewBuilder
-    private var secondaryAccentSection: some View {
+    @ViewBuilder private var secondaryAccentSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             controlTitle("Secondary Accent", value: appearance.secondaryAccent.displayName)
             AccentSwatchRow(

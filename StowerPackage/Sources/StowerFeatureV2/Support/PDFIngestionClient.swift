@@ -13,7 +13,7 @@ import UIKit
 import AppKit
 #endif
 
-private let pdfIngestLog = Logger(
+private let kPDFIngestLog = Logger(
     subsystem: "com.ryanleewilliams.stower",
     category: "PDFIngest"
 )
@@ -28,6 +28,7 @@ public enum PDFIngestionError: Error, LocalizedError {
         case .unreadable:
             return "The PDF couldn't be opened. It may be corrupted or not a valid PDF."
         case .passwordProtected:
+            // swiftlint:disable:next no_sensitive_logging
             return "This PDF is password-protected. Open it in another app to remove the password, then re-share it."
         case .emptyDocument:
             return "The PDF contains no pages."
@@ -63,13 +64,13 @@ public struct PDFIngestionClient: Sendable {
         self.ingest = ingest
     }
 
-    public static let failing = PDFIngestionClient(
-        ingest: { _ in throw PDFIngestionError.unreadable }
-    )
+    public static let failing = PDFIngestionClient { _ in
+        throw PDFIngestionError.unreadable
+    }
 
-    public static let live = PDFIngestionClient(
-        ingest: { url in try await pdfIngest(url: url) }
-    )
+    public static let live = PDFIngestionClient { url in
+        try await pdfIngest(url: url)
+    }
 }
 
 // MARK: - Pipeline
@@ -103,7 +104,7 @@ private func pdfIngest(url: URL) async throws -> IngestionResult {
 
     // Wipe any stale page images from a previous ingestion of the same
     // SHA. Without this, re-ingesting a PDF that had more pages last
-    // time would leave orphaned `pdf-page-N.jpg` files behind.
+    // time would leave orphaned `pdf-page-N.jpg` files remaining.
     PDFArchiver.deletePageImages(for: itemID)
 
     let attributes = pdf.documentAttributes ?? [:]
@@ -114,15 +115,19 @@ private func pdfIngest(url: URL) async throws -> IngestionResult {
     let creationDate = attributes[PDFDocumentAttribute.creationDateAttribute] as? Date
     let fallbackTitle = url.deletingPathExtension().lastPathComponent
     let title: String = {
-        if let metaTitle, !metaTitle.isEmpty { return metaTitle }
+        if let metaTitle, !metaTitle.isEmpty {
+            return metaTitle
+        }
         return fallbackTitle.isEmpty ? "Untitled PDF" : fallbackTitle
     }()
 
-    pdfIngestLog.notice(
+    kPDFIngestLog.notice(
         "Ingesting PDF \"\(title, privacy: .public)\" (\(pdf.pageCount, privacy: .public) pages, sha=\(hexHash, privacy: .public))"
     )
 
+    // swiftlint:disable:next prefer_let_over_var
     var blocks: [ReaderBlock] = []
+    // swiftlint:disable:next prefer_let_over_var
     var plainTextChunks: [String] = []
     var sawOCRFallback = false
 
@@ -134,7 +139,7 @@ private func pdfIngest(url: URL) async throws -> IngestionResult {
         // storage or memory. This same image is used both for display
         // and, when needed, for Vision OCR text extraction.
         guard let image = rasterizePage(page, scale: 2.0) else {
-            pdfIngestLog.error("Failed to rasterize page \(pageIndex, privacy: .public)")
+            kPDFIngestLog.error("Failed to rasterize page \(pageIndex, privacy: .public)")
             continue
         }
 
@@ -145,7 +150,7 @@ private func pdfIngest(url: URL) async throws -> IngestionResult {
         do {
             try PDFArchiver.archivePageImage(image, for: itemID, pageIndex: pageIndex)
         } catch {
-            pdfIngestLog.error(
+            kPDFIngestLog.error(
                 "Failed to archive page image \(pageIndex, privacy: .public): \(String(describing: error), privacy: .public)"
             )
             continue
@@ -209,7 +214,9 @@ private func pdfIngest(url: URL) async throws -> IngestionResult {
     )
 
     let media = blocks.compactMap { block -> MediaDescriptor? in
-        if case .figure(let descriptor) = block { return descriptor }
+        if case .figure(let descriptor) = block {
+            return descriptor
+        }
         return nil
     }
 

@@ -8,7 +8,7 @@ import NaturalLanguage
 /// v1 is per-question and in-memory: the embedding is computed for each
 /// chunk on every Ask call. If latency becomes a problem on very long
 /// articles, this can be cached per itemID inside the AI client.
-public struct ArticleRetriever {
+public enum ArticleRetriever {
     public static func topChunks(
         question: String,
         chunks: [ArticleChunker.Chunk],
@@ -28,6 +28,7 @@ public struct ArticleRetriever {
             return Array(chunks.prefix(k))
         }
 
+        // swiftlint:disable:next prefer_let_over_var
         var scored: [(chunk: ArticleChunker.Chunk, score: Double)] = []
         scored.reserveCapacity(chunks.count)
 
@@ -68,6 +69,7 @@ public struct ArticleRetriever {
             return nil
         }
 
+        // swiftlint:disable:next prefer_let_over_var
         var sum: [Double] = []
         var count = 0
 
@@ -98,6 +100,7 @@ public struct ArticleRetriever {
     private static func splitSentences(_ text: String) -> [String] {
         let tokenizer = NLTokenizer(unit: .sentence)
         tokenizer.string = text
+        // swiftlint:disable:next prefer_let_over_var
         var sentences: [String] = []
         tokenizer.enumerateTokens(in: text.startIndex..<text.endIndex) { range, _ in
             let sentence = String(text[range]).trimmingCharacters(in: .whitespacesAndNewlines)

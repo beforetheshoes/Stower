@@ -29,7 +29,7 @@ public struct SpeechBlock: Equatable, Sendable {
     public let kind: Kind
     public let text: String
 
-    public init(index: Int, sequence: Int? = nil, kind: Kind, text: String) {
+    public init(index: Int, kind: Kind, text: String, sequence: Int? = nil) {
         self.index = index
         self.sequence = sequence ?? index
         self.kind = kind
@@ -39,6 +39,7 @@ public struct SpeechBlock: Equatable, Sendable {
 
 enum ReaderSpeechTextBuilder {
     static func speechBlocks(document: ReaderDocument) -> [SpeechBlock] {
+        // swiftlint:disable:next prefer_let_over_var
         var output: [SpeechBlock] = []
         output.reserveCapacity(document.blocks.count)
 
@@ -68,7 +69,7 @@ enum ReaderSpeechTextBuilder {
                     output.append(SpeechBlock(index: index, kind: .blockquote, text: text))
                 }
 
-            case .callout(let title, let inlines):
+            case let .callout(title, inlines):
                 let body = ReaderTextLayoutSupport.inlinePlainText(from: inlines)
                 let combined: String
                 if let title, !title.isEmpty, !body.isEmpty {
@@ -146,6 +147,7 @@ enum ReaderSpeechTextBuilder {
     /// getting block-level output, so summarization, retrieval, and
     /// position saving are unaffected.
     static func sentenceSplit(_ blocks: [SpeechBlock]) -> [SpeechBlock] {
+        // swiftlint:disable:next prefer_let_over_var
         var output: [SpeechBlock] = []
         output.reserveCapacity(blocks.count * 3)
         var sequence = 0
@@ -159,9 +161,9 @@ enum ReaderSpeechTextBuilder {
                 output.append(
                     SpeechBlock(
                         index: block.index,
-                        sequence: sequence,
                         kind: block.kind,
-                        text: block.text
+                        text: block.text,
+                        sequence: sequence
                     )
                 )
                 sequence += 1
@@ -171,9 +173,9 @@ enum ReaderSpeechTextBuilder {
                 output.append(
                     SpeechBlock(
                         index: block.index,
-                        sequence: sequence,
                         kind: block.kind,
-                        text: sentence
+                        text: sentence,
+                        sequence: sequence
                     )
                 )
                 sequence += 1
@@ -191,6 +193,7 @@ enum ReaderSpeechTextBuilder {
 
         let tokenizer = NLTokenizer(unit: .sentence)
         tokenizer.string = trimmed
+        // swiftlint:disable:next prefer_let_over_var
         var sentences: [String] = []
         tokenizer.enumerateTokens(in: trimmed.startIndex..<trimmed.endIndex) { range, _ in
             let sentence = String(trimmed[range]).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -216,7 +219,7 @@ enum ReaderSpeechTextBuilder {
 
         // Collapse whitespace.
         let components = text
-            .split(whereSeparator: { $0.isWhitespace || $0.isNewline })
+            .split { $0.isWhitespace || $0.isNewline }
             .map(String.init)
         return components.joined(separator: " ")
     }

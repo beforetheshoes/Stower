@@ -3,7 +3,8 @@ import SwiftUI
 
 public struct SettingsScreen: View {
     @Bindable var store: StoreOf<SettingsFeature>
-    @Environment(\.flexokiPalette) private var palette
+    @Environment(\.flexokiPalette)
+    private var palette
 
     public init(store: StoreOf<SettingsFeature>) {
         self.store = store

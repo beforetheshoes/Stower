@@ -9,6 +9,7 @@ public struct SidebarFeature {
     public struct State: Equatable {
         public var selection: LibraryFilter = .all
         public var counts: LibraryListCounts = .zero
+        // swiftlint:disable:next prefer_let_over_var
         public var tags: [Tag] = []
         public var isLoading = false
         public var errorMessage: String?
@@ -55,7 +56,8 @@ public struct SidebarFeature {
         case observedChange
     }
 
-    @Dependency(\.stowerRepository) var repository
+    @Dependency(\.stowerRepository)
+    var repository
 
     enum CancelID: Hashable { case observeChanges }
 
@@ -89,7 +91,7 @@ public struct SidebarFeature {
                     }
                 }
 
-            case .loaded(let counts, let tags):
+            case let .loaded(counts, tags):
                 state.isLoading = false
                 state.counts = counts
                 state.tags = tags

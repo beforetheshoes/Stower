@@ -12,14 +12,21 @@ struct ReaderDocumentSanitizerTests {
     private func concatenated(_ inlines: [ReaderInline]) -> String {
         inlines.map { inline -> String in
             switch inline {
-            case .text(let value): return value
-            case .link(let label, _): return label
-            case .emphasis(let value): return value
-            case .strong(let value): return value
-            case .code(let value): return value
-            case .strikethrough(let value): return value
+            case .text(let value):
+                return value
+            case .link(let label, _):
+                return label
+            case .emphasis(let value):
+                return value
+            case .strong(let value):
+                return value
+            case .code(let value):
+                return value
+            case .strikethrough(let value):
+                return value
             }
-        }.joined()
+        }
+        .joined()
     }
 
     private func sanitizedParagraph(_ inlines: [ReaderInline]) -> [ReaderInline] {

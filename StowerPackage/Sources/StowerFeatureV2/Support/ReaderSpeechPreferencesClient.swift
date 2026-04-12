@@ -22,7 +22,7 @@ extension ReaderSpeechPreferencesClient {
         static let rate = "stower.reader.speech.rate"
     }
 
-    public static let live: ReaderSpeechPreferencesClient = ReaderSpeechPreferencesClient(
+    public static let live = ReaderSpeechPreferencesClient(
         load: {
             let defaults = UserDefaults.standard
             let voiceID = defaults.string(forKey: Keys.voiceID)
@@ -41,7 +41,7 @@ extension ReaderSpeechPreferencesClient {
         }
     )
 
-    public static let test: ReaderSpeechPreferencesClient = ReaderSpeechPreferencesClient(
+    public static let test = ReaderSpeechPreferencesClient(
         load: { ReaderSpeechPreferences() },
         save: { _ in }
     )
