@@ -93,6 +93,11 @@ jobs:
 
       - name: Test
         run: |
-          cd StowerPackage && swift test \
+          xcodebuild test \
+            -workspace Stower.xcworkspace \
+            -scheme StowerFeature \
+            -destination "platform=iOS Simulator,name=iPhone 16" \
             -skipMacroValidation \
-            -skipPackagePluginValidation
+            -skipPackagePluginValidation \
+            CODE_SIGNING_ALLOWED=NO \
+            -quiet
