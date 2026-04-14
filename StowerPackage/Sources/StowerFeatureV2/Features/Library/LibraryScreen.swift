@@ -23,8 +23,9 @@ public struct LibraryScreen: View {
     private let onOpenFilters: (() -> Void)?
     @State private var isAddURLPresented = false
     @State private var isTextImportPresented = false
-    @State private var isTextFilePickerPresented = false
-    @State private var isPDFPickerPresented = false
+    #if os(iOS)
+    @State private var activeImportPicker: IOSImportPicker?
+    #endif
 
     public init(
         store: StoreOf<LibraryFeature>,
@@ -311,18 +312,21 @@ public struct LibraryScreen: View {
                 isTextImportPresented = false
             }
         }
-        .fileImporter(
-            isPresented: $isTextFilePickerPresented,
-            allowedContentTypes: textImportContentTypes
-        ) { result in
-            handleTextImport(result)
+        #if os(iOS)
+        .sheet(item: $activeImportPicker) { picker in
+            IOSDocumentPicker(
+                allowedContentTypes: picker == .text ? textImportContentTypes : [.pdf]
+            ) { result in
+                activeImportPicker = nil
+                switch picker {
+                case .text:
+                    handleTextImport(result)
+                case .pdf:
+                    handlePDFImport(result)
+                }
+            }
         }
-        .fileImporter(
-            isPresented: $isPDFPickerPresented,
-            allowedContentTypes: [.pdf]
-        ) { result in
-            handlePDFImport(result)
-        }
+        #endif
         .sheet(isPresented: Binding(
             get: { store.inlineTagCreation != nil },
             set: { if !$0 { store.send(.inlineCreateTagDismissed) } }
@@ -383,7 +387,7 @@ public struct LibraryScreen: View {
         }
         #else
         DispatchQueue.main.async {
-            isTextFilePickerPresented = true
+            activeImportPicker = .text
         }
         #endif
     }
@@ -398,7 +402,7 @@ public struct LibraryScreen: View {
         }
         #else
         DispatchQueue.main.async {
-            isPDFPickerPresented = true
+            activeImportPicker = .pdf
         }
         #endif
     }
@@ -499,6 +503,54 @@ public struct LibraryScreen: View {
     }
 
     #if os(iOS)
+    private enum IOSImportPicker: String, Identifiable {
+        case text = "text"
+        case pdf = "pdf"
+
+        var id: String { rawValue }
+    }
+
+    private struct IOSDocumentPicker: UIViewControllerRepresentable {
+        let allowedContentTypes: [UTType]
+        let onComplete: (Result<URL, Error>) -> Void
+
+        func makeCoordinator() -> Coordinator {
+            Coordinator(onComplete: onComplete)
+        }
+
+        func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+            let controller = UIDocumentPickerViewController(
+                forOpeningContentTypes: allowedContentTypes,
+                asCopy: false
+            )
+            controller.delegate = context.coordinator
+            controller.allowsMultipleSelection = false
+            return controller
+        }
+
+        func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
+
+        final class Coordinator: NSObject, UIDocumentPickerDelegate {
+            private let onComplete: (Result<URL, Error>) -> Void
+
+            init(onComplete: @escaping (Result<URL, Error>) -> Void) {
+                self.onComplete = onComplete
+            }
+
+            func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+                guard let url = urls.first else {
+                    onComplete(.failure(NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError)))
+                    return
+                }
+                onComplete(.success(url))
+            }
+
+            func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+                onComplete(.failure(NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError)))
+            }
+        }
+    }
+
     /// Modal URL-entry form shown when the user taps the toolbar "+".
     @ViewBuilder private var addURLSheet: some View {
         NavigationStack {
