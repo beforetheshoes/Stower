@@ -29,7 +29,7 @@ extension StowerRepository {
                     .fetchAll(db)
                 return rows.compactMap { row -> IngestionJob? in
                     guard let kind = IngestionJob.Kind(rawValue: row.kind) else { return nil }
-                    return IngestionJob(id: row.id, kind: kind, payload: row.payload, createdAt: row.createdAt)
+                    return IngestionJob(kind: kind, payload: row.payload, id: row.id, createdAt: row.createdAt)
                 }
             }
         }

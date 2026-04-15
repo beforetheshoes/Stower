@@ -22,8 +22,8 @@ struct ReadingProgressTests {
     func libraryReadingProgressShowsOnlyForPartialNonWebItems() {
         let partial = SavedItem(
             title: "Partial",
-            renderFormat: .structuredV1,
             content: "Body",
+            renderFormat: .structuredV1,
             lastReadBlockIndex: 2,
             progressUnitCount: 6,
             isRead: true
@@ -32,8 +32,8 @@ struct ReadingProgressTests {
 
         let unread = SavedItem(
             title: "Unread",
-            renderFormat: .structuredV1,
             content: "Body",
+            renderFormat: .structuredV1,
             lastReadBlockIndex: 2,
             progressUnitCount: 6,
             isRead: false
@@ -42,8 +42,8 @@ struct ReadingProgressTests {
 
         let complete = SavedItem(
             title: "Complete",
-            renderFormat: .structuredV1,
             content: "Body",
+            renderFormat: .structuredV1,
             lastReadBlockIndex: 5,
             progressUnitCount: 6,
             isRead: true
@@ -52,8 +52,8 @@ struct ReadingProgressTests {
 
         let webView = SavedItem(
             title: "Web",
-            renderFormat: .webView,
             content: "Body",
+            renderFormat: .webView,
             lastReadBlockIndex: 2,
             progressUnitCount: 6,
             isRead: true

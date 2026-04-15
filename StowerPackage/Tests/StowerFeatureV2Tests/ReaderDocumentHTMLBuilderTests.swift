@@ -9,9 +9,9 @@ struct ReaderDocumentHTMLBuilderTests {
     func buildReaderHTML_includesHorizontalScrollLockRuntime() {
         let item = SavedItem(
             title: "Reader",
+            content: "Body",
             sourceURL: "https://example.com/article",
-            renderFormat: .structuredV1,
-            content: "Body"
+            renderFormat: .structuredV1
         )
         let document = ReaderDocument(
             title: "Reader",

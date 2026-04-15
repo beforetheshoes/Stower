@@ -35,11 +35,10 @@ enum TextAuthoringPreviewSupport {
         }
 
         let item = SavedItem(
-            id: UUID(),
             title: result.title,
+            content: result.plainText,
             renderFormat: result.renderFormat,
-            documentVersion: result.document.version,
-            content: result.plainText
+            documentVersion: result.document.version
         )
         return ReaderDocumentHTMLBuilder.buildReaderHTML(
             item: item,
@@ -70,18 +69,17 @@ public struct TextAuthoringSheet: View {
     @State private var activePane: TextAuthoringPane = .write
     @State private var previewItemID = UUID()
 
-    // swiftlint:disable:next function_default_parameter_at_end
     public init(
         title: Binding<String>,
         text: Binding<String>,
         mode: Binding<TextImportMode>,
         palette: FlexokiPalette,
-        appearance: ReaderAppearanceSettings = .init(),
         errorMessage: String?,
         isSaving: Bool,
         navigationTitle: String,
         onCancel: @escaping () -> Void,
-        onSave: @escaping () -> Void
+        onSave: @escaping () -> Void,
+        appearance: ReaderAppearanceSettings = .init()
     ) {
         self._title = title
         self._text = text

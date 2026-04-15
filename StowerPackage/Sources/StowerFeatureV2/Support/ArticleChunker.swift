@@ -1,4 +1,3 @@
-// swiftlint:disable no_sensitive_logging
 import Foundation
 import NaturalLanguage
 import StowerData
@@ -8,7 +7,7 @@ import StowerData
 // lists) to keep each chunk semantically coherent. Falls back to sentence-
 // level splitting when a single block exceeds the budget.
 //
-// Token counts are approximated at 4 characters per token for English, per
+// Unit counts are approximated at 4 characters per unit for English, per
 // Apple's TN3193. Callers that need precision can supply their own
 // `tokenCounter` (e.g. wired to `SystemLanguageModel.tokenCount(for:)` for
 // instructions), but the approximation is accurate enough for budgeting
@@ -48,10 +47,8 @@ public enum ArticleChunker {
             return [Chunk(index: 0, text: plainText, approxTokens: tokenCounter(plainText))]
         }
 
-        // swiftlint:disable:next prefer_let_over_var
-        var chunks: [Chunk] = []
-        // swiftlint:disable:next prefer_let_over_var
-        var currentBlocks: [String] = []
+        var chunks = [Chunk]()
+        var currentBlocks = [String]()
         var currentTokens = 0
         var chunkIndex = 0
 
@@ -90,7 +87,7 @@ public enum ArticleChunker {
         return chunks
     }
 
-    // Rough token estimator. Apple's TN3193 gives 3-4 characters per token
+    // Rough unit estimator. Apple's TN3193 gives 3-4 characters per unit
     // for English; we deliberately pick the conservative end (3) because
     // real articles routinely tokenize worse than the optimistic end
     // (punctuation, URLs, inline code, numbers, emoji). Underestimating
@@ -145,10 +142,8 @@ public enum ArticleChunker {
             return [Chunk(index: 0, text: text, approxTokens: tokenCounter(text))]
         }
 
-        // swiftlint:disable:next prefer_let_over_var
-        var chunks: [Chunk] = []
-        // swiftlint:disable:next prefer_let_over_var
-        var current: [String] = []
+        var chunks = [Chunk]()
+        var current = [String]()
         var currentTokens = 0
 
         for sentence in sentences {
@@ -175,8 +170,7 @@ public enum ArticleChunker {
     private static func splitIntoSentences(_ text: String) -> [String] {
         let tokenizer = NLTokenizer(unit: .sentence)
         tokenizer.string = text
-        // swiftlint:disable:next prefer_let_over_var
-        var sentences: [String] = []
+        var sentences = [String]()
         tokenizer.enumerateTokens(in: text.startIndex..<text.endIndex) { range, _ in
             let sentence = String(text[range]).trimmingCharacters(in: .whitespacesAndNewlines)
             if !sentence.isEmpty { sentences.append(sentence) }
@@ -185,4 +179,3 @@ public enum ArticleChunker {
         return sentences
     }
 }
-// swiftlint:enable no_sensitive_logging

@@ -2,11 +2,9 @@ import Foundation
 import SwiftSoup
 
 struct ParsedBlocks {
-    // swiftlint:disable prefer_let_over_var
-    var blocks: [ReaderBlock]
-    var media: [MediaDescriptor]
-    var embeds: [EmbedDescriptor]
-    // swiftlint:enable prefer_let_over_var
+    var blocks = [ReaderBlock]()
+    var media = [MediaDescriptor]()
+    var embeds = [EmbedDescriptor]()
 }
 
 func parseBlocks(root: Element, baseURL: URL) throws -> ParsedBlocks {
@@ -30,11 +28,9 @@ func parseBlocks(root: Element, baseURL: URL) throws -> ParsedBlocks {
     let headingAnchors = try body.select("h1 > a[href^=#], h2 > a[href^=#], h3 > a[href^=#], h4 > a[href^=#], h5 > a[href^=#], h6 > a[href^=#]")
     try headingAnchors.remove()
 
-    // swiftlint:disable prefer_let_over_var
-    var blocks: [ReaderBlock] = []
-    var media: [MediaDescriptor] = []
-    var embeds: [EmbedDescriptor] = []
-    // swiftlint:enable prefer_let_over_var
+    var blocks = [ReaderBlock]()
+    var media = [MediaDescriptor]()
+    var embeds = [EmbedDescriptor]()
 
     for childNode in body.getChildNodes() {
         guard let child = childNode as? Element else { continue }
@@ -72,11 +68,9 @@ func parseBlock(_ element: Element) throws -> ParsedBlocks {
 
     case "p":
         let inlines = try parseInlines(element)
-        // swiftlint:disable prefer_let_over_var
         var blocks: [ReaderBlock] = inlines.isEmpty ? [] : [.paragraph(inlines)]
-        var media: [MediaDescriptor] = []
-        var embeds: [EmbedDescriptor] = []
-        // swiftlint:enable prefer_let_over_var
+        var media = [MediaDescriptor]()
+        var embeds = [EmbedDescriptor]()
 
         let mediaNodes = try element.select("img,picture,video,iframe,figure").array()
         for mediaNode in mediaNodes {
@@ -195,8 +189,7 @@ func parseInlines(_ element: Element) throws -> [ReaderInline] {
 /// leading space on `<span> until the user...</span>` when the span
 /// follows an `<a>` in the same paragraph).
 func parseInlinesRaw(_ element: Element) throws -> [ReaderInline] {
-    // swiftlint:disable:next prefer_let_over_var
-    var inlines: [ReaderInline] = []
+    var inlines = [ReaderInline]()
 
     for node in element.getChildNodes() {
         if let textNode = node as? TextNode {
@@ -276,8 +269,7 @@ func parseInlinesRaw(_ element: Element) throws -> [ReaderInline] {
 }
 
 func mergeTextInlines(_ inlines: [ReaderInline]) -> [ReaderInline] {
-    // swiftlint:disable:next prefer_let_over_var
-    var merged: [ReaderInline] = []
+    var merged = [ReaderInline]()
     for inline in inlines {
         if case .text(let current) = inline,
            case .text(let previous)? = merged.last {
@@ -364,11 +356,9 @@ func trimInlineEdges(_ inlines: [ReaderInline]) -> [ReaderInline] {
 }
 
 func parseFallbackDescendants(_ body: Element) throws -> ParsedBlocks {
-    // swiftlint:disable prefer_let_over_var
-    var blocks: [ReaderBlock] = []
-    var media: [MediaDescriptor] = []
-    var embeds: [EmbedDescriptor] = []
-    // swiftlint:enable prefer_let_over_var
+    var blocks = [ReaderBlock]()
+    var media = [MediaDescriptor]()
+    var embeds = [EmbedDescriptor]()
 
     let candidates = try body.select("h1,h2,h3,h4,h5,h6,p,blockquote,pre,ul,ol,img,video,iframe,figure").array()
     for element in candidates {

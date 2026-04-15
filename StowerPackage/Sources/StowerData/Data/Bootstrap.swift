@@ -1,6 +1,9 @@
 import Dependencies
 import Foundation
+import OSLog
 import SQLiteData
+
+private let kBootstrapLogger = Logger(subsystem: "com.ryanleewilliams.stower", category: "Bootstrap")
 
 // MARK: - Diagnostics Types
 
@@ -119,19 +122,12 @@ public enum StowerDatabase {
             do {
                 try db.attachMetadatabase(containerIdentifier: cloudKitContainerID)
             } catch {
-                #if DEBUG
-                // swiftlint:disable:next no_print_statements
-                print("⚠️ SQLiteData metadatabase unavailable: \(error)")
-                #endif
+                kBootstrapLogger.warning("SQLiteData metadatabase unavailable: \(error.localizedDescription, privacy: .public)")
             }
         }
 
-        #if DEBUG
-        // swiftlint:disable:next no_print_statements
-        print("🔧 Bootstrap: appGroupID = \(appGroupID)")
-        // swiftlint:disable:next no_print_statements
-        print("🔧 Bootstrap: cloudKitContainerID = \(cloudKitContainerID)")
-        #endif
+        kBootstrapLogger.debug("appGroupID = \(Self.appGroupID, privacy: .public)")
+        kBootstrapLogger.debug("cloudKitContainerID = \(Self.cloudKitContainerID, privacy: .public)")
 
         // In .live, the database lives in the App Group container so the share
         // extension and the main app can both read and write the same file.
@@ -191,10 +187,7 @@ public enum StowerDatabase {
             )
         }
 
-        #if DEBUG
-        // swiftlint:disable:next no_print_statements
-        print("ℹ️ Migrated legacy Stower database from \(legacyURL.path) to \(destination.path)")
-        #endif
+        kBootstrapLogger.info("Migrated legacy Stower database from \(legacyURL.path, privacy: .public) to \(destination.path, privacy: .public)")
     }
 
     /// Mirrors `SQLiteData.defaultDatabase`'s `.live` default path so we can

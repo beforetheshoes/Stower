@@ -18,8 +18,7 @@ func extractTitle(document: Document, sourceURL: URL) throws -> String {
 }
 
 func plainTextFromBlocks(_ blocks: [ReaderBlock]) -> String {
-    // swiftlint:disable:next prefer_let_over_var
-    var parts: [String] = []
+    var parts = [String]()
     for block in blocks {
         switch block {
         case .paragraph(let inlines):

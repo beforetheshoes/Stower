@@ -183,7 +183,6 @@ public struct ReaderScreen: View {
                         set: { store.send(.textEditorModeChanged($0)) }
                     ),
                     palette: palette,
-                    appearance: store.appearance,
                     errorMessage: store.textEditor?.errorMessage,
                     isSaving: store.textEditor?.isSaving ?? false,
                     navigationTitle: "Edit",
@@ -192,7 +191,8 @@ public struct ReaderScreen: View {
                     },
                     onSave: {
                         store.send(.saveTextEditTapped)
-                    }
+                    },
+                    appearance: store.appearance
                 )
             }
     }

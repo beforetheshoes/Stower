@@ -126,11 +126,11 @@ public struct ExtractionPipelineClient: Sendable {
         }
 
         let readerDocument = ReaderDocument(
+            title: title,
+            blocks: finalBlocks,
             version: 1,
             sourceURL: sourceURL.absoluteString,
-            canonicalURL: canonicalURL,
-            title: title,
-            blocks: finalBlocks
+            canonicalURL: canonicalURL
         )
 
         return IngestionResult(
@@ -201,8 +201,7 @@ public struct MediaResolutionClient: Sendable {
                 }
             }
 
-            // swiftlint:disable:next prefer_let_over_var
-            var results: [(Int, MediaDescriptor)] = []
+            var results = [(Int, MediaDescriptor)]()
             for await result in group {
                 results.append(result)
             }
@@ -418,11 +417,8 @@ func detectInteractiveContent(document: Document) -> Bool {
     // or <foreignObject>. Child-count alone is a bad heuristic because
     // icon SVGs commonly have dozens of <path> children.
     let svgs = (try? document.select("svg").array()) ?? []
-    for svg in svgs {
-        // swiftlint:disable:next for_where
-        if (try? svg.select("script, animate, animateTransform, animateMotion, set, foreignObject").first()) != nil {
-            return true
-        }
+    for svg in svgs where (try? svg.select("script, animate, animateTransform, animateMotion, set, foreignObject").first()) != nil {
+        return true
     }
 
     // Scripts that reference known data-visualization libraries. Restrict to

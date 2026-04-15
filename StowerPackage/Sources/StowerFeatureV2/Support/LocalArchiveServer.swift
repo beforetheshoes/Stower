@@ -1,5 +1,6 @@
 import Foundation
 import Network
+import OSLog
 
 /// A lightweight local HTTP server that serves archived web content from disk.
 ///
@@ -17,6 +18,11 @@ import Network
 /// chunk names. To fill those gaps, the server falls back to live-fetching missing
 /// assets from `originURL` on the first request and writing them to disk, so the
 /// archive self-heals as the user interacts with the page.
+private let kArchiveServerLog = Logger(
+    subsystem: "com.ryanleewilliams.stower",
+    category: "ArchiveServer"
+)
+
 final class LocalArchiveServer: @unchecked Sendable {
     private var listener: NWListener?
     private let archiveDir: URL
@@ -208,11 +214,9 @@ final class LocalArchiveServer: @unchecked Sendable {
         fileURL: URL
     ) {
         if fileURL.lastPathComponent.hasPrefix(PDFArchiver.pageImagePrefix) {
-            // swiftlint:disable:next no_print_statements
-            print("[ArchiveServer] 404 PDF page image: \(path) — file missing at \(fileURL.path). Check ingestion fsync and on-disk verification.")
+            kArchiveServerLog.warning("404 PDF page image: \(path, privacy: .public) — file missing at \(fileURL.path, privacy: .public). Check ingestion fsync and on-disk verification.")
         } else {
-            // swiftlint:disable:next no_print_statements
-            print("[ArchiveServer] 404: \(path) → \(fileURL.path)")
+            kArchiveServerLog.info("404: \(path, privacy: .public) → \(fileURL.path, privacy: .public)")
         }
         let response = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
         connection.send(
@@ -265,8 +269,7 @@ final class LocalArchiveServer: @unchecked Sendable {
                 withIntermediateDirectories: true
             )
             try? data.write(to: destination)
-            // swiftlint:disable:next no_print_statements
-            print("[ArchiveServer] fetched-through: \(path)")
+            kArchiveServerLog.info("Fetched-through: \(path, privacy: .public)")
             return data
         } catch {
             return nil

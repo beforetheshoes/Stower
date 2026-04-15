@@ -39,8 +39,7 @@ public struct SpeechBlock: Equatable, Sendable {
 
 enum ReaderSpeechTextBuilder {
     static func speechBlocks(document: ReaderDocument) -> [SpeechBlock] {
-        // swiftlint:disable:next prefer_let_over_var
-        var output: [SpeechBlock] = []
+        var output = [SpeechBlock]()
         output.reserveCapacity(document.blocks.count)
 
         for (index, block) in document.blocks.enumerated() {
@@ -147,8 +146,7 @@ enum ReaderSpeechTextBuilder {
     /// getting block-level output, so summarization, retrieval, and
     /// position saving are unaffected.
     static func sentenceSplit(_ blocks: [SpeechBlock]) -> [SpeechBlock] {
-        // swiftlint:disable:next prefer_let_over_var
-        var output: [SpeechBlock] = []
+        var output = [SpeechBlock]()
         output.reserveCapacity(blocks.count * 3)
         var sequence = 0
 
@@ -193,8 +191,7 @@ enum ReaderSpeechTextBuilder {
 
         let tokenizer = NLTokenizer(unit: .sentence)
         tokenizer.string = trimmed
-        // swiftlint:disable:next prefer_let_over_var
-        var sentences: [String] = []
+        var sentences = [String]()
         tokenizer.enumerateTokens(in: trimmed.startIndex..<trimmed.endIndex) { range, _ in
             let sentence = String(trimmed[range]).trimmingCharacters(in: .whitespacesAndNewlines)
             if !sentence.isEmpty {

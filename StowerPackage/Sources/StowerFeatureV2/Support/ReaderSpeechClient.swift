@@ -104,8 +104,7 @@ private final class LiveReaderSpeechSynthDriver: NSObject {
         let blockIndex: Int
         let sequence: Int
     }
-    // swiftlint:disable:next prefer_let_over_var
-    private var utteranceToPosition: [ObjectIdentifier: UtterancePosition] = [:]
+    private var utteranceToPosition = [ObjectIdentifier: UtterancePosition]()
     private var isCancelled = false
 
     override init() {

@@ -35,16 +35,14 @@ public struct ReaderAIFeature {
         // MARK: Ask tab
         public var question: String = ""
         public var pendingAnswer: String = ""
-        // swiftlint:disable:next prefer_let_over_var
-        public var transcript: [QAEntry] = []
+        public var transcript = [QAEntry]()
         public var isAnswering = false
         public var isRetrieving = false
         public var askError: String?
 
-        // swiftlint:disable:next explicit_enum_raw_value
         public enum Mode: String, Equatable, Sendable {
-            case summary // swiftlint:disable:this explicit_enum_raw_value
-            case ask // swiftlint:disable:this explicit_enum_raw_value
+            case summary = "summary"
+            case ask = "ask"
         }
 
         public struct QAEntry: Equatable, Identifiable, Sendable {

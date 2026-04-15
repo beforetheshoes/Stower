@@ -47,7 +47,7 @@ struct AppFeatureTests {
 
     @Test
     func startupLoadsLibraryAndSettings() async {
-        let item = SavedItem(id: UUID(), title: "One", content: "Body")
+        let item = SavedItem(title: "One", content: "Body")
         let settings = ImageDownloadSettings(globalAutoDownload: true, askForNewSources: false)
         let appearance = ReaderAppearanceSettings(background: .sepia)
 
@@ -113,7 +113,7 @@ struct AppFeatureTests {
             }
             $0.stowerRepository.createItemFromIngestion = { result in
                 created.withValue { $0.append(result) }
-                return SavedItem(title: result.title, renderFormat: result.renderFormat, content: result.plainText)
+                return SavedItem(title: result.title, content: result.plainText, renderFormat: result.renderFormat)
             }
             $0.stowerRepository.markIngestionJobProcessed = { _ in }
             $0.stowerRepository.fetchLibrary = { _ in [] }
@@ -163,7 +163,7 @@ struct AppFeatureTests {
             }
             $0.stowerRepository.createItemFromIngestion = { result in
                 created.withValue { $0.append(result) }
-                return SavedItem(title: result.title, renderFormat: result.renderFormat, content: result.plainText)
+                return SavedItem(title: result.title, content: result.plainText, renderFormat: result.renderFormat)
             }
             $0.stowerRepository.markIngestionJobProcessed = { _ in }
             $0.stowerRepository.fetchLibrary = { _ in [] }

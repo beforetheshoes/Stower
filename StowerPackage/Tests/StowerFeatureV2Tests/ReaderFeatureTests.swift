@@ -28,8 +28,8 @@ struct ReaderFeatureTests {
         // etc.). It must fall back to the item's ingestion-detected format.
         let webViewItem = SavedItem(
             title: "Interactive SVG",
-            renderFormat: .webView,
-            content: "Body"
+            content: "Body",
+            renderFormat: .webView
         )
         var state = ReaderFeature.State(item: webViewItem)
         #expect(state.effectiveRenderFormat == .webView)
@@ -38,8 +38,8 @@ struct ReaderFeatureTests {
         // Structured items still default to structured.
         let structuredItem = SavedItem(
             title: "Plain article",
-            renderFormat: .structuredV1,
-            content: "Body"
+            content: "Body",
+            renderFormat: .structuredV1
         )
         state = ReaderFeature.State(item: structuredItem)
         #expect(state.effectiveRenderFormat == .structuredV1)
@@ -50,8 +50,8 @@ struct ReaderFeatureTests {
     func effectiveRenderFormat_manualOverride_takesPrecedenceOverItemFormat() {
         let webViewItem = SavedItem(
             title: "Interactive SVG",
-            renderFormat: .webView,
-            content: "Body"
+            content: "Body",
+            renderFormat: .webView
         )
         var state = ReaderFeature.State(item: webViewItem)
         state.renderModeOverride = .structuredV1
@@ -71,7 +71,7 @@ struct ReaderFeatureTests {
     func readingProgress_usesLiveBlockIndexEvenWhenTopPositionIsNotPersisted() async {
         let itemID = UUID()
         let clock = TestClock()
-        let item = SavedItem(id: itemID, title: "Read", content: "Body")
+        let item = SavedItem(title: "Read", content: "Body", id: itemID)
         let document = ReaderDocument(
             title: "Read",
             blocks: [
@@ -110,8 +110,8 @@ struct ReaderFeatureTests {
     func readingProgress_hidesForInteractiveAndCompleteContent() {
         let webViewItem = SavedItem(
             title: "Interactive",
-            renderFormat: .webView,
             content: "Body",
+            renderFormat: .webView,
             progressUnitCount: 5,
             isRead: true
         )
@@ -121,8 +121,8 @@ struct ReaderFeatureTests {
 
         let structured = SavedItem(
             title: "Complete",
-            renderFormat: .structuredV1,
             content: "Body",
+            renderFormat: .structuredV1,
             progressUnitCount: 5,
             isRead: true
         )
@@ -134,7 +134,7 @@ struct ReaderFeatureTests {
     @Test
     func load_populatesItemAndDocument() async {
         let itemID = UUID()
-        let item = SavedItem(id: itemID, title: "Read", content: "Body")
+        let item = SavedItem(title: "Read", content: "Body", id: itemID)
         let document = ReaderDocument(title: "Read", blocks: [.paragraph([.text("Body")])])
 
         let store = TestStore(initialState: ReaderFeature.State(itemID: itemID)) {
@@ -164,7 +164,7 @@ struct ReaderFeatureTests {
     @Test
     func editTextTapped_loadsEditableSource() async {
         let itemID = UUID()
-        let item = SavedItem(id: itemID, title: "Read", content: "Body")
+        let item = SavedItem(title: "Read", content: "Body", id: itemID)
 
         let store = TestStore(initialState: ReaderFeature.State(item: item)) {
             ReaderFeature()
@@ -187,12 +187,12 @@ struct ReaderFeatureTests {
     @Test
     func saveTextEdit_updatesReaderState() async {
         let itemID = UUID()
-        let updatedItem = SavedItem(id: itemID, title: "Manual Title", renderFormat: .plainText, content: "Line one\nLine two")
+        let updatedItem = SavedItem(title: "Manual Title", content: "Line one\nLine two", id: itemID, renderFormat: .plainText)
         let updatedDocument = ReaderDocument(
             title: "Manual Title",
             blocks: [.paragraph([.text("Line one"), .lineBreak, .text("Line two")])]
         )
-        var initialState = ReaderFeature.State(item: SavedItem(id: itemID, title: "Old", renderFormat: .plainText, content: "Old"))
+        var initialState = ReaderFeature.State(item: SavedItem(title: "Old", content: "Old", id: itemID, renderFormat: .plainText))
         initialState.textEditor = ReaderFeature.TextEditorState(
             title: "Manual Title",
             text: "Line one\nLine two",
@@ -385,7 +385,7 @@ struct ReaderFeatureTests {
     @Test
     func loadWithDefaultAppearance_usesDefaults() async {
         let itemID = UUID()
-        let item = SavedItem(id: itemID, title: "Read", content: "Body")
+        let item = SavedItem(title: "Read", content: "Body", id: itemID)
         let document = ReaderDocument(title: "Read", blocks: [.paragraph([.text("Body")])])
 
         let store = TestStore(initialState: ReaderFeature.State(itemID: itemID)) {

@@ -5,8 +5,7 @@ import SQLiteData
 import CloudKit
 #endif
 
-// swiftlint:disable:next prefixed_toplevel_constant
-private let cloudSyncLogger = Logger(subsystem: "com.ryanleewilliams.stower", category: "CloudSync")
+private let kCloudSyncLogger = Logger(subsystem: "com.ryanleewilliams.stower", category: "CloudSync")
 
 extension StowerDatabase {
     static func makeCloudSyncClient(
@@ -58,7 +57,7 @@ extension StowerDatabase {
                     ).accountStatus()
                     guard accountStatus == .available else {
                         let message = "iCloud unavailable (\(String(describing: accountStatus)))."
-                        cloudSyncLogger.error("CloudKit: \(message, privacy: .public)")
+                        kCloudSyncLogger.error("CloudKit: \(message, privacy: .public)")
                         continuation.yield(
                             CloudSyncStatus(state: .unavailable(message))
                         )
@@ -66,7 +65,7 @@ extension StowerDatabase {
                     }
                 } catch {
                     let detailed = detailedErrorDescription(error)
-                    cloudSyncLogger.error("CloudKit account check failed: \(detailed, privacy: .public)")
+                    kCloudSyncLogger.error("CloudKit account check failed: \(detailed, privacy: .public)")
                     continuation.yield(CloudSyncStatus(state: .unavailable(detailed)))
                     return
                 }
@@ -75,7 +74,7 @@ extension StowerDatabase {
                     try await syncEngine.start()
                 } catch {
                     let detailed = detailedErrorDescription(error)
-                    cloudSyncLogger.error("CloudKit syncEngine.start() failed: \(detailed, privacy: .public)")
+                    kCloudSyncLogger.error("CloudKit syncEngine.start() failed: \(detailed, privacy: .public)")
                     continuation.yield(CloudSyncStatus(state: .error(detailed)))
                     throw error
                 }
@@ -84,7 +83,7 @@ extension StowerDatabase {
                     try await coordinator.syncNow()
                 } catch {
                     let detailed = detailedErrorDescription(error)
-                    cloudSyncLogger.error("CloudKit initial syncNow() failed: \(detailed, privacy: .public)")
+                    kCloudSyncLogger.error("CloudKit initial syncNow() failed: \(detailed, privacy: .public)")
                     continuation.yield(CloudSyncStatus(state: .error(detailed)))
                     throw error
                 }
@@ -94,7 +93,7 @@ extension StowerDatabase {
                     try await coordinator.syncNow()
                 } catch {
                     let detailed = detailedErrorDescription(error)
-                    cloudSyncLogger.error("CloudKit sendChanges() failed: \(detailed, privacy: .public)")
+                    kCloudSyncLogger.error("CloudKit sendChanges() failed: \(detailed, privacy: .public)")
                     continuation.yield(CloudSyncStatus(state: .error(detailed)))
                     throw error
                 }
@@ -113,7 +112,7 @@ extension StowerDatabase {
             return (client: client, syncEngine: syncEngine)
         } catch {
             let detailed = detailedErrorDescription(error)
-            cloudSyncLogger.error("CloudKit SyncEngine construction failed: \(detailed, privacy: .public)")
+            kCloudSyncLogger.error("CloudKit SyncEngine construction failed: \(detailed, privacy: .public)")
             continuation.yield(CloudSyncStatus(state: .error(detailed)))
             let statusStreamImpl: @Sendable () -> AsyncStream<CloudSyncStatus> = { stream }
             let client = CloudSyncClient(

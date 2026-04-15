@@ -1,4 +1,3 @@
-// swiftlint:disable function_default_parameter_at_end
 import Foundation
 
 public enum RenderFormat: String, Codable, Equatable, Sendable {
@@ -25,11 +24,11 @@ public struct ReaderDocument: Codable, Equatable, Sendable {
     public var blocks: [ReaderBlock]
 
     public init(
+        title: String,
+        blocks: [ReaderBlock],
         version: Int = 1,
         sourceURL: String? = nil,
-        canonicalURL: String? = nil,
-        title: String,
-        blocks: [ReaderBlock]
+        canonicalURL: String? = nil
     ) {
         self.version = version
         self.sourceURL = sourceURL
@@ -332,7 +331,6 @@ private func plainTextBlocks(from text: String) -> [ReaderBlock] {
         return .paragraph(inlines)
     }
 }
-// swiftlint:enable function_default_parameter_at_end
 
 // MARK: - Markdown Reconstruction
 

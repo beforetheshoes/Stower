@@ -33,7 +33,7 @@ public struct ReaderSpeechFeature {
         /// typical case, so filter operations use `sequence` for
         /// identity rather than `index` (which is non-unique across
         /// sentences of the same block).
-        var currentBlocks: [SpeechBlock] = [] // swiftlint:disable:this prefer_let_over_var
+        var currentBlocks = [SpeechBlock]()
 
         var errorMessage: String?
     }

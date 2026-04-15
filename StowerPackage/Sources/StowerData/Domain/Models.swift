@@ -1,4 +1,3 @@
-// swiftlint:disable function_default_parameter_at_end
 import Foundation
 
 public struct SavedItem: Equatable, Identifiable, Sendable {
@@ -32,16 +31,16 @@ public struct SavedItem: Equatable, Identifiable, Sendable {
     public var deletedAt: Date?
     /// IDs of tags assigned to this item. Populated by repository reads via a
     /// batched junction-table query (never N+1).
-    public var tagIDs: [UUID] // swiftlint:disable:this prefer_let_over_var
+    public var tagIDs = [UUID]()
 
     public init(
-        id: UUID = UUID(),
         title: String,
+        content: String,
+        id: UUID = UUID(),
         sourceURL: String? = nil,
         canonicalURL: String? = nil,
         renderFormat: RenderFormat = .plainText,
         documentVersion: Int = 1,
-        content: String,
         excerpt: String? = nil,
         heroImageURL: String? = nil,
         author: String? = nil,
@@ -320,7 +319,7 @@ public struct IngestionJob: Equatable, Identifiable, Sendable {
     public let payload: String
     public let createdAt: Date
 
-    public init(id: UUID = UUID(), kind: Kind, payload: String, createdAt: Date = .now) {
+    public init(kind: Kind, payload: String, id: UUID = UUID(), createdAt: Date = .now) {
         self.id = id
         self.kind = kind
         self.payload = payload
@@ -351,4 +350,3 @@ public struct TextHydrationPayload: Codable, Equatable, Sendable {
         self.title = title
     }
 }
-// swiftlint:enable function_default_parameter_at_end

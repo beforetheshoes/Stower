@@ -162,7 +162,7 @@ nonisolated public struct SavedImageRefLocalTable: Hashable, Identifiable, Senda
 nonisolated public struct SavedImageAssetLocalTable: Hashable, Identifiable, Sendable {
     public let id: UUID
     public var itemID: UUID
-    public var imageData: Data = Data() // swiftlint:disable:this redundant_type_annotation
+    public var imageData: Data = .init()
     public var width: Int = 0
     public var height: Int = 0
     public var format: String = "jpg"

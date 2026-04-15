@@ -248,9 +248,9 @@ struct HTMLBlockParserTests {
         // exactly what WKWebView loads.
         let item = SavedItem(
             title: "Keeping Each Other Safe",
+            content: "",
             sourceURL: "https://example.com/mutual-aid",
-            renderFormat: .structuredV1,
-            content: ""
+            renderFormat: .structuredV1
         )
         let rendered = ReaderDocumentHTMLBuilder.buildReaderHTML(
             item: item,

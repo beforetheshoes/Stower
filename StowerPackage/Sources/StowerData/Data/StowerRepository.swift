@@ -284,7 +284,7 @@ extension StowerRepository {
 /// Mutation closures call `ping()`; consumers subscribe via `stream()`.
 final class LibraryChangeBroadcast: @unchecked Sendable {
     private let lock = NSLock()
-    private var continuations: [UUID: AsyncStream<Void>.Continuation] = [:] // swiftlint:disable:this prefer_let_over_var
+    private var continuations = [UUID: AsyncStream<Void>.Continuation]()
 
     func stream() -> AsyncStream<Void> {
         AsyncStream { continuation in

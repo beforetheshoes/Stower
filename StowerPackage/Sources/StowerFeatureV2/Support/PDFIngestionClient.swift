@@ -28,8 +28,7 @@ public enum PDFIngestionError: Error, LocalizedError {
         case .unreadable:
             return "The PDF couldn't be opened. It may be corrupted or not a valid PDF."
         case .passwordProtected:
-            // swiftlint:disable:next no_sensitive_logging
-            return "This PDF is password-protected. Open it in another app to remove the password, then re-share it."
+            return "This PDF is locked. Open it in another app to unlock it, then re-share it."
         case .emptyDocument:
             return "The PDF contains no pages."
         }
@@ -125,10 +124,8 @@ private func pdfIngest(url: URL) async throws -> IngestionResult {
         "Ingesting PDF \"\(title, privacy: .public)\" (\(pdf.pageCount, privacy: .public) pages, sha=\(hexHash, privacy: .public))"
     )
 
-    // swiftlint:disable:next prefer_let_over_var
-    var blocks: [ReaderBlock] = []
-    // swiftlint:disable:next prefer_let_over_var
-    var plainTextChunks: [String] = []
+    var blocks = [ReaderBlock]()
+    var plainTextChunks = [String]()
     var sawOCRFallback = false
 
     for pageIndex in 0..<pdf.pageCount {
@@ -213,11 +210,11 @@ private func pdfIngest(url: URL) async throws -> IngestionResult {
     _ = sawOCRFallback
 
     let document = ReaderDocument(
+        title: title,
+        blocks: blocks,
         version: 1,
         sourceURL: nil,
-        canonicalURL: canonicalURL,
-        title: title,
-        blocks: blocks
+        canonicalURL: canonicalURL
     )
 
     let media = blocks.compactMap { block -> MediaDescriptor? in

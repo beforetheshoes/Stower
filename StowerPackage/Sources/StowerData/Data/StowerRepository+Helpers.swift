@@ -23,13 +23,13 @@ extension StowerRepository {
         tagIDs: [UUID] = []
     ) -> SavedItem {
         SavedItem(
-            id: sync.id,
             title: sync.title,
+            content: local?.plainText ?? "",
+            id: sync.id,
             sourceURL: sync.sourceURL,
             canonicalURL: sync.canonicalURL,
             renderFormat: RenderFormat(rawValue: local?.renderFormat ?? "structuredV1") ?? .structuredV1,
             documentVersion: local?.documentVersion ?? 1,
-            content: local?.plainText ?? "",
             excerpt: sync.excerpt,
             heroImageURL: sync.heroImageURL,
             author: sync.author,
@@ -52,13 +52,13 @@ extension StowerRepository {
 
     static func toDomain(from draft: SavedItemSyncTable.Draft, local: SavedItemContentLocalTable?, inferredContent: String) -> SavedItem {
         SavedItem(
-            id: draft.id ?? UUID(),
             title: draft.title,
+            content: local?.plainText ?? inferredContent,
+            id: draft.id ?? UUID(),
             sourceURL: draft.sourceURL,
             canonicalURL: draft.canonicalURL,
             renderFormat: RenderFormat(rawValue: local?.renderFormat ?? "structuredV1") ?? .structuredV1,
             documentVersion: local?.documentVersion ?? 1,
-            content: local?.plainText ?? inferredContent,
             excerpt: draft.excerpt,
             heroImageURL: draft.heroImageURL,
             author: draft.author,
@@ -80,8 +80,8 @@ extension StowerRepository {
 
     static func toDomain(tag: TagSyncTable) -> Tag {
         Tag(
-            id: tag.id,
             name: tag.name,
+            id: tag.id,
             colorHex: tag.colorHex,
             createdAt: tag.createdAt,
             updatedAt: tag.updatedAt

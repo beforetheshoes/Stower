@@ -7,8 +7,7 @@ public struct LibraryFeature {
 
     @ObservableState
     public struct State: Equatable {
-        // swiftlint:disable:next prefer_let_over_var
-        public var items: [SavedItem] = []
+        public var items = [SavedItem]()
         public var query = ""
         public var sourceURL = ""
         public var isLoading = false
@@ -19,7 +18,7 @@ public struct LibraryFeature {
         public var filter: LibraryFilter = .all
         /// All tags known to the repository — drives the "Tags" submenu in the
         /// library row context menu. Refreshed lazily via observeLibraryChanges.
-        public var availableTags: [Tag] = [] // swiftlint:disable:this prefer_let_over_var
+        public var availableTags = [Tag]()
         /// Non-nil when the user is creating a new tag inline from the tag submenu.
         public var inlineTagCreation: InlineTagCreation?
         /// Draft for the in-app text/markdown composer.

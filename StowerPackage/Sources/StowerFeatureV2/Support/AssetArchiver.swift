@@ -333,8 +333,7 @@ enum AssetArchiver {
                     await fetchAndSaveOne(url: url, baseURL: baseURL, archiveDir: archiveDir, session: session)
                 }
             }
-            // swiftlint:disable:next prefer_let_over_var
-            var results: [ArchivedAsset] = []
+            var results = [ArchivedAsset]()
             for await asset in group {
                 if let asset { results.append(asset) }
             }

@@ -32,10 +32,8 @@ enum ReaderSpeechVoiceCatalog {
 
         let groupsByLanguage = Dictionary(grouping: AVSpeechSynthesisVoice.speechVoices(), by: \.language)
 
-        // swiftlint:disable prefer_let_over_var
-        var preferred: [LanguageGroup] = []
-        var other: [LanguageGroup] = []
-        // swiftlint:enable prefer_let_over_var
+        var preferred = [LanguageGroup]()
+        var other = [LanguageGroup]()
 
         for (language, voices) in groupsByLanguage {
             let entries = voices
@@ -109,19 +107,15 @@ enum ReaderSpeechVoiceCatalog {
     // MARK: - Helpers
 
     private static func preferredLanguagePrefixes() -> [String] {
-        var seen = Set<String>()
-        // swiftlint:disable:next prefer_let_over_var
-        var result: [String] = []
         let sources = Locale.preferredLanguages.isEmpty
             ? [Locale.current.identifier]
             : Locale.preferredLanguages
-        for source in sources {
+        var seen = Set<String>()
+        return sources.compactMap { source -> String? in
             let prefix = String(source.prefix(2)).lowercased()
-            if !prefix.isEmpty, seen.insert(prefix).inserted {
-                result.append(prefix)
-            }
+            guard !prefix.isEmpty, seen.insert(prefix).inserted else { return nil }
+            return prefix
         }
-        return result
     }
 
     private static func displayName(for voice: AVSpeechSynthesisVoice) -> String {
