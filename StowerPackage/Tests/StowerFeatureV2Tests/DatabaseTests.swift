@@ -32,6 +32,29 @@ struct DatabaseTests {
     }
 
     @Test
+    func editableTextSource_roundTripsRawSourceAndMode() async throws {
+        let database = try StowerDatabase.makeDatabase()
+        let repository = StowerRepository.live(database: database, cloudSyncClient: .noop)
+
+        let created = try await repository.createItemFromIngestion(
+            .sharedText(
+                "Line one\nLine two",
+                explicitTitle: "Manual Title",
+                rawSourceText: "Line one\nLine two",
+                rawSourceMode: .plainText
+            )
+        )
+
+        let editable = try await repository.loadEditableTextSource(created.id)
+        let unwrapped = try #require(editable)
+        #expect(unwrapped.title == "Manual Title")
+        #expect(unwrapped.text == "Line one\nLine two")
+        // The editor always loads .auto so the preview can auto-detect
+        // markdown vs plain text, regardless of the stored mode.
+        #expect(unwrapped.mode == .auto)
+    }
+
+    @Test
     func ingestionQueueRoundTrip() async throws {
         let database = try StowerDatabase.makeDatabase()
         let repository = StowerRepository.live(database: database, cloudSyncClient: .noop)
@@ -63,7 +86,7 @@ struct DatabaseTests {
         // Simulate what ReaderFeature.load does (user taps item)
         let loadedItem = try await repository.loadItem(libraryItem.id)
         let loadedDoc = try await repository.loadReaderDocument(libraryItem.id)
-        let loadedHTML = try await repository.loadSourceHTML(libraryItem.id)
+        _ = try await repository.loadSourceHTML(libraryItem.id)
 
         #expect(loadedItem != nil, "loadItem returned nil — this causes 'Item not found'")
         #expect(loadedItem?.id == created.id)

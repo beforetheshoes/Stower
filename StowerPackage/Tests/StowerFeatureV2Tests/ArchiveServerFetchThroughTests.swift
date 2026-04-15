@@ -140,7 +140,7 @@ final class StubProtocol: URLProtocol {
     }
 
     private static let lock = NSLock()
-    nonisolated(unsafe) private static var registry: [String: StubbedResponse] = [:] // swiftlint:disable:this prefer_let_over_var
+    nonisolated(unsafe) private static var registry = [String: StubbedResponse]()
 
     static func reset() {
         lock.lock()

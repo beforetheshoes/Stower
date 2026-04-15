@@ -66,6 +66,8 @@ nonisolated public struct SavedItemContentLocalTable: Hashable, Identifiable, Se
     public var documentJSON: String = ""
     public var sourceHTMLHash: String = ""
     public var sourceHTML: String = ""
+    public var rawSourceText: String = ""
+    public var rawSourceMode: String?
     public var localStatus: String = "notDownloaded"  // notDownloaded, downloading, available, failed
     public var localError: String?
     public var createdAt: Date = .now
@@ -93,6 +95,23 @@ nonisolated public struct SavedPDFContentSyncTable: Hashable, Identifiable, Send
     public let id: UUID
     public var documentJSON: String = ""
     public var plainText: String = ""
+    public var createdAt: Date = .now
+    public var updatedAt: Date = .now
+}
+
+/// CloudKit-synced content for text/markdown items. Populated when a text
+/// item is created or edited on any device; the second device reads this row
+/// to hydrate the local content table without a source URL to re-fetch from.
+/// Mirrors `SavedPDFContentSyncTable` but carries `rawSourceText` instead of
+/// `documentJSON` — the receiving device re-parses the raw source to rebuild
+/// the document blocks, keeping each CloudKit record well under the 1 MB limit.
+@Table
+nonisolated public struct SavedTextContentSyncTable: Hashable, Identifiable, Sendable {
+    public let id: UUID
+    public var plainText: String = ""
+    public var rawSourceText: String = ""
+    public var rawSourceMode: String?
+    public var renderFormat: String = "plainText"
     public var createdAt: Date = .now
     public var updatedAt: Date = .now
 }
@@ -143,7 +162,7 @@ nonisolated public struct SavedImageRefLocalTable: Hashable, Identifiable, Senda
 nonisolated public struct SavedImageAssetLocalTable: Hashable, Identifiable, Sendable {
     public let id: UUID
     public var itemID: UUID
-    public var imageData: Data = Data() // swiftlint:disable:this redundant_type_annotation
+    public var imageData: Data = .init()
     public var width: Int = 0
     public var height: Int = 0
     public var format: String = "jpg"

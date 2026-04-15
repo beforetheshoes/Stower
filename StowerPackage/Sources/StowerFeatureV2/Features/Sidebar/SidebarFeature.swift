@@ -9,8 +9,7 @@ public struct SidebarFeature {
     public struct State: Equatable {
         public var selection: LibraryFilter = .all
         public var counts: LibraryListCounts = .zero
-        // swiftlint:disable:next prefer_let_over_var
-        public var tags: [Tag] = []
+        public var tags = [Tag]()
         public var isLoading = false
         public var errorMessage: String?
         /// Bound to the "New Tag" sheet.

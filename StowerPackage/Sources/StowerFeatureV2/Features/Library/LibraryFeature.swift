@@ -7,8 +7,7 @@ public struct LibraryFeature {
 
     @ObservableState
     public struct State: Equatable {
-        // swiftlint:disable:next prefer_let_over_var
-        public var items: [SavedItem] = []
+        public var items = [SavedItem]()
         public var query = ""
         public var sourceURL = ""
         public var isLoading = false
@@ -19,7 +18,7 @@ public struct LibraryFeature {
         public var filter: LibraryFilter = .all
         /// All tags known to the repository — drives the "Tags" submenu in the
         /// library row context menu. Refreshed lazily via observeLibraryChanges.
-        public var availableTags: [Tag] = [] // swiftlint:disable:this prefer_let_over_var
+        public var availableTags = [Tag]()
         /// Non-nil when the user is creating a new tag inline from the tag submenu.
         public var inlineTagCreation: InlineTagCreation?
         /// Draft for the in-app text/markdown composer.
@@ -77,15 +76,18 @@ public struct LibraryFeature {
     }
 
     public struct TextImportDraft: Equatable {
+        public var title: String
         public var text: String
         public var mode: TextImportMode
         public var titleHint: String?
 
         public init(
+            title: String = "",
             text: String = "",
             mode: TextImportMode = .auto,
             titleHint: String? = nil
         ) {
+            self.title = title
             self.text = text
             self.mode = mode
             self.titleHint = titleHint
@@ -116,6 +118,7 @@ public struct LibraryFeature {
         case importPDFSelected(URL)
         case addTextTapped
         case textImportDismissed
+        case textImportTitleChanged(String)
         case textImportTextChanged(String)
         case textImportModeChanged(TextImportMode)
         case saveTextImportTapped
@@ -346,6 +349,14 @@ public struct LibraryFeature {
                 state.textImportDraft = nil
                 return .none
 
+            case .textImportTitleChanged(let title):
+                state.textImportDraft?.title = title
+                if state.saveState == .failed {
+                    state.saveState = .queued
+                    state.errorMessage = nil
+                }
+                return .none
+
             case .textImportTextChanged(let text):
                 state.textImportDraft?.text = text
                 if state.saveState == .failed {
@@ -370,9 +381,13 @@ public struct LibraryFeature {
                 state.saveState = .extracting
                 state.errorMessage = nil
                 return runTextImport(
-                    text: text,
-                    titleHint: draft.titleHint,
-                    mode: draft.mode,
+                    .init(
+                        text: text,
+                        explicitTitle: draft.title,
+                        titleHint: draft.titleHint,
+                        mode: draft.mode,
+                        openAfterSave: true
+                    ),
                     repository: self.repository,
                     textIngestionClient: self.textIngestionClient
                 )
@@ -388,9 +403,13 @@ public struct LibraryFeature {
                 state.saveState = .extracting
                 state.errorMessage = nil
                 return runTextImport(
-                    text: trimmed,
-                    titleHint: titleHint,
-                    mode: mode,
+                    .init(
+                        text: trimmed,
+                        explicitTitle: nil,
+                        titleHint: titleHint,
+                        mode: mode,
+                        openAfterSave: false
+                    ),
                     repository: self.repository,
                     textIngestionClient: self.textIngestionClient
                 )
@@ -625,19 +644,32 @@ public struct LibraryFeature {
     }
 }
 
+private struct TextImportRequest {
+    var text: String
+    var explicitTitle: String?
+    var titleHint: String?
+    var mode: TextImportMode
+    var openAfterSave: Bool
+}
+
 private func runTextImport(
-    text: String,
-    titleHint: String?,
-    mode: TextImportMode,
+    _ request: TextImportRequest,
     repository: StowerRepository,
     textIngestionClient: TextIngestionClient
 ) -> Effect<LibraryFeature.Action> {
     .run { send in
         do {
-            let result = try await textIngestionClient.ingest(text, titleHint, mode)
+            let result = try await textIngestionClient.ingest(
+                request.text,
+                request.explicitTitle,
+                request.titleHint,
+                request.mode
+            )
             let item = try await repository.createItemFromIngestion(result)
             await send(.saveURLFinished(item))
-            await send(.openItem(item))
+            if request.openAfterSave {
+                await send(.openItem(item))
+            }
         } catch {
             await send(.saveURLFailed(error.localizedDescription))
         }

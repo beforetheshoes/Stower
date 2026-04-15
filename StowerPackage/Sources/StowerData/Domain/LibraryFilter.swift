@@ -24,7 +24,7 @@ public struct LibraryListCounts: Equatable, Sendable {
     public var untagged: Int
     public var all: Int
     public var recentlyDeleted: Int
-    public var byTag: [UUID: Int] // swiftlint:disable:this prefer_let_over_var
+    public var byTag = [UUID: Int]()
 
     public init(
         unread: Int = 0,

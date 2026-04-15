@@ -90,8 +90,7 @@ struct PDFReaderSheet: View {
                 .font(.system(size: 48, weight: .regular))
                 .foregroundStyle(.secondary)
                 .accessibilityLabel("PDF not available")
-            // swiftlint:disable:next no_hardcoded_strings
-            Text("Original PDF not available")
+            Text("PDF not available")
                 .font(.headline)
             Text("This PDF was shared from another device. The extracted text is synced to this device, but the original PDF file isn't. Re-share the PDF on this device to restore the original view.")
                 .font(.subheadline)

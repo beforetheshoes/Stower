@@ -127,17 +127,19 @@ public enum ReaderDocumentHTMLBuilder {
 
         html += "  <h1 class=\"stower-title\">\(escapeHTML(item.title))</h1>\n"
 
-        // swiftlint:disable:next prefer_let_over_var
-        var metaPieces: [String] = []
-        if let siteName = item.siteName, !siteName.isEmpty {
-            metaPieces.append("<span class=\"stower-site\">\(escapeHTML(siteName))</span>")
-        }
-        if let author = item.author, !author.isEmpty {
-            metaPieces.append("<span class=\"stower-author\">by \(escapeHTML(author))</span>")
-        }
-        if let minutes = item.readingTimeMinutes {
-            metaPieces.append("<span class=\"stower-reading-time\">\(minutes) min read</span>")
-        }
+        let metaPieces: [String] = {
+            var pieces = [String]()
+            if let siteName = item.siteName, !siteName.isEmpty {
+                pieces.append("<span class=\"stower-site\">\(escapeHTML(siteName))</span>")
+            }
+            if let author = item.author, !author.isEmpty {
+                pieces.append("<span class=\"stower-author\">by \(escapeHTML(author))</span>")
+            }
+            if let minutes = item.readingTimeMinutes {
+                pieces.append("<span class=\"stower-reading-time\">\(minutes) min read</span>")
+            }
+            return pieces
+        }()
         if !metaPieces.isEmpty {
             html += "  <div class=\"stower-meta\">\(metaPieces.joined(separator: " &middot; "))</div>\n"
         }
@@ -392,6 +394,9 @@ public enum ReaderDocumentHTMLBuilder {
             switch inline {
             case .text(let value):
                 out += escapeHTML(value)
+
+            case .lineBreak:
+                out += "<br>"
 
             case let .link(label, url):
                 if isSafeLinkURL(url) {

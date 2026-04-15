@@ -10,8 +10,8 @@ struct LibraryFeatureTests {
     @Test
     func reloadPopulatesItems() async {
         let expected = [
-            SavedItem(title: "Alpha", sourceURL: "https://a.com", content: "A"),
-            SavedItem(title: "Beta", sourceURL: "https://b.com", content: "B"),
+            SavedItem(title: "Alpha", content: "A", sourceURL: "https://a.com"),
+            SavedItem(title: "Beta", content: "B", sourceURL: "https://b.com"),
         ]
 
         let store = TestStore(initialState: LibraryFeature.State()) {
@@ -33,8 +33,8 @@ struct LibraryFeatureTests {
     func searchUsesLocalizedContains() {
         var state = LibraryFeature.State()
         state.items = [
-            SavedItem(title: "Swift Concurrency", sourceURL: nil, content: ""),
-            SavedItem(title: "Feed Reader", sourceURL: nil, content: ""),
+            SavedItem(title: "Swift Concurrency", content: ""),
+            SavedItem(title: "Feed Reader", content: ""),
         ]
         state.query = "swift"
 
@@ -151,7 +151,7 @@ struct LibraryFeatureTests {
         let item = SavedItem(title: "Untagged", content: "")
         var initial = LibraryFeature.State()
         initial.items = [item]
-        initial.availableTags = [Tag(id: tagID, name: "work")]
+        initial.availableTags = [Tag(name: "work", id: tagID)]
 
         let store = TestStore(initialState: initial) {
             LibraryFeature()
@@ -170,7 +170,7 @@ struct LibraryFeatureTests {
         let item = SavedItem(title: "Tagged", content: "", tagIDs: [tagID])
         var initial = LibraryFeature.State()
         initial.items = [item]
-        initial.availableTags = [Tag(id: tagID, name: "work")]
+        initial.availableTags = [Tag(name: "work", id: tagID)]
 
         let store = TestStore(initialState: initial) {
             LibraryFeature()
@@ -190,7 +190,7 @@ struct LibraryFeatureTests {
         var initial = LibraryFeature.State()
         initial.filter = .untagged
         initial.items = [item]
-        initial.availableTags = [Tag(id: tagID, name: "work")]
+        initial.availableTags = [Tag(name: "work", id: tagID)]
 
         let store = TestStore(initialState: initial) {
             LibraryFeature()
@@ -212,8 +212,8 @@ struct LibraryFeatureTests {
         initial.filter = .tag(tagID)
         initial.items = [item]
         initial.availableTags = [
-            Tag(id: tagID, name: "work"),
-            Tag(id: otherTag, name: "later"),
+            Tag(name: "work", id: tagID),
+            Tag(name: "later", id: otherTag),
         ]
 
         let store = TestStore(initialState: initial) {
@@ -315,7 +315,7 @@ struct LibraryFeatureTests {
 
     @Test
     func saveURLAddsHttpsWhenSchemeMissing() async {
-        let item = SavedItem(title: "Saved", sourceURL: "https://example.com/post", content: "Body")
+        let item = SavedItem(title: "Saved", content: "Body", sourceURL: "https://example.com/post")
 
         let store = TestStore(initialState: LibraryFeature.State()) {
             LibraryFeature()
@@ -345,10 +345,11 @@ struct LibraryFeatureTests {
 
     @Test
     func saveTextImport_usesSelectedModeAndOpensCreatedItem() async throws {
-        let item = SavedItem(title: "Imported", renderFormat: .structuredV1, content: "Body")
-        let ingested = LockIsolated<[TextImportMode]>([])
+        let item = SavedItem(title: "Imported", content: "Body", renderFormat: .structuredV1)
+        let ingested = LockIsolated<[(String?, TextImportMode)]>([])
         var initial = LibraryFeature.State()
         initial.textImportDraft = LibraryFeature.TextImportDraft(
+            title: "Manual Title",
             text: "# Heading",
             mode: .markdown
         )
@@ -356,10 +357,11 @@ struct LibraryFeatureTests {
         let store = TestStore(initialState: initial) {
             LibraryFeature()
         } withDependencies: {
-            $0.textIngestionClient.ingest = { text, titleHint, mode in
+            $0.textIngestionClient.ingest = { text, explicitTitle, titleHint, mode in
                 #expect(text == "# Heading")
+                #expect(explicitTitle == "Manual Title")
                 #expect(titleHint == nil)
-                ingested.withValue { $0.append(mode) }
+                ingested.withValue { $0.append((explicitTitle, mode)) }
                 return IngestionResult.structuredText(
                     title: "Imported",
                     blocks: [.heading(level: 1, inlines: [.text("Heading")])],
@@ -381,18 +383,19 @@ struct LibraryFeatureTests {
         }
         await store.receive(.openItem(item))
 
-        #expect(ingested.value == [.markdown])
+        #expect(ingested.value.map(\.1) == [.markdown])
     }
 
     @Test
-    func importTextResolved_usesHintAndMode() async {
-        let item = SavedItem(title: "Meeting Notes", renderFormat: .structuredV1, content: "Body")
+    func importTextResolved_usesHintAndModeWithoutOpeningReader() async {
+        let item = SavedItem(title: "Meeting Notes", content: "Body", renderFormat: .structuredV1)
 
         let store = TestStore(initialState: LibraryFeature.State()) {
             LibraryFeature()
         } withDependencies: {
-            $0.textIngestionClient.ingest = { text, titleHint, mode in
+            $0.textIngestionClient.ingest = { text, explicitTitle, titleHint, mode in
                 #expect(text == "Body text")
+                #expect(explicitTitle == nil)
                 #expect(titleHint == "Meeting Notes")
                 #expect(mode == .auto)
                 return IngestionResult.structuredText(
@@ -413,6 +416,5 @@ struct LibraryFeatureTests {
             $0.saveState = .ready
             $0.items = [item]
         }
-        await store.receive(.openItem(item))
     }
 }

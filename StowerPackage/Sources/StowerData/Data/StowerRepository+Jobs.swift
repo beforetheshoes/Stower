@@ -29,7 +29,7 @@ extension StowerRepository {
                     .fetchAll(db)
                 return rows.compactMap { row -> IngestionJob? in
                     guard let kind = IngestionJob.Kind(rawValue: row.kind) else { return nil }
-                    return IngestionJob(id: row.id, kind: kind, payload: row.payload, createdAt: row.createdAt)
+                    return IngestionJob(kind: kind, payload: row.payload, id: row.id, createdAt: row.createdAt)
                 }
             }
         }
@@ -109,6 +109,97 @@ extension StowerRepository {
                     hydrated += 1
                 }
                 return hydrated
+            }
+        }
+    }
+
+    /// Hydrates text/markdown items that arrived via CloudKit sync by enqueuing
+    /// ingestion jobs. Unlike PDFs (which sync their full documentJSON), text
+    /// items only sync `rawSourceText` to stay under CloudKit's 1 MB limit.
+    /// The receiving device re-parses the raw source through the text ingestion
+    /// client to rebuild the document blocks.
+    static func _hydrateTextItemsFromSyncedContent(database: any DatabaseWriter) -> @Sendable () async throws -> Int {
+        { () async throws -> Int in
+            let now = Date.now
+            return try await database.write { db -> Int in
+                let textRows: [SavedTextContentSyncTable] = try SavedTextContentSyncTable.fetchAll(db)
+                var enqueued = 0
+                for textRow in textRows {
+                    // Skip if we already have rendered content locally.
+                    let existing: SavedItemContentLocalTable? = try SavedItemContentLocalTable
+                        .find(textRow.id)
+                        .fetchOne(db)
+                    if let existing, !existing.documentJSON.isEmpty {
+                        continue
+                    }
+
+                    // Need the sync row to get the item title.
+                    guard let sync = try SavedItemSyncTable.find(textRow.id).fetchOne(db) else {
+                        continue
+                    }
+
+                    // Decompress the raw source text (stored compressed in the
+                    // sync table to stay under CloudKit's 1 MB limit).
+                    let rawSourceText = TextSyncCompression.decompress(textRow.rawSourceText)
+
+                    // Create a placeholder local row so the library shows the
+                    // item with its plainText excerpt while ingestion runs.
+                    if existing == nil {
+                        try SavedItemContentLocalTable
+                            .insert {
+                                SavedItemContentLocalTable.Draft(
+                                    itemID: textRow.id,
+                                    renderFormat: textRow.renderFormat,
+                                    documentVersion: 1,
+                                    plainText: textRow.plainText,
+                                    documentJSON: "",
+                                    sourceHTMLHash: "",
+                                    sourceHTML: "",
+                                    rawSourceText: rawSourceText,
+                                    rawSourceMode: textRow.rawSourceMode,
+                                    localStatus: "downloading",
+                                    localError: nil,
+                                    createdAt: now,
+                                    updatedAt: now
+                                )
+                            }
+                            .execute(db)
+                    } else {
+                        try SavedItemContentLocalTable
+                            .find(textRow.id)
+                            .update {
+                                $0.localStatus = "downloading"
+                                $0.updatedAt = now
+                            }
+                            .execute(db)
+                    }
+
+                    // Enqueue a hydrateText job so the text ingestion client
+                    // can parse the raw source into document blocks.
+                    let payload = TextHydrationPayload(
+                        itemID: textRow.id,
+                        rawSourceText: rawSourceText,
+                        rawSourceMode: textRow.rawSourceMode,
+                        title: sync.title
+                    )
+                    let payloadJSON = try String(
+                        bytes: JSONEncoder().encode(payload),
+                        encoding: .utf8
+                    ) ?? ""
+                    try IngestionJobLocalTable
+                        .insert {
+                            IngestionJobLocalTable.Draft(
+                                id: UUID(),
+                                kind: IngestionJob.Kind.hydrateText.rawValue,
+                                payload: payloadJSON,
+                                createdAt: now,
+                                processedAt: nil
+                            )
+                        }
+                        .execute(db)
+                    enqueued += 1
+                }
+                return enqueued
             }
         }
     }

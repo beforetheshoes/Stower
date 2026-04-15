@@ -20,6 +20,7 @@ public struct ReaderFeature {
         public var isLoading = false
         public var errorMessage: String?
         @Presents public var inlineEmbedURL: InlineEmbedFeature.State?
+        public var textEditor: TextEditorState?
 
         /// Whether the user has manually overridden the render mode.
         public var renderModeOverride: RenderFormat?
@@ -47,6 +48,11 @@ public struct ReaderFeature {
         /// Whether the original article was detected as having interactive content.
         public var hasInteractiveContent: Bool {
             item?.renderFormat == .webView
+        }
+
+        public var canEditTextSource: Bool {
+            guard let item else { return false }
+            return item.sourceURL == nil && item.renderFormat != .pdf
         }
 
         var lineWidthPolicy: ReaderLineWidthPolicy {
@@ -88,6 +94,28 @@ public struct ReaderFeature {
         }
     }
 
+    public struct TextEditorState: Equatable, Sendable {
+        public var title: String
+        public var text: String
+        public var mode: TextImportMode
+        public var isSaving = false
+        public var errorMessage: String?
+
+        public init(
+            title: String,
+            text: String,
+            mode: TextImportMode,
+            isSaving: Bool = false,
+            errorMessage: String? = nil
+        ) {
+            self.title = title
+            self.text = text
+            self.mode = mode
+            self.isSaving = isSaving
+            self.errorMessage = errorMessage
+        }
+    }
+
     public enum Action: Equatable {
         case load
         case loaded(SavedItem?, ReaderDocument?, String?)
@@ -111,6 +139,16 @@ public struct ReaderFeature {
 
         case retryExtractionTapped
         case retryFinished(SavedItem?)
+        case editTextTapped
+        case editableTextLoaded(EditableTextSource)
+        case editableTextFailed(String)
+        case textEditorDismissed
+        case textEditorTitleChanged(String)
+        case textEditorTextChanged(String)
+        case textEditorModeChanged(TextImportMode)
+        case saveTextEditTapped
+        case textEditSaved(SavedItem, ReaderDocument)
+        case textEditFailed(String)
         case openInlineWebEmbed(String)
         case inlineEmbedURL(PresentationAction<InlineEmbedFeature.Action>)
         case switchRenderMode(RenderFormat)
@@ -139,6 +177,8 @@ public struct ReaderFeature {
     var continuousClock
     @Dependency(\.readerProgressClient)
     var readerProgressClient
+    @Dependency(\.textIngestionClient)
+    var textIngestionClient
 
     public var body: some ReducerOf<Self> {
         Scope(state: \.speech, action: \.speech) {
@@ -200,6 +240,95 @@ public struct ReaderFeature {
             case .failed(let error):
                 state.isLoading = false
                 state.errorMessage = error
+                return .none
+
+            case .editTextTapped:
+                guard state.canEditTextSource else { return .none }
+                let repository = self.repository
+                let itemID = state.itemID
+                return .run { send in
+                    do {
+                        guard let source = try await repository.loadEditableTextSource(itemID) else {
+                            await send(.editableTextFailed("This item can't be edited."))
+                            return
+                        }
+                        await send(.editableTextLoaded(source))
+                    } catch {
+                        await send(.editableTextFailed(error.localizedDescription))
+                    }
+                }
+
+            case .editableTextLoaded(let source):
+                state.textEditor = TextEditorState(
+                    title: source.title,
+                    text: source.text,
+                    mode: source.mode
+                )
+                return .none
+
+            case .editableTextFailed(let message):
+                state.errorMessage = message
+                return .none
+
+            case .textEditorDismissed:
+                state.textEditor = nil
+                return .none
+
+            case .textEditorTitleChanged(let title):
+                state.textEditor?.title = title
+                state.textEditor?.errorMessage = nil
+                return .none
+
+            case .textEditorTextChanged(let text):
+                state.textEditor?.text = text
+                state.textEditor?.errorMessage = nil
+                return .none
+
+            case .textEditorModeChanged(let mode):
+                state.textEditor?.mode = mode
+                state.textEditor?.errorMessage = nil
+                return .none
+
+            case .saveTextEditTapped:
+                guard let editor = state.textEditor else { return .none }
+                let trimmed = editor.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else {
+                    state.textEditor?.errorMessage = "Enter some text or markdown."
+                    return .none
+                }
+                state.textEditor?.isSaving = true
+                state.textEditor?.errorMessage = nil
+                let repository = self.repository
+                let textIngestionClient = self.textIngestionClient
+                let itemID = state.itemID
+                return .run { send in
+                    do {
+                        let result = try await textIngestionClient.ingest(
+                            editor.text,
+                            editor.title,
+                            nil,
+                            editor.mode
+                        )
+                        guard let item = try await repository.saveEditedTextSource(itemID, result) else {
+                            await send(.textEditFailed("This item no longer exists."))
+                            return
+                        }
+                        await send(.textEditSaved(item, result.document))
+                    } catch {
+                        await send(.textEditFailed(error.localizedDescription))
+                    }
+                }
+
+            case let .textEditSaved(item, document):
+                state.item = item
+                state.document = document
+                state.sourceHTML = nil
+                state.textEditor = nil
+                return .none
+
+            case .textEditFailed(let message):
+                state.textEditor?.isSaving = false
+                state.textEditor?.errorMessage = message
                 return .none
 
             // Appearance is now passed in via init — no async loading needed.
@@ -270,6 +399,41 @@ public struct ReaderFeature {
                 return .none
 
             case .retryExtractionTapped:
+                // Text/markdown items have no sourceURL — hydrate from the
+                // CloudKit-synced text content table and re-ingest.
+                if state.item?.sourceURL == nil {
+                    state.isLoading = true
+                    let repository = self.repository
+                    let textIngestionClient = self.textIngestionClient
+                    return .run { [id = state.itemID] send in
+                        do {
+                            // Hydrate enqueues jobs; process them inline.
+                            _ = try await repository.hydrateTextItemsFromSyncedContent()
+                            let jobs = try await repository.fetchPendingIngestionJobs()
+                            for job in jobs where job.kind == .hydrateText {
+                                let data = Data(job.payload.utf8)
+                                let payload = try JSONDecoder().decode(TextHydrationPayload.self, from: data)
+                                guard payload.itemID == id else { continue }
+                                let mode = payload.rawSourceMode
+                                    .flatMap(TextImportMode.init(rawValue:))
+                                    ?? .auto
+                                let result = try await textIngestionClient.ingest(
+                                    payload.rawSourceText,
+                                    payload.title,
+                                    nil,
+                                    mode
+                                )
+                                try await repository.hydrateItemContent(id, result)
+                                try await repository.markIngestionJobProcessed(job.id)
+                            }
+                            let item = try await repository.loadItem(id)
+                            await send(.retryFinished(item))
+                        } catch {
+                            await send(.failed(error.localizedDescription))
+                        }
+                    }
+                }
+
                 guard let source = state.item?.sourceURL,
                       let url = URL(string: source)
                 else {

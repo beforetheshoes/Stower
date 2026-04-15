@@ -139,8 +139,7 @@ struct ReaderAIControls: View {
                     Button {
                         store.send(.summarizeRequested(document: document, plainText: plainText))
                     } label: {
-                        // swiftlint:disable:next no_hardcoded_strings
-                        Label("Summarize this article", systemImage: "sparkles")
+                        Label("Summarize article", systemImage: "sparkles")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)

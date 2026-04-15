@@ -1,6 +1,9 @@
 import Dependencies
 import Foundation
+import OSLog
 import SQLiteData
+
+private let kBootstrapLogger = Logger(subsystem: "com.ryanleewilliams.stower", category: "Bootstrap")
 
 // MARK: - Diagnostics Types
 
@@ -119,19 +122,12 @@ public enum StowerDatabase {
             do {
                 try db.attachMetadatabase(containerIdentifier: cloudKitContainerID)
             } catch {
-                #if DEBUG
-                // swiftlint:disable:next no_print_statements
-                print("⚠️ SQLiteData metadatabase unavailable: \(error)")
-                #endif
+                kBootstrapLogger.warning("SQLiteData metadatabase unavailable: \(error.localizedDescription, privacy: .public)")
             }
         }
 
-        #if DEBUG
-        // swiftlint:disable:next no_print_statements
-        print("🔧 Bootstrap: appGroupID = \(appGroupID)")
-        // swiftlint:disable:next no_print_statements
-        print("🔧 Bootstrap: cloudKitContainerID = \(cloudKitContainerID)")
-        #endif
+        kBootstrapLogger.debug("appGroupID = \(Self.appGroupID, privacy: .public)")
+        kBootstrapLogger.debug("cloudKitContainerID = \(Self.cloudKitContainerID, privacy: .public)")
 
         // In .live, the database lives in the App Group container so the share
         // extension and the main app can both read and write the same file.
@@ -191,10 +187,7 @@ public enum StowerDatabase {
             )
         }
 
-        #if DEBUG
-        // swiftlint:disable:next no_print_statements
-        print("ℹ️ Migrated legacy Stower database from \(legacyURL.path) to \(destination.path)")
-        #endif
+        kBootstrapLogger.info("Migrated legacy Stower database from \(legacyURL.path, privacy: .public) to \(destination.path, privacy: .public)")
     }
 
     /// Mirrors `SQLiteData.defaultDatabase`'s `.live` default path so we can
@@ -238,6 +231,12 @@ public enum StowerDatabase {
         }
         migrator.registerMigration("flexoki-background-accents") { db in
             try migration_v9(db)
+        }
+        migrator.registerMigration("add-raw-text-authoring-source") { db in
+            try migration_v10(db)
+        }
+        migrator.registerMigration("add-synced-text-content-table") { db in
+            try migration_v11(db)
         }
         try migrator.migrate(database)
     }
@@ -344,6 +343,7 @@ public enum StowerDatabase {
               "itemID" TEXT PRIMARY KEY NOT NULL, "renderFormat" TEXT NOT NULL DEFAULT 'structuredV1',
               "documentVersion" INTEGER NOT NULL DEFAULT 1, "plainText" TEXT NOT NULL DEFAULT '',
               "documentJSON" TEXT NOT NULL DEFAULT '', "sourceHTMLHash" TEXT NOT NULL DEFAULT '',
+              "rawSourceText" TEXT NOT NULL DEFAULT '', "rawSourceMode" TEXT,
               "localStatus" TEXT NOT NULL DEFAULT 'notDownloaded', "localError" TEXT,
               "createdAt" TEXT NOT NULL, "updatedAt" TEXT NOT NULL,
               FOREIGN KEY("itemID") REFERENCES "savedItemSyncTables"("id") ON DELETE CASCADE
@@ -579,6 +579,52 @@ public enum StowerDatabase {
         try db.execute(sql: #"ALTER TABLE "readerAppearanceSettingsLocalTables" ADD COLUMN "secondaryAccent" TEXT NOT NULL DEFAULT 'purple'"#)
         try db.execute(sql: #"UPDATE "readerAppearanceSettingsLocalTables" SET "theme" = 'black' WHERE "theme" = 'dark'"#)
         try db.execute(sql: #"UPDATE "readerAppearanceSettingsLocalTables" SET "theme" = 'paper' WHERE "theme" = 'white'"#)
+    }
+
+    /// Adds local-only authoring source storage for text/markdown items so the
+    /// reader can reopen the exact original content for editing.
+    /// v11 — Synced text content for cross-device availability.
+    ///
+    /// Text/markdown items have no source URL to re-fetch from, so their
+    /// content was previously stuck on the originating device. This table
+    /// mirrors `savedPDFContentSyncTables` — CloudKit syncs it, and the
+    /// second device hydrates the local content table from it on launch.
+    private static func migration_v11(_ db: Database) throws {
+        // Drop the v11-preview table if it exists from a development build
+        // that included documentJSON (which exceeded CloudKit's 1 MB limit).
+        try db.execute(sql: #"DROP TABLE IF EXISTS "savedTextContentSyncTables""#)
+        try db.execute(sql: """
+            CREATE TABLE "savedTextContentSyncTables" (
+              "id" TEXT PRIMARY KEY NOT NULL,
+              "plainText" TEXT NOT NULL DEFAULT '',
+              "rawSourceText" TEXT NOT NULL DEFAULT '',
+              "rawSourceMode" TEXT,
+              "renderFormat" TEXT NOT NULL DEFAULT 'plainText',
+              "createdAt" TEXT NOT NULL,
+              "updatedAt" TEXT NOT NULL
+            ) STRICT
+            """)
+    }
+
+    private static func migration_v10(_ db: Database) throws {
+        do {
+            try db.execute(sql: #"ALTER TABLE "savedItemContentLocalTables" ADD COLUMN "rawSourceText" TEXT NOT NULL DEFAULT ''"#)
+        } catch {
+            if error.localizedDescription.contains("duplicate column name") {
+                // Fresh databases already include the column in the base schema.
+            } else {
+                throw error
+            }
+        }
+        do {
+            try db.execute(sql: #"ALTER TABLE "savedItemContentLocalTables" ADD COLUMN "rawSourceMode" TEXT"#)
+        } catch {
+            if error.localizedDescription.contains("duplicate column name") {
+                // Fresh databases already include the column in the base schema.
+            } else {
+                throw error
+            }
+        }
     }
 }
 

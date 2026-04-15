@@ -35,10 +35,8 @@ enum ReaderTextLayoutSupport {
     }
 
     static func listSpeechTextAndRanges(items: [[ReaderInline]]) -> (text: String, itemRanges: [NSRange]) {
-        // swiftlint:disable prefer_let_over_var
-        var itemRanges: [NSRange] = []
-        var pieces: [String] = []
-        // swiftlint:enable prefer_let_over_var
+        var itemRanges = [NSRange]()
+        var pieces = [String]()
         pieces.reserveCapacity(items.count)
 
         var cursorUTF16 = 0
@@ -87,6 +85,8 @@ enum ReaderTextLayoutSupport {
         switch inline {
         case .text(let value):
             return AttributedString(value)
+        case .lineBreak:
+            return AttributedString("\n")
         case let .link(label, url):
             var link = AttributedString(label)
             link.link = URL(string: url)

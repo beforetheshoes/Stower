@@ -23,8 +23,9 @@ public struct LibraryScreen: View {
     private let onOpenFilters: (() -> Void)?
     @State private var isAddURLPresented = false
     @State private var isTextImportPresented = false
-    @State private var isTextFilePickerPresented = false
-    @State private var isPDFPickerPresented = false
+    #if os(iOS)
+    @State private var activeImportPicker: IOSImportPicker?
+    #endif
 
     public init(
         store: StoreOf<LibraryFeature>,
@@ -311,18 +312,21 @@ public struct LibraryScreen: View {
                 isTextImportPresented = false
             }
         }
-        .fileImporter(
-            isPresented: $isTextFilePickerPresented,
-            allowedContentTypes: textImportContentTypes
-        ) { result in
-            handleTextImport(result)
+        #if os(iOS)
+        .sheet(item: $activeImportPicker) { picker in
+            IOSDocumentPicker(
+                allowedContentTypes: picker == .text ? textImportContentTypes : [.pdf]
+            ) { result in
+                activeImportPicker = nil
+                switch picker {
+                case .text:
+                    handleTextImport(result)
+                case .pdf:
+                    handlePDFImport(result)
+                }
+            }
         }
-        .fileImporter(
-            isPresented: $isPDFPickerPresented,
-            allowedContentTypes: [.pdf]
-        ) { result in
-            handlePDFImport(result)
-        }
+        #endif
         .sheet(isPresented: Binding(
             get: { store.inlineTagCreation != nil },
             set: { if !$0 { store.send(.inlineCreateTagDismissed) } }
@@ -383,7 +387,7 @@ public struct LibraryScreen: View {
         }
         #else
         DispatchQueue.main.async {
-            isTextFilePickerPresented = true
+            activeImportPicker = .text
         }
         #endif
     }
@@ -398,7 +402,7 @@ public struct LibraryScreen: View {
         }
         #else
         DispatchQueue.main.async {
-            isPDFPickerPresented = true
+            activeImportPicker = .pdf
         }
         #endif
     }
@@ -499,6 +503,54 @@ public struct LibraryScreen: View {
     }
 
     #if os(iOS)
+    private enum IOSImportPicker: String, Identifiable {
+        case text = "text"
+        case pdf = "pdf"
+
+        var id: String { rawValue }
+    }
+
+    private struct IOSDocumentPicker: UIViewControllerRepresentable {
+        let allowedContentTypes: [UTType]
+        let onComplete: (Result<URL, Error>) -> Void
+
+        func makeCoordinator() -> Coordinator {
+            Coordinator(onComplete: onComplete)
+        }
+
+        func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+            let controller = UIDocumentPickerViewController(
+                forOpeningContentTypes: allowedContentTypes,
+                asCopy: false
+            )
+            controller.delegate = context.coordinator
+            controller.allowsMultipleSelection = false
+            return controller
+        }
+
+        func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
+
+        final class Coordinator: NSObject, UIDocumentPickerDelegate {
+            private let onComplete: (Result<URL, Error>) -> Void
+
+            init(onComplete: @escaping (Result<URL, Error>) -> Void) {
+                self.onComplete = onComplete
+            }
+
+            func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+                guard let url = urls.first else {
+                    onComplete(.failure(NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError)))
+                    return
+                }
+                onComplete(.success(url))
+            }
+
+            func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+                onComplete(.failure(NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError)))
+            }
+        }
+    }
+
     /// Modal URL-entry form shown when the user taps the toolbar "+".
     @ViewBuilder private var addURLSheet: some View {
         NavigationStack {
@@ -551,73 +603,31 @@ public struct LibraryScreen: View {
     #endif
 
     @ViewBuilder private var textImportSheet: some View {
-        NavigationStack {
-            VStack(spacing: 16) {
-                Picker(
-                    "Format",
-                    selection: Binding(
-                        get: { store.textImportDraft?.mode ?? .auto },
-                        set: { store.send(.textImportModeChanged($0)) }
-                    )
-                ) {
-                    Text("Auto").tag(TextImportMode.auto)
-                    Text("Plain Text").tag(TextImportMode.plainText)
-                    Text("Markdown").tag(TextImportMode.markdown)
-                }
-                .pickerStyle(.segmented)
-
-                TextEditor(
-                    text: Binding(
-                        get: { store.textImportDraft?.text ?? "" },
-                        set: { store.send(.textImportTextChanged($0)) }
-                    )
-                )
-                .font(store.textImportDraft?.mode == .markdown ? .body.monospaced() : .body)
-                .padding(12)
-                .frame(maxWidth: .infinity, minHeight: 280, maxHeight: .infinity)
-                .glassEffect(.regular, in: .rect(cornerRadius: 12))
-
-                if store.saveState == .failed, let error = store.errorMessage {
-                    Text(error)
-                        .font(.caption)
-                        .foregroundStyle(palette.error)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                } else {
-                    Text("Paste plain text or markdown. Auto mode detects markdown-like syntax for text imports.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
+        TextAuthoringSheet(
+            title: Binding(
+                get: { store.textImportDraft?.title ?? "" },
+                set: { store.send(.textImportTitleChanged($0)) }
+            ),
+            text: Binding(
+                get: { store.textImportDraft?.text ?? "" },
+                set: { store.send(.textImportTextChanged($0)) }
+            ),
+            mode: Binding(
+                get: { store.textImportDraft?.mode ?? .auto },
+                set: { store.send(.textImportModeChanged($0)) }
+            ),
+            palette: palette,
+            errorMessage: store.saveState == .failed ? store.errorMessage : nil,
+            isSaving: store.isSaving,
+            navigationTitle: "Add Text",
+            onCancel: {
+                isTextImportPresented = false
+                store.send(.textImportDismissed)
+            },
+            onSave: {
+                store.send(.saveTextImportTapped)
             }
-            .padding()
-            .navigationTitle("Add Text/Markdown")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #else
-            .frame(minWidth: 640, idealWidth: 720, maxWidth: 900, minHeight: 460, idealHeight: 560)
-            #endif
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
-                        isTextImportPresented = false
-                        store.send(.textImportDismissed)
-                    }
-                    .disabled(store.isSaving)
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    if store.isSaving {
-                        ProgressView()
-                    } else {
-                        Button("Save") {
-                            store.send(.saveTextImportTapped)
-                        }
-                        .disabled(store.textImportDraft?.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
-                    }
-                }
-            }
-        }
-        .presentationDetents([.medium, .large])
-        .presentationDragIndicator(.visible)
+        )
     }
 
     private func decodedImportedText(from data: Data) -> String {

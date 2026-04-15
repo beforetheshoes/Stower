@@ -2,6 +2,44 @@ import Foundation
 import SQLiteData
 
 extension StowerRepository {
+    static func _loadEditableTextSource(database: any DatabaseWriter) -> @Sendable (UUID) async throws -> EditableTextSource? {
+        { id in
+            try await database.read { db in
+                guard let sync = try SavedItemSyncTable.find(id).fetchOne(db),
+                      let local = try SavedItemContentLocalTable.find(id).fetchOne(db)
+                else {
+                    return nil
+                }
+
+                let text: String
+                let mode: TextImportMode
+
+                if !local.rawSourceText.isEmpty {
+                    // Preferred: use the original source text that was saved during import.
+                    // Always default to .auto for the editor so the preview auto-detects
+                    // markdown vs plain text, regardless of what was stored. The user can
+                    // still override via the Format picker.
+                    text = local.rawSourceText
+                    mode = .auto
+                } else if !local.documentJSON.isEmpty,
+                          let data = local.documentJSON.data(using: .utf8),
+                          let document = try? JSONDecoder().decode(ReaderDocument.self, from: data),
+                          !document.blocks.isEmpty {
+                    // Fallback: reconstruct markdown from the parsed document blocks.
+                    // This handles articles where rawSourceText was never saved (e.g.
+                    // pre-migration items or edge cases).
+                    text = ReaderDocumentMarkdownWriter.markdown(from: document)
+                    mode = .markdown
+                } else {
+                    text = local.plainText
+                    mode = .auto
+                }
+
+                return EditableTextSource(title: sync.title, text: text, mode: mode)
+            }
+        }
+    }
+
     static func _saveReaderDocument(database: any DatabaseWriter) -> @Sendable (UUID, ReaderDocument, String) async throws -> Void {
         { (id: UUID, document: ReaderDocument, plainText: String) async throws in
             let now = Date.now

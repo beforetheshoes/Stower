@@ -39,9 +39,8 @@ extension StowerRepository {
                 let junctions: [ItemTagSyncTable] = try ItemTagSyncTable
                     .where { $0.itemID.in(itemIDs) }
                     .fetchAll(db)
-                var result: [UUID: [UUID]] = [:] // swiftlint:disable:this prefer_let_over_var
-                for row in junctions {
-                    result[row.itemID, default: []].append(row.tagID)
+                let result: [UUID: [UUID]] = junctions.reduce(into: [:]) { dict, row in
+                    dict[row.itemID, default: []].append(row.tagID)
                 }
                 return result
             }
@@ -74,8 +73,8 @@ extension StowerRepository {
                 )
                 try TagSyncTable.insert { draft }.execute(db)
                 return Tag(
-                    id: draft.id ?? UUID(),
                     name: trimmed,
+                    id: draft.id ?? UUID(),
                     colorHex: colorHex,
                     createdAt: now,
                     updatedAt: now

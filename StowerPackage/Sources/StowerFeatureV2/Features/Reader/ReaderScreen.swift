@@ -79,6 +79,16 @@ public struct ReaderScreen: View {
                     .keyboardShortcut("f", modifiers: .command)
                     .help("Find in reader")
                 }
+                if store.canEditTextSource {
+                    ToolbarItem(placement: .automatic) {
+                        Button {
+                            store.send(.editTextTapped)
+                        } label: {
+                            Label("Edit", systemImage: "square.and.pencil")
+                        }
+                        .help("Edit this text or markdown item")
+                    }
+                }
                 if store.item?.renderFormat == .pdf {
                     ToolbarItem(placement: .automatic) {
                         Button {
@@ -148,6 +158,42 @@ public struct ReaderScreen: View {
                 ) {
                     isPDFViewerPresented = false
                 }
+            }
+            .sheet(
+                isPresented: Binding(
+                    get: { store.textEditor != nil },
+                    set: { isPresented in
+                        if !isPresented {
+                            store.send(.textEditorDismissed)
+                        }
+                    }
+                )
+            ) {
+                TextAuthoringSheet(
+                    title: Binding(
+                        get: { store.textEditor?.title ?? "" },
+                        set: { store.send(.textEditorTitleChanged($0)) }
+                    ),
+                    text: Binding(
+                        get: { store.textEditor?.text ?? "" },
+                        set: { store.send(.textEditorTextChanged($0)) }
+                    ),
+                    mode: Binding(
+                        get: { store.textEditor?.mode ?? .plainText },
+                        set: { store.send(.textEditorModeChanged($0)) }
+                    ),
+                    palette: palette,
+                    errorMessage: store.textEditor?.errorMessage,
+                    isSaving: store.textEditor?.isSaving ?? false,
+                    navigationTitle: "Edit",
+                    onCancel: {
+                        store.send(.textEditorDismissed)
+                    },
+                    onSave: {
+                        store.send(.saveTextEditTapped)
+                    },
+                    appearance: store.appearance
+                )
             }
     }
 

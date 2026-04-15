@@ -262,6 +262,7 @@ public struct AppFeature {
                     return .run { send in
                         _ = try? await repository.enqueueHydrationJobsForMissingContent()
                         _ = try? await repository.hydratePDFItemsFromSyncedContent()
+                        _ = try? await repository.hydrateTextItemsFromSyncedContent()
                         try? await processIngestionJobs(
                             repository: repository,
                             ingestionClient: ingestionClient,
@@ -442,6 +443,7 @@ private func processIngestionJobs(
             let payload = QueuedTextPayloadCodec.decode(job.payload, defaultMode: .auto)
             let result = try await textIngestionClient.ingest(
                 payload.content,
+                nil,
                 payload.titleHint,
                 payload.mode
             )
@@ -450,10 +452,28 @@ private func processIngestionJobs(
             let payload = QueuedTextPayloadCodec.decode(job.payload, defaultMode: .markdown)
             let result = try await textIngestionClient.ingest(
                 payload.content,
+                nil,
                 payload.titleHint,
                 .markdown
             )
             _ = try await repository.createItemFromIngestion(result)
+        case .hydrateText:
+            let data = Data(job.payload.utf8)
+            let payload = try JSONDecoder().decode(TextHydrationPayload.self, from: data)
+            do {
+                let mode = payload.rawSourceMode
+                    .flatMap(TextImportMode.init(rawValue:))
+                    ?? .auto
+                let result = try await textIngestionClient.ingest(
+                    payload.rawSourceText,
+                    payload.title,
+                    nil,
+                    mode
+                )
+                try await repository.hydrateItemContent(payload.itemID, result)
+            } catch {
+                try? await repository.updateLocalContentStatus(payload.itemID, "failed", error.localizedDescription)
+            }
         case .hydrate:
             let data = Data(job.payload.utf8)
             let payload = try JSONDecoder().decode(HydrationPayload.self, from: data)

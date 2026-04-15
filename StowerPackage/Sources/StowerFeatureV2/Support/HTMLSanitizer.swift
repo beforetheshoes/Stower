@@ -1,8 +1,7 @@
 import Foundation
 
 func sanitizeBlocks(_ input: [ReaderBlock]) -> [ReaderBlock] {
-    // swiftlint:disable:next prefer_let_over_var
-    var output: [ReaderBlock] = []
+    var output = [ReaderBlock]()
 
     for block in input {
         if shouldAlwaysKeepBlock(block) {
@@ -97,8 +96,7 @@ func isLikelyBoilerplateText(_ rawText: String) -> Bool {
 
 func dedupeBlocks(_ input: [ReaderBlock]) -> [ReaderBlock] {
     var seen: Set<String> = []
-    // swiftlint:disable:next prefer_let_over_var
-    var output: [ReaderBlock] = []
+    var output = [ReaderBlock]()
     for block in input {
         let fingerprint = String(describing: block)
         if seen.contains(fingerprint) { continue }

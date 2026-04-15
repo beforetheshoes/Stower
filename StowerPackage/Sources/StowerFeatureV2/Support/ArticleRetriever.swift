@@ -28,8 +28,7 @@ public enum ArticleRetriever {
             return Array(chunks.prefix(k))
         }
 
-        // swiftlint:disable:next prefer_let_over_var
-        var scored: [(chunk: ArticleChunker.Chunk, score: Double)] = []
+        var scored = [(chunk: ArticleChunker.Chunk, score: Double)]()
         scored.reserveCapacity(chunks.count)
 
         for chunk in chunks {
@@ -69,8 +68,7 @@ public enum ArticleRetriever {
             return nil
         }
 
-        // swiftlint:disable:next prefer_let_over_var
-        var sum: [Double] = []
+        var sum = [Double]()
         var count = 0
 
         for sentence in sentences {
@@ -100,8 +98,7 @@ public enum ArticleRetriever {
     private static func splitSentences(_ text: String) -> [String] {
         let tokenizer = NLTokenizer(unit: .sentence)
         tokenizer.string = text
-        // swiftlint:disable:next prefer_let_over_var
-        var sentences: [String] = []
+        var sentences = [String]()
         tokenizer.enumerateTokens(in: text.startIndex..<text.endIndex) { range, _ in
             let sentence = String(text[range]).trimmingCharacters(in: .whitespacesAndNewlines)
             if !sentence.isEmpty { sentences.append(sentence) }

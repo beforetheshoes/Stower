@@ -35,43 +35,45 @@ private func sanitizeBlock(_ block: ReaderBlock) -> ReaderBlock {
 }
 
 private func sanitizeInlines(_ inlines: [ReaderInline]) -> [ReaderInline] {
-    var output: [ReaderInline] = [] // swiftlint:disable:this prefer_let_over_var
-    output.reserveCapacity(inlines.count)
-
-    for inline in inlines {
+    let output: [ReaderInline] = inlines.compactMap { inline -> ReaderInline? in
         switch inline {
         case let .text(value):
             // Preserve boundary whitespace — the parser intentionally emits
             // segments like `"word "` so the downstream renderer doesn't
             // smoosh links/bold runs against their neighbours.
             let cleaned = stripPilcrows(value)
-            if !cleaned.isEmpty { output.append(.text(cleaned)) }
+            return cleaned.isEmpty ? nil : .text(cleaned)
+
+        case .lineBreak:
+            return .lineBreak
 
         case let .link(label, url):
             let cleanedLabel = stripPilcrows(label).trimmingCharacters(in: .whitespacesAndNewlines)
-            if cleanedLabel.isEmpty { continue }
+            if cleanedLabel.isEmpty {
+                return nil
+            }
             // Drop fragment-only links with symbol-only or very short labels —
             // these are almost always heading permalinks.
             if url.hasPrefix("#"), isSymbolOnly(cleanedLabel) || cleanedLabel.count <= 2 {
-                continue
+                return nil
             }
-            output.append(.link(label: cleanedLabel, url: url))
+            return .link(label: cleanedLabel, url: url)
 
         case let .emphasis(value):
             let cleaned = stripPilcrows(value).trimmingCharacters(in: .whitespacesAndNewlines)
-            if !cleaned.isEmpty { output.append(.emphasis(cleaned)) }
+            return cleaned.isEmpty ? nil : .emphasis(cleaned)
 
         case let .strong(value):
             let cleaned = stripPilcrows(value).trimmingCharacters(in: .whitespacesAndNewlines)
-            if !cleaned.isEmpty { output.append(.strong(cleaned)) }
+            return cleaned.isEmpty ? nil : .strong(cleaned)
 
         case let .code(value):
             // Don't strip pilcrows from code — they may be meaningful literals.
-            output.append(.code(value))
+            return .code(value)
 
         case let .strikethrough(value):
             let cleaned = stripPilcrows(value).trimmingCharacters(in: .whitespacesAndNewlines)
-            if !cleaned.isEmpty { output.append(.strikethrough(cleaned)) }
+            return cleaned.isEmpty ? nil : .strikethrough(cleaned)
         }
     }
 
@@ -112,19 +114,17 @@ private func isSymbolOnly(_ text: String) -> Bool {
 }
 
 private func mergeAdjacentText(_ inlines: [ReaderInline]) -> [ReaderInline] {
-    var merged: [ReaderInline] = [] // swiftlint:disable:this prefer_let_over_var
-    merged.reserveCapacity(inlines.count)
-    for inline in inlines {
+    let merged: [ReaderInline] = inlines.reduce(into: []) { result, inline in
         if case .text(let current) = inline,
-           case .text(let previous)? = merged.last {
-            merged.removeLast()
+           case .text(let previous)? = result.last {
+            result.removeLast()
             // Boundary spaces are already preserved on each segment, so
             // concatenate directly and collapse any double-space at the seam.
             let joined = (previous + current)
                 .replacingOccurrences(of: "  ", with: " ")
-            merged.append(.text(joined))
+            result.append(.text(joined))
         } else {
-            merged.append(inline)
+            result.append(inline)
         }
     }
     return merged

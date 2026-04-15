@@ -1,4 +1,3 @@
-// swiftlint:disable no_sensitive_logging
 import Dependencies
 import Foundation
 import FoundationModels
@@ -229,7 +228,7 @@ extension ArticleAIClient {
     // response, give the rest to the input.
     //
     // The reserves are deliberately generous (roughly 1/4 of a 4096 window).
-    // The token estimator can undercount by ~25% on real articles, so the
+    // The unit estimator can undercount by ~25% on real articles, so the
     // extra headroom keeps even mis-estimated inputs from colliding with
     // the real context ceiling.
     //
@@ -260,7 +259,7 @@ extension ArticleAIClient {
 
         // Single-session fast path — attempt, fall back to chunked on any
         // real-world context overflow. The estimator can still be wrong
-        // even with the conservative char-per-token ratio, so this catch
+        // even with the conservative char-per-unit ratio, so this catch
         // is load-bearing for edge-case articles.
         if approxInputTokens <= budget {
             do {
@@ -298,8 +297,7 @@ extension ArticleAIClient {
             return
         }
 
-        // swiftlint:disable:next prefer_let_over_var
-        var sectionSummaries: [String] = []
+        var sectionSummaries = [String]()
         sectionSummaries.reserveCapacity(chunks.count)
 
         for (offset, chunk) in chunks.enumerated() {
@@ -515,4 +513,3 @@ extension ArticleAIClient {
         continuation.yield(.finished(lastContent))
     }
 }
-// swiftlint:enable no_sensitive_logging

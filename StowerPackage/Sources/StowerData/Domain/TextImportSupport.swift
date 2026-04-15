@@ -18,6 +18,18 @@ public struct QueuedTextPayload: Codable, Equatable, Sendable {
     }
 }
 
+public struct EditableTextSource: Equatable, Sendable {
+    public var title: String
+    public var text: String
+    public var mode: TextImportMode
+
+    public init(title: String, text: String, mode: TextImportMode) {
+        self.title = title
+        self.text = text
+        self.mode = mode
+    }
+}
+
 public enum TextImportDetector {
     public static func looksLikeMarkdown(_ text: String) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -32,6 +44,8 @@ public enum TextImportDetector {
             #"(?m)^\s{0,3}([-*_])(\s*\1){2,}\s*$"#,
             #"(?s)\|.+\|\s*\n\s*\|[\s:\-]+\|"#,
             #"\[[^\]]+\]\([^)]+\)"#,
+            #"\*\*\S.*?\*\*"#,
+            #"`[^`\n]+`"#,
         ]
 
         return patterns.contains { pattern in
@@ -109,7 +123,17 @@ public enum SharedTextClassifier {
     }
 }
 
-public func resolvedTextImportTitle(documentTitle: String?, titleHint: String?) -> String {
+public func resolvedTextImportTitle(
+    explicitTitle: String?,
+    documentTitle: String?,
+    titleHint: String?
+) -> String {
+    if let explicitTitle {
+        let trimmed = explicitTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            return trimmed
+        }
+    }
     if let documentTitle {
         let trimmed = documentTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty {

@@ -77,16 +77,14 @@ public struct YouTubeIngestionClient: Sendable {
 
             // 5. Compose the ReaderDocument: video card, then description
             //    paragraphs.
-            // swiftlint:disable:next prefer_let_over_var
-            var blocks: [ReaderBlock] = [.video(media: descriptor)]
-            blocks.append(contentsOf: descriptionBlocks(description))
+            let blocks: [ReaderBlock] = [.video(media: descriptor)] + descriptionBlocks(description)
 
             let document = ReaderDocument(
+                title: metadata.title,
+                blocks: blocks,
                 version: 1,
                 sourceURL: originalURL.absoluteString,
-                canonicalURL: canonicalWatchURL,
-                title: metadata.title,
-                blocks: blocks
+                canonicalURL: canonicalWatchURL
             )
 
             let plainText: String

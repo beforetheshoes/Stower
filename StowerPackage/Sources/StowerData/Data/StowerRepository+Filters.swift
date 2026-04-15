@@ -82,9 +82,8 @@ extension StowerRepository {
                 let junctions: [ItemTagSyncTable] = ids.isEmpty
                     ? []
                     : try ItemTagSyncTable.where { $0.itemID.in(ids) }.fetchAll(db)
-                var tagIDsByItem: [UUID: [UUID]] = [:] // swiftlint:disable:this prefer_let_over_var
-                for row in junctions {
-                    tagIDsByItem[row.itemID, default: []].append(row.tagID)
+                let tagIDsByItem: [UUID: [UUID]] = junctions.reduce(into: [:]) { result, row in
+                    result[row.itemID, default: []].append(row.tagID)
                 }
 
                 var seen = Set<String>()
@@ -262,10 +261,11 @@ extension StowerRepository {
                     .fetchAll(db)
                     .map(\.id)
                 let liveIDSet = Set(liveIDs)
-                var byTag: [UUID: Int] = [:] // swiftlint:disable:this prefer_let_over_var
-                for row in taggedRows where liveIDSet.contains(row.itemID) {
-                    byTag[row.tagID, default: 0] += 1
-                }
+                let byTag: [UUID: Int] = taggedRows
+                    .filter { liveIDSet.contains($0.itemID) }
+                    .reduce(into: [:]) { result, row in
+                        result[row.tagID, default: 0] += 1
+                    }
 
                 return LibraryListCounts(
                     unread: unreadCount,

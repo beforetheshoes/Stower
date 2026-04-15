@@ -26,6 +26,8 @@ struct HTMLBlockParserTests {
             switch inline {
             case .text(let value):
                 return value
+            case .lineBreak:
+                return "\n"
             case .link(let label, _):
                 return label
             case .emphasis(let value):
@@ -175,6 +177,8 @@ struct HTMLBlockParserTests {
                 switch inline {
                 case .text(let value):
                     return value
+                case .lineBreak:
+                    return "\n"
                 case .link(let label, _):
                     return label
                 case .emphasis(let value):
@@ -244,9 +248,9 @@ struct HTMLBlockParserTests {
         // exactly what WKWebView loads.
         let item = SavedItem(
             title: "Keeping Each Other Safe",
+            content: "",
             sourceURL: "https://example.com/mutual-aid",
-            renderFormat: .structuredV1,
-            content: ""
+            renderFormat: .structuredV1
         )
         let rendered = ReaderDocumentHTMLBuilder.buildReaderHTML(
             item: item,
@@ -286,6 +290,8 @@ struct HTMLBlockParserTests {
                     switch inline {
                     case .text(let value):
                         return value
+                    case .lineBreak:
+                        return "\n"
                     case .link(let label, _):
                         return label
                     case .emphasis(let value):

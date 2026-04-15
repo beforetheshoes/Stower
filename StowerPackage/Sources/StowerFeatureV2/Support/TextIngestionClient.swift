@@ -4,53 +4,93 @@ import Markdown
 import StowerData
 
 public struct TextIngestionClient: Sendable {
-    public var ingest: @Sendable (_ text: String, _ titleHint: String?, _ mode: TextImportMode) async throws -> IngestionResult
+    public var ingest: @Sendable (_ text: String, _ explicitTitle: String?, _ titleHint: String?, _ mode: TextImportMode) async throws -> IngestionResult
 
     public init(
-        ingest: @escaping @Sendable (_ text: String, _ titleHint: String?, _ mode: TextImportMode) async throws -> IngestionResult
+        ingest: @escaping @Sendable (_ text: String, _ explicitTitle: String?, _ titleHint: String?, _ mode: TextImportMode) async throws -> IngestionResult
     ) {
         self.ingest = ingest
     }
 
-    public static let live = TextIngestionClient { text, titleHint, mode in
+    public static let live = TextIngestionClient { text, explicitTitle, titleHint, mode in
+        let rawSourceText = text
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedMode = TextImportDetector.inferredMode(for: trimmed, preferred: mode)
         switch resolvedMode {
         case .plainText:
-            return IngestionResult.sharedText(trimmed, title: titleHint)
+            return IngestionResult.sharedText(
+                text,
+                explicitTitle: explicitTitle,
+                titleHint: titleHint,
+                rawSourceText: rawSourceText,
+                rawSourceMode: mode
+            )
         case .markdown:
-            return (try? await MarkdownIngestionClient.live.ingest(trimmed, titleHint)) ?? IngestionResult.sharedText(trimmed, title: titleHint)
+            var result = (try? await MarkdownIngestionClient.live.ingest(text, explicitTitle, titleHint))
+                ?? IngestionResult.sharedText(
+                    text,
+                    explicitTitle: explicitTitle,
+                    titleHint: titleHint,
+                    rawSourceText: rawSourceText,
+                    rawSourceMode: mode
+                )
+            result.rawSourceText = rawSourceText
+            result.rawSourceMode = mode
+            return result
         case .auto:
-            return IngestionResult.sharedText(trimmed, title: titleHint)
+            return IngestionResult.sharedText(
+                text,
+                explicitTitle: explicitTitle,
+                titleHint: titleHint,
+                rawSourceText: rawSourceText,
+                rawSourceMode: mode
+            )
         }
     }
 }
 
 public struct MarkdownIngestionClient: Sendable {
-    public var ingest: @Sendable (_ markdown: String, _ titleHint: String?) async throws -> IngestionResult
+    public var ingest: @Sendable (_ markdown: String, _ explicitTitle: String?, _ titleHint: String?) async throws -> IngestionResult
 
     public init(
-        ingest: @escaping @Sendable (_ markdown: String, _ titleHint: String?) async throws -> IngestionResult
+        ingest: @escaping @Sendable (_ markdown: String, _ explicitTitle: String?, _ titleHint: String?) async throws -> IngestionResult
     ) {
         self.ingest = ingest
     }
 
-    public static let live = MarkdownIngestionClient { markdown, titleHint in
-        let blocks = MarkdownBlockParser.parse(markdown)
-        let title = resolvedTextImportTitle(
-            documentTitle: MarkdownBlockParser.firstHeadingTitle(in: blocks),
+    public static let live = MarkdownIngestionClient { markdown, explicitTitle, titleHint in
+        markdownIngestionResult(
+            markdown: markdown,
+            explicitTitle: explicitTitle,
             titleHint: titleHint
         )
-        let plainText = markdownPlainText(from: blocks)
-        guard !blocks.isEmpty else {
-            return IngestionResult.sharedText(markdown, title: titleHint)
-        }
-        return IngestionResult.structuredText(
-            title: title,
-            blocks: blocks,
-            plainText: plainText
+    }
+}
+
+func markdownIngestionResult(
+    markdown: String,
+    explicitTitle: String?,
+    titleHint: String?
+) -> IngestionResult {
+    let blocks = MarkdownBlockParser.parse(markdown)
+    let title = resolvedTextImportTitle(
+        explicitTitle: explicitTitle,
+        documentTitle: MarkdownBlockParser.firstHeadingTitle(in: blocks),
+        titleHint: titleHint
+    )
+    let plainText = markdownPlainText(from: blocks)
+    guard !blocks.isEmpty else {
+        return IngestionResult.sharedText(
+            markdown,
+            explicitTitle: explicitTitle,
+            titleHint: titleHint
         )
     }
+    return IngestionResult.structuredText(
+        title: title,
+        blocks: blocks,
+        plainText: plainText
+    )
 }
 
 private func markdownPlainText(from blocks: [ReaderBlock]) -> String {
@@ -238,13 +278,13 @@ private enum MarkdownBlockParser {
         while cursor < lines.count {
             let trimmed = lines[cursor].trimmingCharacters(in: .whitespaces)
             guard trimmed.hasPrefix(">") else { break }
-            let content = trimmed.dropFirst().trimmingCharacters(in: .whitespaces)
+            let content = trimLeadingWhitespace(String(trimmed.dropFirst()))
             if !content.isEmpty {
                 parts.append(content)
             }
             cursor += 1
         }
-        return (.blockquote(MarkdownInlineParser.parse(parts.joined(separator: " "))), cursor)
+        return (.blockquote(MarkdownInlineParser.parse(parts.joined(separator: "\n"))), cursor)
     }
 
     private static func parseList(_ lines: [String], index: Int) -> (block: ReaderBlock, nextIndex: Int)? {
@@ -268,7 +308,7 @@ private enum MarkdownBlockParser {
 
             let indentation = line.prefix { $0 == " " || $0 == "\t" }.count
             if indentation >= 2, !items.isEmpty {
-                let continuation = line.trimmingCharacters(in: .whitespaces)
+                let continuation = trimLeadingWhitespace(line)
                 if !continuation.isEmpty {
                     items[items.count - 1].append(continuation)
                 }
@@ -278,7 +318,7 @@ private enum MarkdownBlockParser {
             break
         }
 
-        let parsedItems = items.map { MarkdownInlineParser.parse($0.joined(separator: " ")) }
+        let parsedItems = items.map { MarkdownInlineParser.parse($0.joined(separator: "\n")) }
         return (.list(ordered: firstMarker.ordered, items: parsedItems), cursor)
     }
 
@@ -297,10 +337,10 @@ private enum MarkdownBlockParser {
                     break
                 }
             }
-            parts.append(line.trimmingCharacters(in: .whitespaces))
+            parts.append(trimLeadingWhitespace(line))
             cursor += 1
         }
-        return (.paragraph(MarkdownInlineParser.parse(parts.joined(separator: " "))), cursor)
+        return (.paragraph(MarkdownInlineParser.parse(parts.joined(separator: "\n"))), cursor)
     }
 
     private static func listMatch(in line: String) -> (ordered: Bool, content: String)? {
@@ -316,20 +356,41 @@ private enum MarkdownBlockParser {
         }
         return nil
     }
+
+    private static func trimLeadingWhitespace(_ line: String) -> String {
+        line.replacingOccurrences(of: #"^\s+"#, with: "", options: .regularExpression)
+    }
 }
 
 private enum MarkdownInlineParser {
     static func parse(_ markdown: String) -> [ReaderInline] {
-        let document = Document(parsing: markdown)
-        return collectInlines(from: document)
+        let normalized = markdown.replacingOccurrences(of: "\r\n", with: "\n")
+        let components = splitPreservingHardBreaks(in: normalized)
+
+        var output = [ReaderInline]()
+        for component in components {
+            switch component {
+            case .segment(let text):
+                guard !text.isEmpty else { continue }
+                let document = Document(parsing: text)
+                output.append(contentsOf: collectInlines(from: document))
+            case .lineBreak:
+                output.append(.lineBreak)
+            }
+        }
+
+        return mergeText(output)
     }
 
     private static func collectInlines(from markup: any Markup) -> [ReaderInline] {
         if let text = markup as? Text {
             return [.text(text.string)]
         }
-        if markup is SoftBreak || markup is LineBreak {
+        if markup is SoftBreak {
             return [.text(" ")]
+        }
+        if markup is LineBreak {
+            return [.lineBreak]
         }
         if let inlineCode = markup as? InlineCode {
             return [.code(inlineCode.code)]
@@ -352,6 +413,53 @@ private enum MarkdownInlineParser {
             output.append(contentsOf: collectInlines(from: child))
         }
         return mergeText(output)
+    }
+
+    private static func splitPreservingHardBreaks(in markdown: String) -> [InlineComponent] {
+        let lines = markdown.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        guard !lines.isEmpty else { return [.segment("")] }
+
+        var components = [InlineComponent]()
+        var currentSegment = ""
+
+        for index in lines.indices {
+            let line = lines[index]
+            let isLastLine = index == lines.index(before: lines.endIndex)
+            let (segmentLine, hasHardBreak) = consumeHardBreakMarker(from: line)
+            currentSegment += segmentLine
+
+            if isLastLine {
+                if !currentSegment.isEmpty {
+                    components.append(.segment(currentSegment))
+                }
+                continue
+            }
+
+            if hasHardBreak {
+                if !currentSegment.isEmpty {
+                    components.append(.segment(currentSegment))
+                }
+                components.append(.lineBreak)
+                currentSegment = ""
+            } else {
+                currentSegment += "\n"
+            }
+        }
+
+        return components.isEmpty ? [.segment("")] : components
+    }
+
+    private static func consumeHardBreakMarker(from line: String) -> (text: String, hasHardBreak: Bool) {
+        if line.hasSuffix("\\") {
+            return (String(line.dropLast()), true)
+        }
+
+        let trailingSpaces = line.reversed().prefix { $0 == " " }.count
+        if trailingSpaces >= 2 {
+            return (String(line.dropLast(trailingSpaces)), true)
+        }
+
+        return (line, false)
     }
 
     private static func plainText(from markup: any Markup) -> String {
@@ -383,5 +491,10 @@ private enum MarkdownInlineParser {
             }
         }
         return output
+    }
+
+    private enum InlineComponent {
+        case segment(String)
+        case lineBreak
     }
 }
