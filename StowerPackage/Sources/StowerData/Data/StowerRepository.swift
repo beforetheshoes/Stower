@@ -69,6 +69,10 @@ public struct StowerRepository: Sendable {
     /// Populates the local content table for text/markdown items that arrived
     /// via CloudKit sync. Mirrors `hydratePDFItemsFromSyncedContent`.
     public var hydrateTextItemsFromSyncedContent: @Sendable () async throws -> Int
+    /// Re-populates `SavedTextContentSyncTable` from local content for any
+    /// text items missing a sync row. Recovers from dropped tables and
+    /// backfills items created before the sync table existed.
+    public var backfillTextSyncTable: @Sendable () async throws -> Int
 }
 
 private enum StowerRepositoryKey: DependencyKey {
@@ -132,7 +136,8 @@ extension StowerRepository {
             markIngestionJobProcessed: { _ in },
             enqueueHydrationJobsForMissingContent: { 0 },
             hydratePDFItemsFromSyncedContent: { 0 },
-            hydrateTextItemsFromSyncedContent: { 0 }
+            hydrateTextItemsFromSyncedContent: { 0 },
+            backfillTextSyncTable: { 0 }
         )
     }()
 }
@@ -260,7 +265,8 @@ extension StowerRepository {
             markIngestionJobProcessed: _markIngestionJobProcessed(database: database),
             enqueueHydrationJobsForMissingContent: _enqueueHydrationJobsForMissingContent(database: database),
             hydratePDFItemsFromSyncedContent: _hydratePDFItemsFromSyncedContent(database: database),
-            hydrateTextItemsFromSyncedContent: _hydrateTextItemsFromSyncedContent(database: database)
+            hydrateTextItemsFromSyncedContent: _hydrateTextItemsFromSyncedContent(database: database),
+            backfillTextSyncTable: _backfillTextSyncTable(database: database)
         )
     }
 

@@ -9,7 +9,7 @@
 PRODUCT_NAME = Stower
 PRODUCT_DISPLAY_NAME = Stower
 PRODUCT_BUNDLE_IDENTIFIER = com.ryanleewilliams.stower
-MARKETING_VERSION = 0.2.0
+MARKETING_VERSION = 0.2.1
 CURRENT_PROJECT_VERSION = 2
 
 // ==========================================
