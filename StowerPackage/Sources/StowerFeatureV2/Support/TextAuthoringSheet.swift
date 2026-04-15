@@ -70,6 +70,7 @@ public struct TextAuthoringSheet: View {
     @State private var activePane: TextAuthoringPane = .write
     @State private var previewItemID = UUID()
 
+    // swiftlint:disable:next function_default_parameter_at_end
     public init(
         title: Binding<String>,
         text: Binding<String>,

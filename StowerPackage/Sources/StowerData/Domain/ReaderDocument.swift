@@ -355,10 +355,12 @@ public enum ReaderDocumentMarkdownWriter {
             return "\(hashes) \(inlinesToMarkdown(inlines))"
 
         case let .list(ordered, items):
-            return items.enumerated().map { index, inlines in
-                let marker = ordered ? "\(index + 1)." : "-"
-                return "\(marker) \(inlinesToMarkdown(inlines))"
-            }.joined(separator: "\n")
+            return items.enumerated()
+                .map { index, inlines in
+                    let marker = ordered ? "\(index + 1)." : "-"
+                    return "\(marker) \(inlinesToMarkdown(inlines))"
+                }
+                .joined(separator: "\n")
 
         case .blockquote(let inlines):
             let text = inlinesToMarkdown(inlines)
