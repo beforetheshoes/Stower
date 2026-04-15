@@ -113,6 +113,75 @@ extension StowerRepository {
         }
     }
 
+    /// Backfills `SavedTextContentSyncTable` from local content for text items
+    /// that are missing a sync row. Runs on every launch so that:
+    ///   • Items created before the sync table existed get a row.
+    ///   • Items whose sync row was lost (e.g. by a DROP TABLE migration) are
+    ///     repopulated from the still-intact local content table.
+    /// Only writes for text items (sourceURL is nil, renderFormat is not pdf).
+    static func _backfillTextSyncTable(database: any DatabaseWriter) -> @Sendable () async throws -> Int {
+        { () async throws -> Int in
+            let now = Date.now
+            return try await database.write { db -> Int in
+                // Find text items that have local content but no sync row.
+                let locals = try SavedItemContentLocalTable
+                    .where { $0.localStatus.eq("available") }
+                    .fetchAll(db)
+                var backfilled = 0
+                for local in locals {
+                    // Only text items — skip URL-sourced and PDF items.
+                    guard let sync = try SavedItemSyncTable.find(local.itemID).fetchOne(db) else {
+                        continue
+                    }
+                    guard sync.sourceURL == nil || sync.sourceURL?.isEmpty == true else {
+                        continue
+                    }
+                    let format = RenderFormat(rawValue: local.renderFormat) ?? .structuredV1
+                    guard format != .pdf else { continue }
+
+                    // Skip if a sync row already exists with content.
+                    if let existing = try SavedTextContentSyncTable.find(local.itemID).fetchOne(db),
+                       !existing.rawSourceText.isEmpty {
+                        continue
+                    }
+
+                    // Build the compressed raw source text for the sync row.
+                    let rawText: String
+                    if !local.rawSourceText.isEmpty {
+                        rawText = local.rawSourceText
+                    } else if !local.documentJSON.isEmpty,
+                              let data = local.documentJSON.data(using: .utf8),
+                              let document = try? JSONDecoder().decode(ReaderDocument.self, from: data),
+                              !document.blocks.isEmpty {
+                        rawText = ReaderDocumentMarkdownWriter.markdown(from: document)
+                    } else {
+                        rawText = local.plainText
+                    }
+                    guard !rawText.isEmpty else { continue }
+
+                    let compressed = TextSyncCompression.compress(rawText)
+                    let truncatedPlain = String(local.plainText.prefix(1000))
+
+                    try SavedTextContentSyncTable
+                        .upsert {
+                            SavedTextContentSyncTable.Draft(
+                                id: local.itemID,
+                                plainText: truncatedPlain,
+                                rawSourceText: compressed,
+                                rawSourceMode: local.rawSourceMode,
+                                renderFormat: local.renderFormat,
+                                createdAt: now,
+                                updatedAt: now
+                            )
+                        }
+                        .execute(db)
+                    backfilled += 1
+                }
+                return backfilled
+            }
+        }
+    }
+
     /// Hydrates text/markdown items that arrived via CloudKit sync by enqueuing
     /// ingestion jobs. Unlike PDFs (which sync their full documentJSON), text
     /// items only sync `rawSourceText` to stay under CloudKit's 1 MB limit.

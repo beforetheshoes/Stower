@@ -590,11 +590,13 @@ public enum StowerDatabase {
     /// mirrors `savedPDFContentSyncTables` — CloudKit syncs it, and the
     /// second device hydrates the local content table from it on launch.
     private static func migration_v11(_ db: Database) throws {
-        // Drop the v11-preview table if it exists from a development build
-        // that included documentJSON (which exceeded CloudKit's 1 MB limit).
-        try db.execute(sql: #"DROP TABLE IF EXISTS "savedTextContentSyncTables""#)
+        // Create the text content sync table if it doesn't already exist.
+        // IMPORTANT: never DROP this table — SQLiteData's SyncEngine tracks
+        // CloudKit change tokens alongside it. Dropping destroys that state
+        // and causes BAD_REQUEST errors when the engine tries to re-register
+        // the record type in production.
         try db.execute(sql: """
-            CREATE TABLE "savedTextContentSyncTables" (
+            CREATE TABLE IF NOT EXISTS "savedTextContentSyncTables" (
               "id" TEXT PRIMARY KEY NOT NULL,
               "plainText" TEXT NOT NULL DEFAULT '',
               "rawSourceText" TEXT NOT NULL DEFAULT '',
@@ -604,6 +606,14 @@ public enum StowerDatabase {
               "updatedAt" TEXT NOT NULL
             ) STRICT
             """)
+        // If the table was created by an earlier build that included a
+        // documentJSON column, drop it to match the current schema.
+        // SQLite 3.35+ (iOS 15+) supports DROP COLUMN.
+        do {
+            try db.execute(sql: #"ALTER TABLE "savedTextContentSyncTables" DROP COLUMN "documentJSON""#)
+        } catch {
+            // Column doesn't exist — table was created with the current schema.
+        }
     }
 
     private static func migration_v10(_ db: Database) throws {

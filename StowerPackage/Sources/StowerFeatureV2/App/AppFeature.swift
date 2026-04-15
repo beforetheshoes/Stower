@@ -172,6 +172,11 @@ public struct AppFeature {
                     .run { send in
                         do {
                             try await cloudSyncClient.start()
+                            // Backfill the text sync table from local content
+                            // for any text items missing a sync row (recovery
+                            // from the v11 DROP TABLE migration or items that
+                            // predate the sync table).
+                            _ = try await repository.backfillTextSyncTable()
                             _ = try await repository.enqueueHydrationJobsForMissingContent()
                             try await processIngestionJobs(
                                 repository: repository,
