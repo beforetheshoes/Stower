@@ -87,6 +87,8 @@ enum ReaderTextLayoutSupport {
         switch inline {
         case .text(let value):
             return AttributedString(value)
+        case .lineBreak:
+            return AttributedString("\n")
         case let .link(label, url):
             var link = AttributedString(label)
             link.link = URL(string: url)

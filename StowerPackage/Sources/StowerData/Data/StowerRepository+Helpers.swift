@@ -102,16 +102,18 @@ extension StowerRepository {
     }
 
     static func makeSyncDraft(id: UUID, result: IngestionResult, now: Date) -> SavedItemSyncTable.Draft {
+        // Defensively truncate all string fields to stay well under
+        // CloudKit's 1 MB per-record limit.
         SavedItemSyncTable.Draft(
             id: id,
-            title: result.title,
+            title: String(result.title.prefix(500)),
             sourceURL: result.sourceURL,
             canonicalURL: result.canonicalURL,
-            excerpt: result.excerpt,
+            excerpt: result.excerpt.map { String($0.prefix(500)) },
             heroImageURL: result.heroImageURL,
-            author: result.author,
+            author: result.author.map { String($0.prefix(200)) },
             publishedAt: result.publishedAt,
-            siteName: result.siteName,
+            siteName: result.siteName.map { String($0.prefix(200)) },
             readingTimeMinutes: result.readingTimeMinutes,
             hasRichMedia: result.hasRichMedia,
             createdAt: now,
@@ -140,6 +142,8 @@ extension StowerRepository {
                     $0.documentJSON = documentJSON
                     $0.sourceHTMLHash = hash
                     $0.sourceHTML = result.sourceHTML
+                    $0.rawSourceText = result.rawSourceText ?? ""
+                    $0.rawSourceMode = #bind(result.rawSourceMode?.rawValue)
                     $0.localStatus = updateLocalStatus
                     $0.localError = #bind(result.processingError)
                     $0.updatedAt = now
@@ -159,6 +163,8 @@ extension StowerRepository {
                         documentJSON: documentJSON,
                         sourceHTMLHash: hash,
                         sourceHTML: result.sourceHTML,
+                        rawSourceText: result.rawSourceText ?? "",
+                        rawSourceMode: result.rawSourceMode?.rawValue,
                         localStatus: updateLocalStatus,
                         localError: result.processingError,
                         createdAt: now,
@@ -179,6 +185,30 @@ extension StowerRepository {
                         id: itemID,
                         documentJSON: documentJSON,
                         plainText: result.plainText,
+                        createdAt: now,
+                        updatedAt: now
+                    )
+                }
+                .execute(db)
+        }
+
+        // For text/markdown items (no sourceURL), mirror the raw source into
+        // the CloudKit-synced table so other devices can re-ingest it locally.
+        // The raw text is zlib-compressed + base64-encoded to stay under
+        // CloudKit's 1 MB per-record limit. plainText is truncated to 1000
+        // chars (enough for excerpt display while the full content syncs).
+        if result.sourceURL == nil, result.renderFormat != .pdf {
+            let rawText = result.rawSourceText ?? ""
+            let compressed = TextSyncCompression.compress(rawText)
+            let truncatedPlain = String(result.plainText.prefix(1000))
+            try SavedTextContentSyncTable
+                .upsert {
+                    SavedTextContentSyncTable.Draft(
+                        id: itemID,
+                        plainText: truncatedPlain,
+                        rawSourceText: compressed,
+                        rawSourceMode: result.rawSourceMode?.rawValue,
+                        renderFormat: result.renderFormat.rawValue,
                         createdAt: now,
                         updatedAt: now
                     )

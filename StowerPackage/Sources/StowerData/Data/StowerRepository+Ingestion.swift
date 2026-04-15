@@ -62,9 +62,14 @@ extension StowerRepository {
                         WHERE id=?
                         """,
                     arguments: [
-                        result.title, result.sourceURL, result.canonicalURL, result.excerpt,
-                        result.heroImageURL, result.author, result.publishedAt?.timeIntervalSince1970,
-                        result.siteName, result.readingTimeMinutes, result.hasRichMedia ? 1 : 0,
+                        String(result.title.prefix(500)),
+                        result.sourceURL, result.canonicalURL,
+                        result.excerpt.map { String($0.prefix(500)) },
+                        result.heroImageURL,
+                        result.author.map { String($0.prefix(200)) },
+                        result.publishedAt?.timeIntervalSince1970,
+                        result.siteName.map { String($0.prefix(200)) },
+                        result.readingTimeMinutes, result.hasRichMedia ? 1 : 0,
                         now.timeIntervalSince1970, id.uuidString,
                     ]
                 )

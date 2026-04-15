@@ -311,6 +311,7 @@ public struct IngestionJob: Equatable, Identifiable, Sendable {
         case text = "text"
         case markdown = "markdown"
         case hydrate = "hydrate"
+        case hydrateText = "hydrateText"
         case pdf = "pdf"
     }
 
@@ -334,6 +335,20 @@ public struct HydrationPayload: Codable, Equatable, Sendable {
     public init(itemID: UUID, url: String) {
         self.itemID = itemID
         self.url = url
+    }
+}
+
+public struct TextHydrationPayload: Codable, Equatable, Sendable {
+    public var itemID: UUID
+    public var rawSourceText: String
+    public var rawSourceMode: String?
+    public var title: String
+
+    public init(itemID: UUID, rawSourceText: String, rawSourceMode: String?, title: String) {
+        self.itemID = itemID
+        self.rawSourceText = rawSourceText
+        self.rawSourceMode = rawSourceMode
+        self.title = title
     }
 }
 // swiftlint:enable function_default_parameter_at_end

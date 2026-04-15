@@ -47,6 +47,9 @@ private func sanitizeInlines(_ inlines: [ReaderInline]) -> [ReaderInline] {
             let cleaned = stripPilcrows(value)
             if !cleaned.isEmpty { output.append(.text(cleaned)) }
 
+        case .lineBreak:
+            output.append(.lineBreak)
+
         case let .link(label, url):
             let cleanedLabel = stripPilcrows(label).trimmingCharacters(in: .whitespacesAndNewlines)
             if cleanedLabel.isEmpty { continue }

@@ -346,9 +346,10 @@ struct LibraryFeatureTests {
     @Test
     func saveTextImport_usesSelectedModeAndOpensCreatedItem() async throws {
         let item = SavedItem(title: "Imported", renderFormat: .structuredV1, content: "Body")
-        let ingested = LockIsolated<[TextImportMode]>([])
+        let ingested = LockIsolated<[(String?, TextImportMode)]>([])
         var initial = LibraryFeature.State()
         initial.textImportDraft = LibraryFeature.TextImportDraft(
+            title: "Manual Title",
             text: "# Heading",
             mode: .markdown
         )
@@ -356,10 +357,11 @@ struct LibraryFeatureTests {
         let store = TestStore(initialState: initial) {
             LibraryFeature()
         } withDependencies: {
-            $0.textIngestionClient.ingest = { text, titleHint, mode in
+            $0.textIngestionClient.ingest = { text, explicitTitle, titleHint, mode in
                 #expect(text == "# Heading")
+                #expect(explicitTitle == "Manual Title")
                 #expect(titleHint == nil)
-                ingested.withValue { $0.append(mode) }
+                ingested.withValue { $0.append((explicitTitle, mode)) }
                 return IngestionResult.structuredText(
                     title: "Imported",
                     blocks: [.heading(level: 1, inlines: [.text("Heading")])],
@@ -381,18 +383,19 @@ struct LibraryFeatureTests {
         }
         await store.receive(.openItem(item))
 
-        #expect(ingested.value == [.markdown])
+        #expect(ingested.value.map(\.1) == [.markdown])
     }
 
     @Test
-    func importTextResolved_usesHintAndMode() async {
+    func importTextResolved_usesHintAndModeWithoutOpeningReader() async {
         let item = SavedItem(title: "Meeting Notes", renderFormat: .structuredV1, content: "Body")
 
         let store = TestStore(initialState: LibraryFeature.State()) {
             LibraryFeature()
         } withDependencies: {
-            $0.textIngestionClient.ingest = { text, titleHint, mode in
+            $0.textIngestionClient.ingest = { text, explicitTitle, titleHint, mode in
                 #expect(text == "Body text")
+                #expect(explicitTitle == nil)
                 #expect(titleHint == "Meeting Notes")
                 #expect(mode == .auto)
                 return IngestionResult.structuredText(
@@ -413,6 +416,5 @@ struct LibraryFeatureTests {
             $0.saveState = .ready
             $0.items = [item]
         }
-        await store.receive(.openItem(item))
     }
 }

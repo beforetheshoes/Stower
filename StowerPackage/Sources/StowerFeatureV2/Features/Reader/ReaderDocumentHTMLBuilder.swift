@@ -393,6 +393,9 @@ public enum ReaderDocumentHTMLBuilder {
             case .text(let value):
                 out += escapeHTML(value)
 
+            case .lineBreak:
+                out += "<br>"
+
             case let .link(label, url):
                 if isSafeLinkURL(url) {
                     out += "<a href=\"\(attrEscape(url))\" target=\"_blank\" rel=\"noopener noreferrer\">\(escapeHTML(label))</a>"

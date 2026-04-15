@@ -55,25 +55,9 @@ func plainTextFromBlocks(_ blocks: [ReaderBlock]) -> String {
 }
 
 func inlineText(_ inlines: [ReaderInline]) -> String {
-    inlines.map {
-        switch $0 {
-        case .text(let value):
-            return value
-        case .link(let label, _):
-            return label
-        case .emphasis(let value):
-            return value
-        case .strong(let value):
-            return value
-        case .code(let value):
-            return value
-        case .strikethrough(let value):
-            return value
-        }
-    }
-    .joined(separator: " ")
-    .replacingOccurrences(of: "[\\t ]+", with: " ", options: .regularExpression)
-    .trimmingCharacters(in: .whitespacesAndNewlines)
+    ReaderTextLayoutSupport.inlinePlainText(from: inlines)
+        .replacingOccurrences(of: "[\\t ]+", with: " ", options: .regularExpression)
+        .trimmingCharacters(in: .whitespacesAndNewlines)
 }
 
 func confidenceScore(blockCount: Int, textLength: Int) -> Double {

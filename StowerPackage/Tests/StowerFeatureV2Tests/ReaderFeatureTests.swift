@@ -162,6 +162,78 @@ struct ReaderFeatureTests {
     }
 
     @Test
+    func editTextTapped_loadsEditableSource() async {
+        let itemID = UUID()
+        let item = SavedItem(id: itemID, title: "Read", content: "Body")
+
+        let store = TestStore(initialState: ReaderFeature.State(item: item)) {
+            ReaderFeature()
+        } withDependencies: {
+            $0.stowerRepository.loadEditableTextSource = { _ in
+                EditableTextSource(title: "Read", text: "Body", mode: .plainText)
+            }
+        }
+
+        await store.send(.editTextTapped)
+        await store.receive(.editableTextLoaded(EditableTextSource(title: "Read", text: "Body", mode: .plainText))) {
+            $0.textEditor = ReaderFeature.TextEditorState(
+                title: "Read",
+                text: "Body",
+                mode: .plainText
+            )
+        }
+    }
+
+    @Test
+    func saveTextEdit_updatesReaderState() async {
+        let itemID = UUID()
+        let updatedItem = SavedItem(id: itemID, title: "Manual Title", renderFormat: .plainText, content: "Line one\nLine two")
+        let updatedDocument = ReaderDocument(
+            title: "Manual Title",
+            blocks: [.paragraph([.text("Line one"), .lineBreak, .text("Line two")])]
+        )
+        var initialState = ReaderFeature.State(item: SavedItem(id: itemID, title: "Old", renderFormat: .plainText, content: "Old"))
+        initialState.textEditor = ReaderFeature.TextEditorState(
+            title: "Manual Title",
+            text: "Line one\nLine two",
+            mode: .plainText
+        )
+
+        let store = TestStore(initialState: initialState) {
+            ReaderFeature()
+        } withDependencies: {
+            $0.textIngestionClient.ingest = { text, explicitTitle, titleHint, mode in
+                #expect(text == "Line one\nLine two")
+                #expect(explicitTitle == "Manual Title")
+                #expect(titleHint == nil)
+                #expect(mode == .plainText)
+                return IngestionResult.sharedText(
+                    text,
+                    explicitTitle: explicitTitle,
+                    titleHint: titleHint,
+                    rawSourceText: text,
+                    rawSourceMode: mode
+                )
+            }
+            $0.stowerRepository.saveEditedTextSource = { _, result in
+                #expect(result.rawSourceText == "Line one\nLine two")
+                #expect(result.rawSourceMode == .plainText)
+                return updatedItem
+            }
+        }
+
+        await store.send(.saveTextEditTapped) {
+            $0.textEditor?.isSaving = true
+        }
+        await store.receive(.textEditSaved(updatedItem, updatedDocument)) {
+            $0.item = updatedItem
+            $0.document = updatedDocument
+            $0.sourceHTML = nil
+            $0.textEditor = nil
+        }
+    }
+
+    @Test
     func fontSizeChange_updatesStateAndSaves() async {
         let itemID = UUID()
         let clock = TestClock()

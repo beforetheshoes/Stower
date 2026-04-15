@@ -603,73 +603,31 @@ public struct LibraryScreen: View {
     #endif
 
     @ViewBuilder private var textImportSheet: some View {
-        NavigationStack {
-            VStack(spacing: 16) {
-                Picker(
-                    "Format",
-                    selection: Binding(
-                        get: { store.textImportDraft?.mode ?? .auto },
-                        set: { store.send(.textImportModeChanged($0)) }
-                    )
-                ) {
-                    Text("Auto").tag(TextImportMode.auto)
-                    Text("Plain Text").tag(TextImportMode.plainText)
-                    Text("Markdown").tag(TextImportMode.markdown)
-                }
-                .pickerStyle(.segmented)
-
-                TextEditor(
-                    text: Binding(
-                        get: { store.textImportDraft?.text ?? "" },
-                        set: { store.send(.textImportTextChanged($0)) }
-                    )
-                )
-                .font(store.textImportDraft?.mode == .markdown ? .body.monospaced() : .body)
-                .padding(12)
-                .frame(maxWidth: .infinity, minHeight: 280, maxHeight: .infinity)
-                .glassEffect(.regular, in: .rect(cornerRadius: 12))
-
-                if store.saveState == .failed, let error = store.errorMessage {
-                    Text(error)
-                        .font(.caption)
-                        .foregroundStyle(palette.error)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                } else {
-                    Text("Paste plain text or markdown. Auto mode detects markdown-like syntax for text imports.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
+        TextAuthoringSheet(
+            title: Binding(
+                get: { store.textImportDraft?.title ?? "" },
+                set: { store.send(.textImportTitleChanged($0)) }
+            ),
+            text: Binding(
+                get: { store.textImportDraft?.text ?? "" },
+                set: { store.send(.textImportTextChanged($0)) }
+            ),
+            mode: Binding(
+                get: { store.textImportDraft?.mode ?? .auto },
+                set: { store.send(.textImportModeChanged($0)) }
+            ),
+            palette: palette,
+            errorMessage: store.saveState == .failed ? store.errorMessage : nil,
+            isSaving: store.isSaving,
+            navigationTitle: "Add Text",
+            onCancel: {
+                isTextImportPresented = false
+                store.send(.textImportDismissed)
+            },
+            onSave: {
+                store.send(.saveTextImportTapped)
             }
-            .padding()
-            .navigationTitle("Add Text/Markdown")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #else
-            .frame(minWidth: 640, idealWidth: 720, maxWidth: 900, minHeight: 460, idealHeight: 560)
-            #endif
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
-                        isTextImportPresented = false
-                        store.send(.textImportDismissed)
-                    }
-                    .disabled(store.isSaving)
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    if store.isSaving {
-                        ProgressView()
-                    } else {
-                        Button("Save") {
-                            store.send(.saveTextImportTapped)
-                        }
-                        .disabled(store.textImportDraft?.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
-                    }
-                }
-            }
-        }
-        .presentationDetents([.medium, .large])
-        .presentationDragIndicator(.visible)
+        )
     }
 
     private func decodedImportedText(from data: Data) -> String {

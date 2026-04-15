@@ -11,7 +11,9 @@ public struct StowerRepository: Sendable {
     public var hydrateItemContent: @Sendable (UUID, IngestionResult) async throws -> Void
     public var updateLocalContentStatus: @Sendable (UUID, String, String?) async throws -> Void
     public var loadReaderDocument: @Sendable (UUID) async throws -> ReaderDocument?
+    public var loadEditableTextSource: @Sendable (UUID) async throws -> EditableTextSource?
     public var saveReaderDocument: @Sendable (UUID, ReaderDocument, String) async throws -> Void
+    public var saveEditedTextSource: @Sendable (UUID, IngestionResult) async throws -> SavedItem?
     public var loadSourceHTML: @Sendable (UUID) async throws -> String?
     public var upsertMedia: @Sendable ([MediaDescriptor], UUID) async throws -> Void
     /// Loads the cached AI summary for an item, if one has been generated. Nil
@@ -64,6 +66,9 @@ public struct StowerRepository: Sendable {
     /// CloudKit sync. See `_hydratePDFItemsFromSyncedContent` for details.
     /// Returns the number of items hydrated.
     public var hydratePDFItemsFromSyncedContent: @Sendable () async throws -> Int
+    /// Populates the local content table for text/markdown items that arrived
+    /// via CloudKit sync. Mirrors `hydratePDFItemsFromSyncedContent`.
+    public var hydrateTextItemsFromSyncedContent: @Sendable () async throws -> Int
 }
 
 private enum StowerRepositoryKey: DependencyKey {
@@ -94,7 +99,9 @@ extension StowerRepository {
             hydrateItemContent: { _, _ in },
             updateLocalContentStatus: { _, _, _ in },
             loadReaderDocument: { _ in nil },
+            loadEditableTextSource: { _ in nil },
             saveReaderDocument: { _, _, _ in },
+            saveEditedTextSource: { _, _ in nil },
             loadSourceHTML: { _ in nil },
             upsertMedia: { _, _ in },
             loadSummary: { _ in nil },
@@ -124,7 +131,8 @@ extension StowerRepository {
             fetchPendingIngestionJobs: { [] },
             markIngestionJobProcessed: { _ in },
             enqueueHydrationJobsForMissingContent: { 0 },
-            hydratePDFItemsFromSyncedContent: { 0 }
+            hydratePDFItemsFromSyncedContent: { 0 },
+            hydrateTextItemsFromSyncedContent: { 0 }
         )
     }()
 }
@@ -167,6 +175,7 @@ extension StowerRepository {
             try await baseSaveDocument(id, document, html)
             documentCache.set(id, document: document)
         }
+        let loadEditableTextSource = _loadEditableTextSource(database: database)
 
         let baseUpdateFromIngestion = _updateItemFromIngestion(database: database, scheduleSync: scheduleSyncAndNotify)
         let cachedUpdateFromIngestion: @Sendable (UUID, IngestionResult) async throws -> SavedItem? = { id, result in
@@ -218,7 +227,9 @@ extension StowerRepository {
             hydrateItemContent: cachedHydrateItemContent,
             updateLocalContentStatus: _updateLocalContentStatus(database: database),
             loadReaderDocument: cachedLoadDocument,
+            loadEditableTextSource: loadEditableTextSource,
             saveReaderDocument: cachedSaveDocument,
+            saveEditedTextSource: cachedUpdateFromIngestion,
             loadSourceHTML: _loadSourceHTML(database: database),
             upsertMedia: _upsertMedia(database: database),
             loadSummary: _loadSummary(database: database),
@@ -248,7 +259,8 @@ extension StowerRepository {
             fetchPendingIngestionJobs: _fetchPendingIngestionJobs(database: database),
             markIngestionJobProcessed: _markIngestionJobProcessed(database: database),
             enqueueHydrationJobsForMissingContent: _enqueueHydrationJobsForMissingContent(database: database),
-            hydratePDFItemsFromSyncedContent: _hydratePDFItemsFromSyncedContent(database: database)
+            hydratePDFItemsFromSyncedContent: _hydratePDFItemsFromSyncedContent(database: database),
+            hydrateTextItemsFromSyncedContent: _hydrateTextItemsFromSyncedContent(database: database)
         )
     }
 

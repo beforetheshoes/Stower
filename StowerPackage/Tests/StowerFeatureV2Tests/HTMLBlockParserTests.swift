@@ -26,6 +26,8 @@ struct HTMLBlockParserTests {
             switch inline {
             case .text(let value):
                 return value
+            case .lineBreak:
+                return "\n"
             case .link(let label, _):
                 return label
             case .emphasis(let value):
@@ -175,6 +177,8 @@ struct HTMLBlockParserTests {
                 switch inline {
                 case .text(let value):
                     return value
+                case .lineBreak:
+                    return "\n"
                 case .link(let label, _):
                     return label
                 case .emphasis(let value):
@@ -286,6 +290,8 @@ struct HTMLBlockParserTests {
                     switch inline {
                     case .text(let value):
                         return value
+                    case .lineBreak:
+                        return "\n"
                     case .link(let label, _):
                         return label
                     case .emphasis(let value):
