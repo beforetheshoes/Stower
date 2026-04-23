@@ -1,5 +1,5 @@
 {
-  "originHash" : "ed101b84463bac7e52256bb140c0eddfdc9fa6f7392be39d3271356ba0fff17a",
+  "originHash" : "7c491e3972a0c7d842a25e3802c5dc5d34327af1ccd9ff67a9f45e671de0407e",
   "pins" : [
     {
       "identity" : "combine-schedulers",
@@ -188,6 +188,15 @@
       "state" : {
         "revision" : "dfd70507def84cb5fb821278448a262c6ff2bbad",
         "version" : "1.9.0"
+      }
+    },
+    {
+      "identity" : "zipfoundation",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/weichsel/ZIPFoundation.git",
+      "state" : {
+        "revision" : "22787ffb59de99e5dc1fbfe80b19c97a904ad48d",
+        "version" : "0.9.20"
       }
     }
   ],

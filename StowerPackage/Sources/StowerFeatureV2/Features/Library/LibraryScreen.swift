@@ -277,6 +277,11 @@ public struct LibraryScreen: View {
                     } label: {
                         Label("Import PDF…", systemImage: "doc.richtext")
                     }
+                    Button {
+                        presentWebsiteImporter()
+                    } label: {
+                        Label("Import Website Archive…", systemImage: "globe")
+                    }
                 } label: {
                     Label("Add", systemImage: "plus")
                 }
@@ -315,7 +320,7 @@ public struct LibraryScreen: View {
         #if os(iOS)
         .sheet(item: $activeImportPicker) { picker in
             IOSDocumentPicker(
-                allowedContentTypes: picker == .text ? textImportContentTypes : [.pdf]
+                allowedContentTypes: contentTypes(for: picker)
             ) { result in
                 activeImportPicker = nil
                 switch picker {
@@ -323,6 +328,8 @@ public struct LibraryScreen: View {
                     handleTextImport(result)
                 case .pdf:
                     handlePDFImport(result)
+                case .website:
+                    handleWebsiteImport(result)
                 }
             }
         }
@@ -407,6 +414,21 @@ public struct LibraryScreen: View {
         #endif
     }
 
+    private func presentWebsiteImporter() {
+        #if os(macOS)
+        presentOpenPanel(
+            allowedContentTypes: [.zip],
+            title: "Import Website Archive"
+        ) { url in
+            handleWebsiteImport(.success(url))
+        }
+        #else
+        DispatchQueue.main.async {
+            activeImportPicker = .website
+        }
+        #endif
+    }
+
     #if os(macOS)
     private func presentOpenPanel(
         allowedContentTypes: [UTType],
@@ -438,6 +460,37 @@ public struct LibraryScreen: View {
     /// picked URL is security-scoped — we must start/stop access around the
     /// copy, and we copy to a plain temp file so the reducer can consume a
     /// URL with no lifetime restrictions.
+    /// Handles the result of a `.zip` website archive picker. Uses the same
+    /// security-scoped + scratch-copy dance as `handlePDFImport` so the
+    /// reducer consumes a plain temp URL with no lifetime restrictions.
+    private func handleWebsiteImport(_ result: Result<URL, Error>) {
+        switch result {
+        case .success(let pickedURL):
+            let accessed = pickedURL.startAccessingSecurityScopedResource()
+            defer {
+                if accessed { pickedURL.stopAccessingSecurityScopedResource() }
+            }
+            do {
+                let scratchDir = FileManager.default.temporaryDirectory
+                    .appendingPathComponent(UUID().uuidString, isDirectory: true)
+                try FileManager.default.createDirectory(
+                    at: scratchDir,
+                    withIntermediateDirectories: true
+                )
+                let scratch = scratchDir.appendingPathComponent(pickedURL.lastPathComponent)
+                try FileManager.default.copyItem(at: pickedURL, to: scratch)
+                store.send(.importWebsiteSelected(scratch))
+            } catch {
+                store.send(.saveURLFailed("Couldn't read zip: \(error.localizedDescription)"))
+            }
+        case .failure(let error):
+            let ns = error as NSError
+            if ns.code != NSUserCancelledError {
+                store.send(.saveURLFailed("Website import failed: \(error.localizedDescription)"))
+            }
+        }
+    }
+
     private func handlePDFImport(_ result: Result<URL, Error>) {
         switch result {
         case .success(let pickedURL):
@@ -506,8 +559,20 @@ public struct LibraryScreen: View {
     private enum IOSImportPicker: String, Identifiable {
         case text = "text"
         case pdf = "pdf"
+        case website = "website"
 
         var id: String { rawValue }
+    }
+
+    private func contentTypes(for picker: IOSImportPicker) -> [UTType] {
+        switch picker {
+        case .text:
+            return textImportContentTypes
+        case .pdf:
+            return [.pdf]
+        case .website:
+            return [.zip]
+        }
     }
 
     private struct IOSDocumentPicker: UIViewControllerRepresentable {
@@ -808,6 +873,12 @@ public struct LibraryScreen: View {
                     } label: {
                         Label("Import PDF…", systemImage: "doc.richtext")
                     }
+
+                    Button {
+                        presentWebsiteImporter()
+                    } label: {
+                        Label("Import Website Archive…", systemImage: "globe")
+                    }
                 }
             } label: {
                 Label("More", systemImage: "ellipsis.circle")
@@ -941,6 +1012,22 @@ private struct LibraryItemThumbnail: View {
     private var resolvedImageURL: URL? {
         guard let heroURLString = item.heroImageURL, !heroURLString.isEmpty else {
             return nil
+        }
+        // `stower-archive:<relative-path>` is produced by the website-archive
+        // importer: each device resolves it against its own local archive
+        // directory so the field can sync cross-device without pinning a
+        // file URL. Fall through to regular URL parsing for every other
+        // scheme (http/https/data/etc.).
+        let scheme = WebsiteArchiveUnpacker.heroArchiveURLScheme + ":"
+        if heroURLString.hasPrefix(scheme) {
+            let relative = String(heroURLString.dropFirst(scheme.count))
+            guard !relative.isEmpty else { return nil }
+            let fileURL = AssetArchiver.archiveDirectory(for: item.id)
+                .appendingPathComponent(relative)
+            guard FileManager.default.fileExists(atPath: fileURL.path) else {
+                return nil
+            }
+            return fileURL
         }
         return URL(string: heroURLString)
     }

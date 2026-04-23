@@ -177,6 +177,9 @@ public struct ReaderFeature {
     var continuousClock
     @Dependency(\.readerProgressClient)
     var readerProgressClient
+    @Dependency(\.cloudSyncClient)
+    var cloudSyncClient
+
     @Dependency(\.textIngestionClient)
     var textIngestionClient
 
@@ -399,17 +402,41 @@ public struct ReaderFeature {
                 return .none
 
             case .retryExtractionTapped:
-                // Text/markdown items have no sourceURL — hydrate from the
-                // CloudKit-synced text content table and re-ingest.
+                // Items without a source URL come from one of two paths:
+                // imported websites (zip bytes live in the archive sync
+                // table) or text/markdown (raw source in the text sync
+                // table). The item's renderFormat only survives in the
+                // LOCAL content table, which doesn't exist on the device
+                // that synced the item down — so we can't use it as a
+                // discriminator here. Instead, peek at the archive sync
+                // table first: if a row exists for this ID, treat it as a
+                // website regardless of what renderFormat the domain model
+                // is currently reporting.
                 if state.item?.sourceURL == nil {
                     state.isLoading = true
+                    state.errorMessage = nil
                     let repository = self.repository
                     let textIngestionClient = self.textIngestionClient
+                    let cloudSyncClient = self.cloudSyncClient
                     return .run { [id = state.itemID] send in
                         do {
-                            // Hydrate enqueues jobs; process them inline.
+                            try? await cloudSyncClient.sendChanges()
+
+                            if let archive = try await repository.loadWebsiteArchive(id) {
+                                try await WebsiteImportService.hydrateWebsite(
+                                    itemID: id,
+                                    archive: archive,
+                                    repository: repository
+                                )
+                                let item = try await repository.loadItem(id)
+                                await send(.retryFinished(item))
+                                return
+                            }
+
+                            // Fall back to the text/markdown hydration path.
                             _ = try await repository.hydrateTextItemsFromSyncedContent()
                             let jobs = try await repository.fetchPendingIngestionJobs()
+                            var hydratedTextItem = false
                             for job in jobs where job.kind == .hydrateText {
                                 let data = Data(job.payload.utf8)
                                 let payload = try JSONDecoder().decode(TextHydrationPayload.self, from: data)
@@ -425,9 +452,25 @@ public struct ReaderFeature {
                                 )
                                 try await repository.hydrateItemContent(id, result)
                                 try await repository.markIngestionJobProcessed(job.id)
+                                hydratedTextItem = true
+                            }
+
+                            if !hydratedTextItem {
+                                await send(.failed(
+                                    "The full content hasn't finished syncing from iCloud yet. Try again in a moment."
+                                ))
+                                return
                             }
                             let item = try await repository.loadItem(id)
                             await send(.retryFinished(item))
+                        } catch let error as WebsiteImportService.ImportError {
+                            if case .incompleteAsset = error {
+                                await send(.failed(
+                                    "Still downloading the website archive from iCloud. Try again in a moment."
+                                ))
+                            } else {
+                                await send(.failed(error.localizedDescription))
+                            }
                         } catch {
                             await send(.failed(error.localizedDescription))
                         }

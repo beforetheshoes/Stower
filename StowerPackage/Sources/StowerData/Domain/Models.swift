@@ -312,6 +312,8 @@ public struct IngestionJob: Equatable, Identifiable, Sendable {
         case hydrate = "hydrate"
         case hydrateText = "hydrateText"
         case pdf = "pdf"
+        case website = "website"
+        case hydrateWebsite = "hydrateWebsite"
     }
 
     public let id: UUID
@@ -348,5 +350,13 @@ public struct TextHydrationPayload: Codable, Equatable, Sendable {
         self.rawSourceText = rawSourceText
         self.rawSourceMode = rawSourceMode
         self.title = title
+    }
+}
+
+public struct WebsiteHydrationPayload: Codable, Equatable, Sendable {
+    public var itemID: UUID
+
+    public init(itemID: UUID) {
+        self.itemID = itemID
     }
 }

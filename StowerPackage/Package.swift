@@ -14,6 +14,7 @@ let package = Package(
         .package(url: "https://github.com/pointfreeco/sqlite-data.git", from: "1.5.0"),
         .package(url: "https://github.com/scinfu/SwiftSoup.git", from: "2.6.0"),
         .package(url: "https://github.com/swiftlang/swift-markdown.git", from: "0.7.0"),
+        .package(url: "https://github.com/weichsel/ZIPFoundation.git", from: "0.9.19"),
     ],
     targets: [
         .target(
@@ -31,13 +32,18 @@ let package = Package(
                 .product(name: "Dependencies", package: "swift-dependencies"),
                 .product(name: "Markdown", package: "swift-markdown"),
                 .product(name: "SwiftSoup", package: "SwiftSoup"),
+                .product(name: "ZIPFoundation", package: "ZIPFoundation"),
                 "StowerData",
             ],
             path: "Sources/StowerFeatureV2"
         ),
         .testTarget(
             name: "StowerFeatureTests",
-            dependencies: ["StowerFeature", "StowerData"],
+            dependencies: [
+                "StowerFeature",
+                "StowerData",
+                .product(name: "ZIPFoundation", package: "ZIPFoundation"),
+            ],
             path: "Tests/StowerFeatureV2Tests"
         ),
     ]

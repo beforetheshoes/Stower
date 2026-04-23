@@ -116,6 +116,7 @@ public struct LibraryFeature {
         case saveURLFinished(SavedItem)
         case saveURLFailed(String)
         case importPDFSelected(URL)
+        case importWebsiteSelected(URL)
         case addTextTapped
         case textImportDismissed
         case textImportTitleChanged(String)
@@ -504,6 +505,38 @@ public struct LibraryFeature {
                         let result = try await pdfIngestionClient.ingest(pickedURL)
                         let item = try await repository.createItemFromIngestion(result)
                         try? PDFArchiver.archivePDF(from: pickedURL, itemID: item.id)
+                        await send(.saveURLFinished(item))
+                        await send(.openItem(item))
+                    } catch {
+                        await send(.saveURLFailed(error.localizedDescription))
+                    }
+                }
+
+            case .importWebsiteSelected(let pickedURL):
+                // Foreground import via `UIDocumentPicker` / `NSOpenPanel`.
+                // The screen copies the picked .zip into a UUID-named scratch
+                // subdirectory before dispatching this action so we own the
+                // file and security-scoped access has already been released.
+                // Mirrors `.importPDFSelected` — we run inline to open the
+                // site as soon as the unpack finishes.
+                state.isSaving = true
+                state.saveState = .extracting
+                state.errorMessage = nil
+                let repository = self.repository
+                return .run { send in
+                    defer {
+                        let parent = pickedURL.deletingLastPathComponent()
+                        if parent.path != FileManager.default.temporaryDirectory.path {
+                            try? FileManager.default.removeItem(at: parent)
+                        } else {
+                            try? FileManager.default.removeItem(at: pickedURL)
+                        }
+                    }
+                    do {
+                        let item = try await WebsiteImportService.importWebsite(
+                            zipURL: pickedURL,
+                            repository: repository
+                        )
                         await send(.saveURLFinished(item))
                         await send(.openItem(item))
                     } catch {

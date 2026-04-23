@@ -197,7 +197,19 @@ extension StowerRepository {
         // The raw text is zlib-compressed + base64-encoded to stay under
         // CloudKit's 1 MB per-record limit. plainText is truncated to 1000
         // chars (enough for excerpt display while the full content syncs).
-        if result.sourceURL == nil, result.renderFormat != .pdf {
+        //
+        // Scoped to text-oriented render formats only. Other formats that
+        // happen to have a nil sourceURL (e.g. `.webView` from a user-
+        // imported `.zip`) have their own sync tables — mirroring them here
+        // would write empty rows every time the item updates, and the
+        // resulting CloudKit echo floods the sync engine.
+        let isTextAuthoredItem = result.sourceURL == nil
+            && (
+                result.renderFormat == .plainText
+                || result.renderFormat == .structuredV1
+                || result.renderFormat == .htmlFallback
+            )
+        if isTextAuthoredItem {
             let rawText = result.rawSourceText ?? ""
             let compressed = TextSyncCompression.compress(rawText)
             let truncatedPlain = String(result.plainText.prefix(1000))

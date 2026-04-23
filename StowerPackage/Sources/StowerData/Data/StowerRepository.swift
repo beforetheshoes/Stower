@@ -73,6 +73,24 @@ public struct StowerRepository: Sendable {
     /// text items missing a sync row. Recovers from dropped tables and
     /// backfills items created before the sync table existed.
     public var backfillTextSyncTable: @Sendable () async throws -> Int
+
+    // MARK: - Website archives
+
+    /// Persists the original zip bytes for an imported website into the
+    /// CloudKit-synced archive table. SQLiteData promotes the blob column to
+    /// a CKAsset so the other device receives the full archive.
+    public var saveWebsiteArchive: @Sendable (
+        _ itemID: UUID,
+        _ zipData: Data,
+        _ sha256: String,
+        _ originalFilename: String
+    ) async throws -> Void
+    /// Loads the zip bytes for an imported website. Returns nil when the row
+    /// is absent or the blob has not yet been populated by sync.
+    public var loadWebsiteArchive: @Sendable (UUID) async throws -> WebsiteArchiveBytes?
+    /// Enqueues `hydrateWebsite` jobs for synced website rows whose local
+    /// archive directory is missing. Returns the number of jobs enqueued.
+    public var hydrateWebsiteItemsFromSyncedContent: @Sendable () async throws -> Int
 }
 
 private enum StowerRepositoryKey: DependencyKey {
@@ -137,7 +155,10 @@ extension StowerRepository {
             enqueueHydrationJobsForMissingContent: { 0 },
             hydratePDFItemsFromSyncedContent: { 0 },
             hydrateTextItemsFromSyncedContent: { 0 },
-            backfillTextSyncTable: { 0 }
+            backfillTextSyncTable: { 0 },
+            saveWebsiteArchive: { _, _, _, _ in },
+            loadWebsiteArchive: { _ in nil },
+            hydrateWebsiteItemsFromSyncedContent: { 0 }
         )
     }()
 }
@@ -266,7 +287,16 @@ extension StowerRepository {
             enqueueHydrationJobsForMissingContent: _enqueueHydrationJobsForMissingContent(database: database),
             hydratePDFItemsFromSyncedContent: _hydratePDFItemsFromSyncedContent(database: database),
             hydrateTextItemsFromSyncedContent: _hydrateTextItemsFromSyncedContent(database: database),
-            backfillTextSyncTable: _backfillTextSyncTable(database: database)
+            backfillTextSyncTable: _backfillTextSyncTable(database: database),
+            saveWebsiteArchive: _saveWebsiteArchive(
+                database: database,
+                scheduleSync: scheduleSyncAndNotify
+            ),
+            loadWebsiteArchive: _loadWebsiteArchive(database: database),
+            hydrateWebsiteItemsFromSyncedContent: _hydrateWebsiteItemsFromSyncedContent(
+                database: database,
+                archiveExists: websiteArchiveExists(itemID:)
+            )
         )
     }
 

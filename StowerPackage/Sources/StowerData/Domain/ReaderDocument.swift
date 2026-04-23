@@ -251,6 +251,38 @@ public struct IngestionResult: Equatable, Sendable {
         )
     }
 
+    /// Builds an `IngestionResult` for a user-imported interactive website
+    /// archive. Produces a minimal `.webView` item — the reader renders from
+    /// the unpacked files on disk, not from `document`/`plainText`, so those
+    /// stay empty. `excerpt` carries the original filename so the library
+    /// card has something readable before the `<title>` tag is parsed.
+    public static func importedWebsite(
+        title: String,
+        filename: String,
+        heroImageURL: String? = nil
+    ) -> IngestionResult {
+        IngestionResult(
+            title: title,
+            sourceURL: nil,
+            canonicalURL: nil,
+            excerpt: filename.isEmpty ? nil : filename,
+            author: nil,
+            publishedAt: nil,
+            siteName: nil,
+            heroImageURL: heroImageURL,
+            readingTimeMinutes: nil,
+            hasRichMedia: true,
+            renderFormat: .webView,
+            processingState: .ready,
+            processingError: nil,
+            document: ReaderDocument(title: title, blocks: []),
+            plainText: "",
+            media: [],
+            embeds: [],
+            sourceHTML: ""
+        )
+    }
+
     public static func structuredText(
         title: String,
         blocks: [ReaderBlock],
