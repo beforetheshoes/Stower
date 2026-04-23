@@ -116,6 +116,23 @@ nonisolated public struct SavedTextContentSyncTable: Hashable, Identifiable, Sen
     public var updatedAt: Date = .now
 }
 
+/// CloudKit-synced original zip bytes for user-imported interactive website
+/// archives. The column `zipData` is a SQLite BLOB; SQLiteData's CloudKit
+/// bridge promotes blob columns to `CKAsset` automatically, so sites up to a
+/// few hundred MB sync within the user's iCloud quota. The second device runs
+/// a `.hydrateWebsite` job that unpacks the bytes into the item's archive
+/// directory on first open.
+@Table
+nonisolated public struct SavedWebsiteArchiveSyncTable: Hashable, Identifiable, Sendable {
+    public let id: UUID
+    public var zipData: Data = Data()
+    public var sha256: String = ""
+    public var originalFilename: String = ""
+    public var byteCount: Int = 0
+    public var createdAt: Date = .now
+    public var updatedAt: Date = .now
+}
+
 @Table
 nonisolated public struct SavedMediaLocalTable: Hashable, Identifiable, Sendable {
     public let id: UUID

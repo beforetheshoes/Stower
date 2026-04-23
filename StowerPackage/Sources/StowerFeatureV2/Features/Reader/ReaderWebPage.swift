@@ -108,13 +108,28 @@ enum ReaderWebPageFactory {
     @MainActor
     static func scrollToBlock(_ index: Int, on page: WebPage) async {
         guard index > 0 else { return }
-        _ = try? await page.callJavaScript("window.stowerScrollToBlock(\(index));")
+        let script = """
+        if (typeof window.stowerScrollToBlock === 'function') {
+            window.stowerScrollToBlock(\(index));
+        }
+        """
+        _ = try? await page.callJavaScript(script)
     }
 
     /// Returns the data-block-index of the topmost visible block, or nil on failure.
+    ///
+    /// Guards the call with `typeof` so pages that don't expose
+    /// `stowerGetTopBlockIndex()` (e.g. user-imported website archives that
+    /// Stower didn't author) return a clean nil instead of spewing JS
+    /// exceptions into the WebContent log each poll tick.
     @MainActor
     static func fetchTopBlockIndex(on page: WebPage) async -> Int? {
-        let result = try? await page.callJavaScript("return window.stowerGetTopBlockIndex();")
+        let script = """
+        return typeof window.stowerGetTopBlockIndex === 'function'
+            ? window.stowerGetTopBlockIndex()
+            : null;
+        """
+        let result = try? await page.callJavaScript(script)
         guard let number = result as? Int else { return nil }
         return number >= 0 ? number : nil
     }
@@ -147,5 +162,56 @@ enum ReaderWebPageFactory {
     @MainActor
     static func installContentTapHandler(on page: WebPage) async {
         _ = try? await page.callJavaScript(contentTapScript)
+    }
+
+    /// For user-imported website archives, when the rendered document
+    /// already fits within the viewport we want the WebView to stop
+    /// interpreting horizontal swipes as scroll-the-page gestures — those
+    /// gestures should reach interactive widgets (carousels, draggable
+    /// cards, swipe menus) inside the page instead of being eaten by the
+    /// outer scroll view's bounce.
+    ///
+    /// The script watches for `resize` / DOM mutations and toggles
+    /// `overflow-x` and `touch-action` on `<html>`/`<body>` depending on
+    /// whether the document actually overflows. When it doesn't, vertical
+    /// pan + pinch-zoom stay enabled but horizontal pans are released to
+    /// the page's own handlers. Sites wider than the viewport keep their
+    /// normal horizontal scroll.
+    static let horizontalScrollLockScript = """
+        (function() {
+            if (window.__stowerHorizontalLockInstalled) { return; }
+            window.__stowerHorizontalLockInstalled = true;
+
+            var root = document.documentElement;
+            var body = document.body;
+
+            function apply() {
+                if (!body) { body = document.body; }
+                if (!body) { return; }
+                var fits = root.scrollWidth <= window.innerWidth + 1;
+                if (fits) {
+                    root.style.overflowX = 'hidden';
+                    body.style.overflowX = 'hidden';
+                    body.style.touchAction = 'pan-y pinch-zoom';
+                } else {
+                    root.style.overflowX = '';
+                    body.style.overflowX = '';
+                    body.style.touchAction = '';
+                }
+            }
+
+            apply();
+            window.addEventListener('resize', apply);
+            window.addEventListener('orientationchange', apply);
+            if (window.ResizeObserver) {
+                var ro = new ResizeObserver(apply);
+                ro.observe(root);
+            }
+        })();
+        """
+
+    @MainActor
+    static func installHorizontalScrollLock(on page: WebPage) async {
+        _ = try? await page.callJavaScript(horizontalScrollLockScript)
     }
 }

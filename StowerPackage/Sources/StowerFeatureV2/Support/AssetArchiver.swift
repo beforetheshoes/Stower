@@ -130,11 +130,18 @@ enum AssetArchiver {
             .appendingPathComponent(itemID.uuidString, isDirectory: true)
     }
 
-    /// Checks whether an archive exists for the given item.
+    /// Checks whether an archive exists for the given item. URL-ingested
+    /// archives keep `index.html` at the root (fast path). User-imported
+    /// website zips can land their index nested (e.g. `guide/index.html`);
+    /// in that case fall back to the unpacker's entry-point search so the
+    /// reader treats the archive as renderable.
     static func archiveExists(for itemID: UUID) -> Bool {
         let dir = archiveDirectory(for: itemID)
         let indexPath = dir.appendingPathComponent("index.html")
-        return FileManager.default.fileExists(atPath: indexPath.path)
+        if FileManager.default.fileExists(atPath: indexPath.path) {
+            return true
+        }
+        return WebsiteArchiveUnpacker.findEntryURL(in: dir) != nil
     }
 
     /// Re-generates index.html from the original source HTML using the current patching logic.

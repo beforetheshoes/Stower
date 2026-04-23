@@ -238,6 +238,12 @@ public enum StowerDatabase {
         migrator.registerMigration("add-synced-text-content-table") { db in
             try migration_v11(db)
         }
+        migrator.registerMigration("add-website-archive-sync-table") { db in
+            try migration_v12(db)
+        }
+        migrator.registerMigration("purge-mistargeted-text-sync-rows") { db in
+            try migration_v13(db)
+        }
         try migrator.migrate(database)
     }
 
@@ -614,6 +620,46 @@ public enum StowerDatabase {
         } catch {
             // Column doesn't exist — table was created with the current schema.
         }
+    }
+
+    /// v12 — Synced user-imported website archives.
+    ///
+    /// Interactive static websites (e.g. ebook companion guides) are imported
+    /// as a `.zip` file. The original zip bytes are persisted here so that
+    /// SQLiteData's CloudKit bridge can promote the BLOB to a CKAsset and the
+    /// archive appears on every signed-in device. The second device runs a
+    /// `hydrateWebsite` job that unpacks the zip into `StowerArchive/{itemID}/`
+    /// on first open.
+    ///
+    /// Never DROP this table — its CloudKit change tokens live alongside it.
+    private static func migration_v12(_ db: Database) throws {
+        try db.execute(sql: """
+            CREATE TABLE IF NOT EXISTS "savedWebsiteArchiveSyncTables" (
+              "id" TEXT PRIMARY KEY NOT NULL,
+              "zipData" BLOB NOT NULL DEFAULT x'',
+              "sha256" TEXT NOT NULL DEFAULT '',
+              "originalFilename" TEXT NOT NULL DEFAULT '',
+              "byteCount" INTEGER NOT NULL DEFAULT 0,
+              "createdAt" TEXT NOT NULL,
+              "updatedAt" TEXT NOT NULL
+            ) STRICT
+            """)
+    }
+
+    /// v13 — Purge `savedTextContentSyncTables` rows that were written for
+    /// non-text render formats. A now-fixed helper in
+    /// `persistLocalContentAndCaches` mirrored every item without a
+    /// `sourceURL` into this table, which meant imported `.webView`
+    /// websites (and any `.pdf` items that slipped through an older guard)
+    /// got an empty row here. CloudKit then echoed those empty rows back
+    /// on every update, pinning the sync engine in a churn loop. Deleting
+    /// the rows here propagates as a CloudKit delete on first launch, so
+    /// every paired device stops the churn too.
+    private static func migration_v13(_ db: Database) throws {
+        try db.execute(sql: """
+            DELETE FROM "savedTextContentSyncTables"
+            WHERE "renderFormat" NOT IN ('plainText', 'structuredV1', 'htmlFallback')
+            """)
     }
 
     private static func migration_v10(_ db: Database) throws {

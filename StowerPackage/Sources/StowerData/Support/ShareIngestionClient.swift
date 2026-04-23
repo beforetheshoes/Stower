@@ -109,4 +109,41 @@ public enum ShareIngestionClient {
             try? await repository.enqueueIngestionJob(.pdf, path)
         }
     }
+
+    /// Copies a `.zip` website archive at `sourceURL` into the shared App
+    /// Group container under `PendingWebsites/{uuid}/` and enqueues a
+    /// `.website` ingestion job whose payload is the absolute destination
+    /// path. Mirrors `enqueuePDF` so the main-app ingester can rely on the
+    /// original filename for the title fallback before the `<title>` tag has
+    /// been parsed out of index.html.
+    public static func enqueueWebsiteZip(_ sourceURL: URL) throws {
+        try prepareDependencies {
+            try $0.bootstrapStowerDatabase(enableSync: false)
+        }
+
+        guard let container = FileManager.default
+            .containerURL(forSecurityApplicationGroupIdentifier: StowerDatabase.appGroupID)
+        else {
+            throw Error.appGroupUnavailable
+        }
+
+        let pendingRoot = container.appendingPathComponent("PendingWebsites", isDirectory: true)
+        let pendingDir = pendingRoot.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: pendingDir,
+            withIntermediateDirectories: true
+        )
+        let filename = sourceURL.lastPathComponent.isEmpty
+            ? "website.zip"
+            : sourceURL.lastPathComponent
+        let destination = pendingDir.appendingPathComponent(filename)
+        try FileManager.default.copyItem(at: sourceURL, to: destination)
+
+        @Dependency(\.stowerRepository)
+        var repository
+        let path = destination.path
+        Task {
+            try? await repository.enqueueIngestionJob(.website, path)
+        }
+    }
 }

@@ -268,6 +268,7 @@ public struct AppFeature {
                         _ = try? await repository.enqueueHydrationJobsForMissingContent()
                         _ = try? await repository.hydratePDFItemsFromSyncedContent()
                         _ = try? await repository.hydrateTextItemsFromSyncedContent()
+                        _ = try? await repository.hydrateWebsiteItemsFromSyncedContent()
                         try? await processIngestionJobs(
                             repository: repository,
                             ingestionClient: ingestionClient,
@@ -503,7 +504,52 @@ private func processIngestionJobs(
                     try? await repository.updateLocalContentStatus(payload.itemID, "failed", error.localizedDescription)
                 }
             }
+        case .website:
+            // Payload is the absolute path of a .zip file the share extension
+            // (or another background enqueuer) copied into the shared App
+            // Group container (PendingWebsites/{uuid}/). The in-app picker
+            // path imports inline via WebsiteImportService without touching
+            // this queue.
+            let zipURL = URL(fileURLWithPath: job.payload)
+            let scratchDir = zipURL.deletingLastPathComponent()
+            do {
+                _ = try await WebsiteImportService.importWebsite(
+                    zipURL: zipURL,
+                    repository: repository
+                )
+                try? FileManager.default.removeItem(at: scratchDir)
+            } catch {
+                let fallback = zipURL.deletingPathExtension().lastPathComponent
+                _ = try? await repository.createItemFromIngestion(
+                    .sharedText("Failed to import website: \(fallback)\n\n\(error.localizedDescription)")
+                )
+                try? FileManager.default.removeItem(at: scratchDir)
+            }
+        case .hydrateWebsite:
+            // Receive-side: the website archive arrived via CloudKit sync but
+            // the site isn't unpacked locally yet. Pull the zip bytes out of
+            // the sync table and run the same unpack logic we use on the
+            // originating device.
+            let data = Data(job.payload.utf8)
+            let payload = try JSONDecoder().decode(WebsiteHydrationPayload.self, from: data)
+            do {
+                guard
+                    let archive = try await repository.loadWebsiteArchive(payload.itemID)
+                else { break }
+                try await WebsiteImportService.hydrateWebsite(
+                    itemID: payload.itemID,
+                    archive: archive,
+                    repository: repository
+                )
+            } catch {
+                try? await repository.updateLocalContentStatus(
+                    payload.itemID,
+                    "failed",
+                    error.localizedDescription
+                )
+            }
         }
         try await repository.markIngestionJobProcessed(job.id)
     }
 }
+

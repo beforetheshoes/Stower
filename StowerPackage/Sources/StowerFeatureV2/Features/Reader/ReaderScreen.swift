@@ -235,7 +235,12 @@ public struct ReaderScreen: View {
 
     private func hasRenderableContent(for item: SavedItem) -> Bool {
         if store.effectiveRenderFormat == .webView {
-            return store.sourceHTML != nil
+            // URL-ingested archives carry their captured HTML in
+            // `sourceHTML`. User-imported website zips don't — they unpack
+            // straight to disk and leave sourceHTML empty, so also accept an
+            // on-disk archive directory as evidence the site is renderable.
+            if store.sourceHTML != nil { return true }
+            return AssetArchiver.archiveExists(for: item.id)
         }
         return store.document != nil
     }
@@ -376,6 +381,13 @@ public struct ReaderScreen: View {
                 Button("Improve Formatting") {
                     store.send(.retryExtractionTapped)
                 }
+            }
+
+            if let error = store.errorMessage {
+                Text(error)
+                    .font(.footnote)
+                    .foregroundStyle(store.appearance.palette.error)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .padding(20)

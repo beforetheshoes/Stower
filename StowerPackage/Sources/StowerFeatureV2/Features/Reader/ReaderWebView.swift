@@ -99,6 +99,9 @@ public struct ReaderWebView: View {
                 // at which `stowerGetTopBlockIndex()` is guaranteed to
                 // exist on the JS side.
                 installContentTapHandler()
+                if isWebViewFormat {
+                    installHorizontalScrollLock()
+                }
                 updateCSS(appearance)
                 maybeRestorePosition()
                 ReaderProgressCoordinator.shared.register(page)
@@ -267,7 +270,34 @@ public struct ReaderWebView: View {
 
         let archiveDir = AssetArchiver.archiveDirectory(for: itemID)
         let sourceURLValue = sourceURL.flatMap(URL.init(string:))
-        let articlePath = sourceURLValue?.path ?? "/"
+
+        // For URL-ingested archives `index.html` sits at the archive root,
+        // and the server's article-path shortcut maps the original URL path
+        // to that root index. Zip-imported archives can instead have a
+        // nested entry (e.g. `guide/index.html` referencing sibling folders
+        // via `../`), and promoting those contents would silently break
+        // those references. When the root index is missing, serve the
+        // nested entry directly — `articlePath` is set to a sentinel that
+        // matches nothing so the server's shortcut stays out of the way.
+        let rootIndexExists = FileManager.default.fileExists(
+            atPath: archiveDir.appendingPathComponent("index.html").path
+        )
+
+        let articlePath: String
+        let loadURLPath: String
+        if rootIndexExists {
+            let path = sourceURLValue?.path ?? "/"
+            articlePath = path
+            loadURLPath = path
+        } else if let nested = WebsiteArchiveUnpacker.findEntryURL(in: archiveDir),
+                  let relative = WebsiteArchiveUnpacker.relativePath(of: nested, in: archiveDir) {
+            articlePath = ""
+            loadURLPath = "/\(relative)"
+        } else {
+            let path = sourceURLValue?.path ?? "/"
+            articlePath = path
+            loadURLPath = path
+        }
 
         // Resolve the origin used by the local server's fetch-through.
         // Prefer the fresh `sourceURL` from the caller; fall back to the
@@ -294,7 +324,7 @@ public struct ReaderWebView: View {
         )
         guard let port = try? await server.start() else { return (nil, nil) }
 
-        let loadURL = URL(string: "http://localhost:\(port)\(articlePath)")!
+        let loadURL = URL(string: "http://localhost:\(port)\(loadURLPath)")!
         return (loadURL, server)
     }
 
@@ -321,6 +351,14 @@ public struct ReaderWebView: View {
         guard let page else { return }
         Task {
             await ReaderWebPageFactory.installContentTapHandler(on: page)
+        }
+    }
+
+    @MainActor
+    private func installHorizontalScrollLock() {
+        guard let page else { return }
+        Task {
+            await ReaderWebPageFactory.installHorizontalScrollLock(on: page)
         }
     }
 
