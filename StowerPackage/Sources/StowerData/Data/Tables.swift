@@ -125,7 +125,10 @@ nonisolated public struct SavedTextContentSyncTable: Hashable, Identifiable, Sen
 @Table
 nonisolated public struct SavedWebsiteArchiveSyncTable: Hashable, Identifiable, Sendable {
     public let id: UUID
-    public var zipData: Data = Data()
+    // `@Table` macro requires an explicit type annotation so the
+    // generated memberwise initializer and row bindings know this column
+    // is a BLOB rather than having its type inferred at the call site.
+    public var zipData: Data = .init()
     public var sha256: String = ""
     public var originalFilename: String = ""
     public var byteCount: Int = 0

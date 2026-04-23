@@ -552,4 +552,3 @@ private func processIngestionJobs(
         try await repository.markIngestionJobProcessed(job.id)
     }
 }
-

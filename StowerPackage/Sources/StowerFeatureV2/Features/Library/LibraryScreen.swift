@@ -566,9 +566,12 @@ public struct LibraryScreen: View {
 
     private func contentTypes(for picker: IOSImportPicker) -> [UTType] {
         switch picker {
-        case .text: return textImportContentTypes
-        case .pdf: return [.pdf]
-        case .website: return [.zip]
+        case .text:
+            return textImportContentTypes
+        case .pdf:
+            return [.pdf]
+        case .website:
+            return [.zip]
         }
     }
 

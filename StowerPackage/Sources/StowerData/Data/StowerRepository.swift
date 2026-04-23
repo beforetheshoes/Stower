@@ -295,9 +295,7 @@ extension StowerRepository {
             loadWebsiteArchive: _loadWebsiteArchive(database: database),
             hydrateWebsiteItemsFromSyncedContent: _hydrateWebsiteItemsFromSyncedContent(
                 database: database,
-                archiveExists: { itemID in
-                    websiteArchiveExists(itemID: itemID)
-                }
+                archiveExists: websiteArchiveExists(itemID:)
             )
         )
     }

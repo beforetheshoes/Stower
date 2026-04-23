@@ -34,7 +34,7 @@ enum WebsiteImportService {
             switch self {
             case .sizeCapExceeded(let cap):
                 return "The website archive is larger than the \(cap / 1_048_576) MB limit."
-            case .incompleteAsset(let expected, let received, let byteCount):
+            case let .incompleteAsset(expected, received, byteCount):
                 return "Website archive is still downloading (\(byteCount) bytes, expected sha256 \(expected.prefix(8)), got \(received.prefix(8)))."
             }
         }

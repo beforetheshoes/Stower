@@ -18,8 +18,8 @@ struct WebsiteArchiveUnpackerTests {
 
         let zip = scratch.appendingPathComponent("site.zip")
         try buildZip(at: zip, entries: [
-            "index.html": Data("<html><head><title>Hello</title></head></html>".utf8),
-            "style.css": Data("body{}".utf8),
+            ("index.html", Data("<html><head><title>Hello</title></head></html>".utf8)),
+            ("style.css", Data("body{}".utf8)),
         ])
 
         let destination = scratch.appendingPathComponent("archive")
@@ -40,8 +40,8 @@ struct WebsiteArchiveUnpackerTests {
 
         let zip = scratch.appendingPathComponent("nested.zip")
         try buildZip(at: zip, entries: [
-            "MyGuide/index.html": Data("<html><title>Guide</title></html>".utf8),
-            "MyGuide/assets/app.js": Data("console.log('hi')".utf8),
+            ("MyGuide/index.html", Data("<html><title>Guide</title></html>".utf8)),
+            ("MyGuide/assets/app.js", Data("console.log('hi')".utf8)),
         ])
 
         let destination = scratch.appendingPathComponent("archive")
@@ -71,13 +71,13 @@ struct WebsiteArchiveUnpackerTests {
 
         let zip = scratch.appendingPathComponent("parent-relative.zip")
         try buildZip(at: zip, entries: [
-            "guide/index.html": Data("""
+            ("guide/index.html", Data("""
             <html><head>
               <title>Here Where We Live</title>
               <meta property="og:image" content="../guide-assets/cover.jpg">
             </head></html>
-            """.utf8),
-            "guide-assets/cover.jpg": Data(repeating: 0x11, count: 16),
+            """.utf8)),
+            ("guide-assets/cover.jpg", Data(repeating: 0x11, count: 16)),
         ])
 
         let destination = scratch.appendingPathComponent("archive")
@@ -94,7 +94,7 @@ struct WebsiteArchiveUnpackerTests {
 
         let zip = scratch.appendingPathComponent("no-title.zip")
         try buildZip(at: zip, entries: [
-            "index.html": Data("<html><body>no title</body></html>".utf8),
+            ("index.html", Data("<html><body>no title</body></html>".utf8)),
         ])
 
         let destination = scratch.appendingPathComponent("archive")
@@ -166,7 +166,7 @@ struct WebsiteArchiveUnpackerTests {
 
         let zip = scratch.appendingPathComponent("entities.zip")
         try buildZip(at: zip, entries: [
-            "index.html": Data("<html><title>Ben &amp; Jerry&#39;s</title></html>".utf8),
+            ("index.html", Data("<html><title>Ben &amp; Jerry&#39;s</title></html>".utf8)),
         ])
 
         let destination = scratch.appendingPathComponent("archive")
@@ -184,13 +184,13 @@ struct WebsiteArchiveUnpackerTests {
 
         let zip = scratch.appendingPathComponent("og.zip")
         try buildZip(at: zip, entries: [
-            "index.html": Data("""
+            ("index.html", Data("""
             <html><head>
               <title>t</title>
               <meta property="og:image" content="images/cover.jpg">
             </head></html>
-            """.utf8),
-            "images/cover.jpg": Data(repeating: 0xAB, count: 16),
+            """.utf8)),
+            ("images/cover.jpg", Data(repeating: 0xAB, count: 16)),
         ])
 
         let destination = scratch.appendingPathComponent("archive")
@@ -205,12 +205,12 @@ struct WebsiteArchiveUnpackerTests {
 
         let zip = scratch.appendingPathComponent("img.zip")
         try buildZip(at: zip, entries: [
-            "index.html": Data("""
+            ("index.html", Data("""
             <html><body>
               <img src="cover.png" alt="cover">
             </body></html>
-            """.utf8),
-            "cover.png": Data(repeating: 0xCD, count: 16),
+            """.utf8)),
+            ("cover.png", Data(repeating: 0xCD, count: 16)),
         ])
 
         let destination = scratch.appendingPathComponent("archive")
@@ -225,11 +225,11 @@ struct WebsiteArchiveUnpackerTests {
 
         let zip = scratch.appendingPathComponent("absolute.zip")
         try buildZip(at: zip, entries: [
-            "index.html": Data("""
+            ("index.html", Data("""
             <html><head>
               <meta property="og:image" content="https://cdn.example.com/cover.jpg">
             </head></html>
-            """.utf8),
+            """.utf8)),
         ])
 
         let destination = scratch.appendingPathComponent("archive")
@@ -244,11 +244,11 @@ struct WebsiteArchiveUnpackerTests {
 
         let zip = scratch.appendingPathComponent("traversal-hero.zip")
         try buildZip(at: zip, entries: [
-            "index.html": Data("""
+            ("index.html", Data("""
             <html><head>
               <meta property="og:image" content="../../outside.jpg">
             </head></html>
-            """.utf8),
+            """.utf8)),
         ])
 
         let destination = scratch.appendingPathComponent("archive")
@@ -265,7 +265,7 @@ struct WebsiteArchiveUnpackerTests {
 
         let zip = scratch.appendingPathComponent("no-index.zip")
         try buildZip(at: zip, entries: [
-            "readme.txt": Data("just a readme".utf8),
+            ("readme.txt", Data("just a readme".utf8)),
         ])
 
         let destination = scratch.appendingPathComponent("archive")
@@ -282,8 +282,8 @@ struct WebsiteArchiveUnpackerTests {
 
         let zip = scratch.appendingPathComponent("evil.zip")
         try buildZip(at: zip, entries: [
-            "index.html": Data("<html><title>x</title></html>".utf8),
-            "../escaped.txt": Data("pwn".utf8),
+            ("index.html", Data("<html><title>x</title></html>".utf8)),
+            ("../escaped.txt", Data("pwn".utf8)),
         ])
 
         let destination = scratch.appendingPathComponent("archive")
@@ -306,8 +306,8 @@ struct WebsiteArchiveUnpackerTests {
         // 300 KB of 'A' bytes — will blow a 200 KB cap.
         let big = Data(repeating: UInt8(ascii: "A"), count: 300 * 1024)
         try buildZip(at: zip, entries: [
-            "index.html": Data("<html><title>t</title></html>".utf8),
-            "big.bin": big,
+            ("index.html", Data("<html><title>t</title></html>".utf8)),
+            ("big.bin", big),
         ])
 
         let destination = scratch.appendingPathComponent("archive")
@@ -333,7 +333,13 @@ struct WebsiteArchiveUnpackerTests {
 
     /// Builds a zip at `url` containing the given `path → bytes` entries.
     /// Each entry is compressed with the default compression method.
-    private func buildZip(at url: URL, entries: [String: Data]) throws {
+    ///
+    /// Entries arrive as an ordered tuple array rather than a `[String: Data]`
+    /// dictionary so callers don't have to keep the dictionary colons
+    /// visually aligned per the project's `collection_alignment` lint
+    /// (which is set to `align_colons: true`). Ordering also happens to be
+    /// predictable, which makes the extraction tests easier to reason about.
+    private func buildZip(at url: URL, entries: [(String, Data)]) throws {
         if FileManager.default.fileExists(atPath: url.path) {
             try FileManager.default.removeItem(at: url)
         }
@@ -342,13 +348,12 @@ struct WebsiteArchiveUnpackerTests {
             try archive.addEntry(
                 with: path,
                 type: .file,
-                uncompressedSize: Int64(data.count),
-                provider: { position, size -> Data in
-                    let start = Int(position)
-                    let end = min(start + size, data.count)
-                    return data.subdata(in: start..<end)
-                }
-            )
+                uncompressedSize: Int64(data.count)
+            ) { position, size -> Data in
+                let start = Int(position)
+                let end = min(start + size, data.count)
+                return data.subdata(in: start..<end)
+            }
         }
     }
 }

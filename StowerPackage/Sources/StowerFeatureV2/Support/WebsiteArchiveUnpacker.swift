@@ -52,14 +52,14 @@ enum WebsiteArchiveUnpacker {
         var description: String {
             switch self {
             case .cannotOpenArchive:
-                return "The zip file could not be opened. It may be corrupt or password-protected."
+                return "The zip file could not be opened. It may be corrupt or encrypted."
             case .pathTraversal(let path):
                 return "The zip contains an unsafe entry path (\(path)). Import aborted."
             case .uncompressedSizeExceeded(let cap):
                 return "The zip's contents exceed the \(cap / 1_048_576) MB uncompressed limit."
             case .noIndexHTML:
                 return "The zip does not contain an index.html at its root or one folder deep."
-            case .writeFailed(let entryPath, let underlying):
+            case let .writeFailed(entryPath, underlying):
                 return "Failed to unpack \"\(entryPath)\": \(underlying.localizedDescription)"
             }
         }
@@ -354,7 +354,7 @@ enum WebsiteArchiveUnpacker {
     /// directory levels.
     private static func breadthFirstSearchIndex(in root: URL, maxDepth: Int) -> URL? {
         let fileManager = FileManager.default
-        var queue: [(url: URL, depth: Int)] = [(root, 0)]
+        var queue = [(url: root, depth: 0)]
         while !queue.isEmpty {
             let (dir, depth) = queue.removeFirst()
             let children = (try? fileManager.contentsOfDirectory(
@@ -368,7 +368,9 @@ enum WebsiteArchiveUnpacker {
                 let name = child.lastPathComponent.lowercased()
                 if name == "index.html" || name == "index.htm" {
                     let isDir = (try? child.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
-                    if !isDir { return child }
+                    if !isDir {
+                        return child
+                    }
                 }
             }
 
@@ -376,7 +378,9 @@ enum WebsiteArchiveUnpacker {
 
             for child in children {
                 let isDir = (try? child.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
-                if isDir { queue.append((child, depth + 1)) }
+                if isDir {
+                    queue.append((child, depth + 1))
+                }
             }
         }
         return nil

@@ -138,7 +138,7 @@ func websiteArchiveExists(itemID: UUID) -> Bool {
     }
 
     // BFS up to 4 directory levels for `index.html`/`index.htm`.
-    var queue: [(URL, Int)] = [(archiveDir, 0)]
+    var queue = [(dir: archiveDir, depth: 0)]
     while !queue.isEmpty {
         let (dir, depth) = queue.removeFirst()
         let children = (try? FileManager.default.contentsOfDirectory(
@@ -150,13 +150,19 @@ func websiteArchiveExists(itemID: UUID) -> Bool {
             let name = child.lastPathComponent.lowercased()
             if name == "index.html" || name == "index.htm" {
                 let isDir = (try? child.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
-                if !isDir { return true }
+                if !isDir {
+                    return true
+                }
             }
         }
-        if depth >= 4 { continue }
+        if depth >= 4 {
+            continue
+        }
         for child in children {
             let isDir = (try? child.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
-            if isDir { queue.append((child, depth + 1)) }
+            if isDir {
+                queue.append((child, depth + 1))
+            }
         }
     }
     return false

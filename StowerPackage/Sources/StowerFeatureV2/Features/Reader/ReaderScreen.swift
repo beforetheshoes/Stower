@@ -239,7 +239,9 @@ public struct ReaderScreen: View {
             // `sourceHTML`. User-imported website zips don't — they unpack
             // straight to disk and leave sourceHTML empty, so also accept an
             // on-disk archive directory as evidence the site is renderable.
-            if store.sourceHTML != nil { return true }
+            if store.sourceHTML != nil {
+                return true
+            }
             return AssetArchiver.archiveExists(for: item.id)
         }
         return store.document != nil
