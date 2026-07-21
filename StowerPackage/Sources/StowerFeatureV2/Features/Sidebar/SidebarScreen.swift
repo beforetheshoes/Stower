@@ -30,8 +30,8 @@ public struct SidebarScreen: View {
             }
         )) {
             Section("Lists") {
-                listRow(.all, label: "All", systemImage: "tray.full", count: store.counts.all)
-                listRow(.unread, label: "Unread", systemImage: "circle.fill", count: store.counts.unread)
+                listRow(.unread, label: "Inbox", systemImage: "tray", count: store.counts.unread)
+                listRow(.all, label: "Library", systemImage: "books.vertical", count: store.counts.all)
                 listRow(.starred, label: "Starred", systemImage: "star.fill", count: store.counts.starred)
                 listRow(.untagged, label: "Untagged", systemImage: "tag.slash", count: store.counts.untagged)
                 listRow(.read, label: "Read", systemImage: "checkmark.circle", count: store.counts.read)

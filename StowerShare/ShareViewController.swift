@@ -173,98 +173,130 @@ final class ShareViewController: UIViewController {
     /// app can find it when it drains the ingestion queue.
     private func processPDFAttachment(_ attachment: NSItemProvider) {
         attachment.loadFileRepresentation(forTypeIdentifier: UTType.pdf.identifier) { [weak self] url, error in
-            guard let self else { return }
             if let error {
-                self.reportFailureOnMain("Share load failed: \(error.localizedDescription)")
+                Task { @MainActor [weak self] in
+                    self?.reportFailureOnMain("Share load failed: \(error.localizedDescription)")
+                }
                 return
             }
             guard let url else {
-                self.reportFailureOnMain("Shared item isn't a PDF file.")
+                Task { @MainActor [weak self] in
+                    self?.reportFailureOnMain("Shared item isn't a PDF file.")
+                }
                 return
             }
             do {
                 let scratch = FileManager.default.temporaryDirectory
                     .appendingPathComponent("\(UUID().uuidString).pdf")
                 try FileManager.default.copyItem(at: url, to: scratch)
-                self.enqueueOnBackground {
-                    defer { try? FileManager.default.removeItem(at: scratch) }
-                    try ShareIngestionClient.enqueuePDF(scratch)
+                Task { @MainActor [weak self] in
+                    self?.enqueueOnBackground {
+                        defer { try? FileManager.default.removeItem(at: scratch) }
+                        try await ShareIngestionClient.enqueuePDF(scratch)
+                    }
                 }
             } catch {
-                self.reportFailureOnMain("Couldn't copy PDF: \(error.localizedDescription)")
+                Task { @MainActor [weak self] in
+                    self?.reportFailureOnMain("Couldn't copy PDF: \(error.localizedDescription)")
+                }
             }
         }
     }
 
     private func processURLAttachment(_ attachment: NSItemProvider) {
-        attachment.loadItem(forTypeIdentifier: UTType.url.identifier, options: nil) { [weak self] item, error in
-            guard let self else { return }
+        attachment.loadObject(ofClass: NSURL.self) { [weak self] object, error in
             if let error {
-                self.reportFailureOnMain("Share load failed: \(error.localizedDescription)")
+                Task { @MainActor [weak self] in
+                    self?.reportFailureOnMain("Share load failed: \(error.localizedDescription)")
+                }
                 return
             }
-            guard let url = item as? URL else {
-                self.reportFailureOnMain("Shared item isn't a URL.")
+            guard let object = object as? NSURL else {
+                Task { @MainActor [weak self] in
+                    self?.reportFailureOnMain("Shared item isn't a URL.")
+                }
                 return
             }
-            self.enqueueOnBackground { try ShareIngestionClient.enqueueURL(url) }
+            let url = object as URL
+            Task { @MainActor [weak self] in
+                self?.enqueueOnBackground {
+                    try await ShareIngestionClient.enqueueURL(url)
+                }
+            }
         }
     }
 
     private func processPotentialTextFileAttachment(_ attachment: NSItemProvider) {
-        attachment.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { [weak self] item, error in
-            guard let self else { return }
+        attachment.loadFileRepresentation(
+            forTypeIdentifier: UTType.fileURL.identifier
+        ) { [weak self] url, error in
             if let error {
-                self.reportFailureOnMain("Share load failed: \(error.localizedDescription)")
+                Task { @MainActor [weak self] in
+                    self?.reportFailureOnMain("Share load failed: \(error.localizedDescription)")
+                }
                 return
             }
-            guard let url = item as? URL else {
-                self.reportFailureOnMain("Shared file isn't readable.")
+            guard let url else {
+                Task { @MainActor [weak self] in
+                    self?.reportFailureOnMain("Shared file isn't readable.")
+                }
                 return
             }
             guard let mode = TextImportDetector.importMode(for: url) else {
-                self.reportFailureOnMain("Unsupported shared file type.")
+                Task { @MainActor [weak self] in
+                    self?.reportFailureOnMain("Unsupported shared file type.")
+                }
                 return
             }
             do {
                 let data = try Data(contentsOf: url)
-                let text = self.decodedImportedText(from: data)
+                let text = Self.decodedImportedText(from: data)
                 let titleHint = TextImportDetector.normalizedTitleHint(from: url)
-                self.enqueueOnBackground {
-                    switch mode {
-                    case .markdown:
-                        try ShareIngestionClient.enqueueMarkdown(text, titleHint: titleHint)
-                    case .auto, .plainText:
-                        try ShareIngestionClient.enqueueText(text, titleHint: titleHint, mode: mode)
+                Task { @MainActor [weak self] in
+                    self?.enqueueOnBackground {
+                        switch mode {
+                        case .markdown:
+                            try await ShareIngestionClient.enqueueMarkdown(text, titleHint: titleHint)
+                        case .auto, .plainText:
+                            try await ShareIngestionClient.enqueueText(text, titleHint: titleHint, mode: mode)
+                        }
                     }
                 }
             } catch {
-                self.reportFailureOnMain("Couldn't read shared text file: \(error.localizedDescription)")
+                Task { @MainActor [weak self] in
+                    self?.reportFailureOnMain("Couldn't read shared text file: \(error.localizedDescription)")
+                }
             }
         }
     }
 
     private func processTextAttachment(_ attachment: NSItemProvider) {
-        attachment.loadItem(forTypeIdentifier: UTType.text.identifier, options: nil) { [weak self] item, error in
-            guard let self else { return }
+        attachment.loadObject(ofClass: NSString.self) { [weak self] object, error in
             if let error {
-                self.reportFailureOnMain("Share load failed: \(error.localizedDescription)")
+                Task { @MainActor [weak self] in
+                    self?.reportFailureOnMain("Share load failed: \(error.localizedDescription)")
+                }
                 return
             }
-            guard let text = item as? String else {
-                self.reportFailureOnMain("Shared item isn't text.")
+            guard let object = object as? NSString else {
+                Task { @MainActor [weak self] in
+                    self?.reportFailureOnMain("Shared item isn't text.")
+                }
                 return
             }
-            self.enqueueOnBackground {
-                switch SharedTextClassifier.classify(text) {
-                case .singleURL(let url):
-                    try ShareIngestionClient.enqueueURL(url)
-                case .text(let payload):
-                    try ShareIngestionClient.enqueueText(
-                        payload.content,
-                        titleHint: payload.titleHint,
-                        mode: payload.mode
-                    )
+            let text = object as String
+            Task { @MainActor [weak self] in
+                self?.enqueueOnBackground {
+                    switch SharedTextClassifier.classify(text) {
+                    case .singleURL(let url):
+                        try await ShareIngestionClient.enqueueURL(url)
+                    case .text(let payload):
+                        try await ShareIngestionClient.enqueueText(
+                            payload.content,
+                            titleHint: payload.titleHint,
+                            mode: payload.mode
+                        )
+                    }
                 }
             }
         }
@@ -272,10 +304,12 @@ final class ShareViewController: UIViewController {
 
     /// Runs the database bootstrap + job enqueue on a detached task so the
     /// UI thread stays responsive while migrations run.
-    private func enqueueOnBackground(_ work: @escaping () throws -> Void) {
+    private func enqueueOnBackground(
+        _ work: @escaping @Sendable () async throws -> Void
+    ) {
         Task.detached(priority: .userInitiated) { [weak self] in
             do {
-                try work()
+                try await work()
                 await self?.reportSuccessOnMain()
             } catch {
                 await self?.reportFailureOnMain("Couldn't save: \(error.localizedDescription)")
@@ -294,19 +328,17 @@ final class ShareViewController: UIViewController {
         }
     }
 
+    @MainActor
     private func reportFailureOnMain(_ message: String) {
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            self.loadTimeoutTask?.cancel()
-            self.apply(phase: .failure(message))
-            // Hold failure state for longer so the user can actually read it.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) { [weak self] in
-                self?.completeRequest()
-            }
+        loadTimeoutTask?.cancel()
+        apply(phase: .failure(message))
+        // Hold failure state for longer so the user can actually read it.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) { [weak self] in
+            self?.completeRequest()
         }
     }
 
-    private func decodedImportedText(from data: Data) -> String {
+    nonisolated private static func decodedImportedText(from data: Data) -> String {
         if let text = String(data: data, encoding: .utf8) {
             return text
         }

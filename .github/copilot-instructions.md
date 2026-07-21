@@ -1,14 +1,12 @@
-# Copilot Custom Instructions
+# Stower coding instructions
 
-- This repository uses Swift 6.1+ and SwiftUI for iOS 18+ apps. All code should follow modern Swift and SwiftUI best practices.
-- This is an iOS project NOT a pure Swift Package or macOS project. It utlises a local Swift Package which is wrapped in an Xcode project. This makes it easier for agents to work on the project.
-- Use the Model-View (MV) pattern with native SwiftUI state management (`@State`, `@Observable`, `@Environment`, `@Binding`). Do not use ViewModels or MVVM.
-- All concurrency must use Swift Concurrency (async/await, actors, @MainActor). Do not use GCD or completion handlers.
-- Write all new code and features inside the Swift Package (`YourAppPackage`), not in the app shell.
-- Use the Swift Testing framework (`@Test`, `#expect`, `#require`) for all tests. Place tests in the package's `Tests/` directory.
-- When running tests use the `test_sim_name_ws` tool do not use `swift_package_test`.- 
-- Use XcodeBuildMCP tools for building, testing, and automation. Prefer these over raw xcodebuild or CLI commands.
-- For data persistence, use SwiftData (never CoreData), though only use for complex scenarios, prefer simpler options first e.g. UserDefaults.
-- Always provide accessibility labels and identifiers for UI elements.
-- Never log sensitive information or use insecure network calls.
-- For full style, architecture, and workflow details, refer to the project documentation in [`template/.cursor/rules/`](../.cursor/rules/).
+- Stower is a unified SwiftUI app targeting iOS, iPadOS, and macOS 27 with Swift 6.4.
+- Use the `Stower` workspace and scheme. Shared code belongs in `StowerPackage`; the app shell stays minimal.
+- Model application behavior with The Composable Architecture and inject side effects through Dependencies.
+- Persist with SQLiteData and StructuredQueries. Do not introduce SwiftData or manual database-change broadcasters.
+- Add new database migrations without modifying migrations that may have shipped.
+- Use Swift Concurrency and actors for shared background state; keep UI/session work on the main actor.
+- Use Swift Testing and deterministic clocks/UUIDs.
+- Preserve the WebKit reader and native PDF support.
+- Add accessibility labels and identifiers to new interactive UI.
+- Validate with `swift test`, SwiftLint, and macOS/iOS builds from `Stower.xcworkspace`.

@@ -10,8 +10,10 @@ extension StowerRepository {
     /// the reader on a blank screen for anything that couldn't be extracted.
     private static func localStatus(for state: ProcessingState) -> String {
         switch state {
-        case .ready, .partial:
+        case .ready:
             return "available"
+        case .partial:
+            return "partial"
         case .failed:
             return "failed"
         case .extracting:

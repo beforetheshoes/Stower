@@ -21,16 +21,16 @@ public struct ReaderWebView: View {
     let itemID: UUID
     let contentVersion: Int
     let appearance: ReaderAppearanceSettings
+    let fontScale: Double
     let viewportWidth: Double?
     let isWebViewFormat: Bool
+    let usesNativeCapture: Bool
     let highlightedBlockIndex: Int?
     let restoreBlockIndex: Int?
     let onOpenInlineEmbed: ((String) -> Void)?
     let onContentTap: (() -> Void)?
 
-    @State private var page: WebPage?
-    @State private var archiveServer: LocalArchiveServer?
-    @State private var hasRestoredPosition = false
+    @State private var session: ReaderWebSession
     @Environment(\.openURL)
     private var openURL
 
@@ -40,8 +40,11 @@ public struct ReaderWebView: View {
         itemID: UUID,
         contentVersion: Int,
         appearance: ReaderAppearanceSettings,
+        fontScale: Double = 1,
+        session: ReaderWebSession = ReaderWebSession(),
         viewportWidth: Double? = nil,
         isWebViewFormat: Bool = false,
+        usesNativeCapture: Bool = false,
         highlightedBlockIndex: Int? = nil,
         restoreBlockIndex: Int? = nil,
         onOpenInlineEmbed: ((String) -> Void)? = nil,
@@ -52,8 +55,11 @@ public struct ReaderWebView: View {
         self.itemID = itemID
         self.contentVersion = contentVersion
         self.appearance = appearance
+        self.fontScale = fontScale
+        self._session = State(initialValue: session)
         self.viewportWidth = viewportWidth
         self.isWebViewFormat = isWebViewFormat
+        self.usesNativeCapture = usesNativeCapture
         self.highlightedBlockIndex = highlightedBlockIndex
         self.restoreBlockIndex = restoreBlockIndex
         self.onOpenInlineEmbed = onOpenInlineEmbed
@@ -71,7 +77,7 @@ public struct ReaderWebView: View {
         ZStack {
             appearance.backgroundColor
 
-            if let page {
+            if let page = session.page {
                 WebView(page)
                     .webViewContentBackground(.hidden)
             }
@@ -79,7 +85,7 @@ public struct ReaderWebView: View {
         // Keyed on item identity plus content version, not on the rendered
         // HTML bytes. Appearance changes update CSS live; they must not tear
         // down and recreate the whole WKWebView while the user drags a slider.
-        .task(id: ContentReloadKey(itemID: itemID, contentVersion: contentVersion)) {
+        .task(id: ReaderWebSession.LoadKey(contentVersion: contentVersion, itemID: itemID)) {
             loadContent()
         }
         .onChange(of: appearance) { _, newAppearance in
@@ -88,7 +94,10 @@ public struct ReaderWebView: View {
         .onChange(of: viewportWidth) { _, _ in
             updateCSS(appearance)
         }
-        .onChange(of: page?.isLoading) { _, isLoading in
+        .onChange(of: fontScale) { _, _ in
+            updateCSS(appearance)
+        }
+        .onChange(of: session.page?.isLoading) { _, isLoading in
             if isLoading == false {
                 // Re-apply CSS in case appearance settings loaded after
                 // the initial HTML was composed, then restore scroll, and
@@ -99,12 +108,15 @@ public struct ReaderWebView: View {
                 // at which `stowerGetTopBlockIndex()` is guaranteed to
                 // exist on the JS side.
                 installContentTapHandler()
+                if usesNativeCapture && !isWebViewFormat {
+                    installReaderRuntime()
+                }
                 if isWebViewFormat {
                     installHorizontalScrollLock()
                 }
                 updateCSS(appearance)
                 maybeRestorePosition()
-                ReaderProgressCoordinator.shared.register(page)
+                ReaderProgressCoordinator.shared.register(session.page)
             }
         }
         .onChange(of: highlightedBlockIndex) { _, newValue in
@@ -112,33 +124,25 @@ public struct ReaderWebView: View {
         }
         .onDisappear {
             ReaderProgressCoordinator.shared.register(nil)
-            archiveServer?.stop()
-            archiveServer = nil
         }
-    }
-
-    /// Identity for the reload task. Changes whenever the item swaps or its
-    /// underlying content changes in place (e.g. after re-extraction), but
-    /// stays stable for pure appearance tweaks so live CSS updates can handle
-    /// them without recreating the web content process.
-    private struct ContentReloadKey: Hashable {
-        let itemID: UUID
-        let contentVersion: Int
     }
 
     // MARK: - Loading
 
     @MainActor
     private func loadContent() {
-        // Clean up previous state.
-        ReaderProgressCoordinator.shared.register(nil)
-        archiveServer?.stop()
-        archiveServer = nil
-        page = nil
-        hasRestoredPosition = false
+        let loadKey = ReaderWebSession.LoadKey(contentVersion: contentVersion, itemID: itemID)
+        guard session.loadKey != loadKey || session.page == nil else {
+            ReaderProgressCoordinator.shared.register(session.page)
+            return
+        }
+        session.beginLoading(loadKey)
 
         let hasArchive = AssetArchiver.archiveExists(for: itemID)
         let isArchive = isWebViewFormat && hasArchive
+        let nativeArchiveURL = usesNativeCapture
+            ? ArticleCapturePackage.archiveURL(for: itemID, original: isWebViewFormat)
+            : nil
 
         let currentHTML = htmlProvider()
         let currentSourceURL = sourceURL
@@ -148,7 +152,22 @@ public struct ReaderWebView: View {
         let toggleChrome = onContentTap ?? {}
 
         Task {
-            if isArchive {
+            if let nativeArchiveURL,
+               let archiveData = try? Data(contentsOf: nativeArchiveURL, options: .mappedIfSafe) {
+                let newPage = ReaderWebPageFactory.makePage(
+                    openExternalURL: { [openURL] url in openURL(url) },
+                    openInlineEmbed: { openEmbed($0) },
+                    toggleChrome: { toggleChrome() }
+                )
+                let baseURL = currentSourceURL.flatMap(URL.init(string:)) ?? URL(string: "about:blank")!
+                _ = newPage.load(
+                    archiveData,
+                    mimeType: "application/x-webarchive",
+                    characterEncoding: .utf8,
+                    baseURL: baseURL
+                )
+                session.page = newPage
+            } else if isArchive {
                 let (loadURL, server) = await Self.prepareArchive(
                     html: currentHTML,
                     sourceURL: currentSourceURL,
@@ -162,9 +181,9 @@ public struct ReaderWebView: View {
                     openInlineEmbed: { openEmbed($0) },
                     toggleChrome: { toggleChrome() }
                 )
-                self.archiveServer = server
+                session.archiveServer = server
                 _ = newPage.load(URLRequest(url: loadURL))
-                self.page = newPage
+                session.page = newPage
             } else {
                 // Structured / HTML-fallback path.
                 //
@@ -189,9 +208,9 @@ public struct ReaderWebView: View {
                         openInlineEmbed: { openEmbed($0) },
                         toggleChrome: { toggleChrome() }
                     )
-                    self.archiveServer = server
+                    session.archiveServer = server
                     _ = newPage.load(URLRequest(url: loadURL))
-                    self.page = newPage
+                    session.page = newPage
                 } else {
                     // Fallback: if the scratch dir write or server start fails,
                     // fall back to the original in-memory load so the reader
@@ -204,7 +223,7 @@ public struct ReaderWebView: View {
                         toggleChrome: { toggleChrome() }
                     )
                     _ = newPage.load(html: currentHTML, baseURL: base)
-                    self.page = newPage
+                    session.page = newPage
                 }
             }
         }
@@ -332,15 +351,18 @@ public struct ReaderWebView: View {
 
     @MainActor
     private func updateCSS(_ appearance: ReaderAppearanceSettings) {
-        guard let page else { return }
+        guard let page = session.page else { return }
 
         // Interactive mode: leave the original page untouched. Appearance
         // settings apply only to Reader View.
-        if isWebViewFormat && AssetArchiver.archiveExists(for: itemID) {
+        if isWebViewFormat && (usesNativeCapture || AssetArchiver.archiveExists(for: itemID)) {
             return
         }
 
-        let css = appearance.readerCSS(pageWidth: CGFloat(viewportWidth ?? 0))
+        let css = appearance.readerCSS(
+            pageWidth: CGFloat(viewportWidth ?? 0),
+            fontScale: fontScale
+        )
         Task {
             await ReaderWebPageFactory.updateCSS(css, on: page)
         }
@@ -348,15 +370,21 @@ public struct ReaderWebView: View {
 
     @MainActor
     private func installContentTapHandler() {
-        guard let page else { return }
+        guard let page = session.page else { return }
         Task {
             await ReaderWebPageFactory.installContentTapHandler(on: page)
         }
     }
 
     @MainActor
+    private func installReaderRuntime() {
+        guard let page = session.page else { return }
+        Task { await ReaderWebPageFactory.installReaderRuntime(on: page) }
+    }
+
+    @MainActor
     private func installHorizontalScrollLock() {
-        guard let page else { return }
+        guard let page = session.page else { return }
         Task {
             await ReaderWebPageFactory.installHorizontalScrollLock(on: page)
         }
@@ -366,7 +394,7 @@ public struct ReaderWebView: View {
 
     @MainActor
     private func runHighlight(_ index: Int?) {
-        guard let page else { return }
+        guard let page = session.page else { return }
         Task {
             await ReaderWebPageFactory.runHighlight(index, on: page)
         }
@@ -376,11 +404,16 @@ public struct ReaderWebView: View {
 
     @MainActor
     private func maybeRestorePosition() {
-        guard let page, !hasRestoredPosition, let restoreBlockIndex, restoreBlockIndex > 0 else {
-            hasRestoredPosition = true
+        guard
+            let page = session.page,
+            !session.hasRestoredPosition,
+            let restoreBlockIndex,
+            restoreBlockIndex > 0
+        else {
+            session.hasRestoredPosition = true
             return
         }
-        hasRestoredPosition = true
+        session.hasRestoredPosition = true
         Task {
             // Slight delay to let layout settle after load.
             try? await Task.sleep(nanoseconds: 150_000_000)

@@ -7,6 +7,7 @@ public struct SavedItem: Equatable, Identifiable, Sendable {
     public var canonicalURL: String?
     public var renderFormat: RenderFormat
     public var documentVersion: Int
+    public var captureVersion: Int
     public var content: String
     public var excerpt: String?
     public var heroImageURL: String?
@@ -41,6 +42,7 @@ public struct SavedItem: Equatable, Identifiable, Sendable {
         canonicalURL: String? = nil,
         renderFormat: RenderFormat = .plainText,
         documentVersion: Int = 1,
+        captureVersion: Int = 0,
         excerpt: String? = nil,
         heroImageURL: String? = nil,
         author: String? = nil,
@@ -65,6 +67,7 @@ public struct SavedItem: Equatable, Identifiable, Sendable {
         self.canonicalURL = canonicalURL
         self.renderFormat = renderFormat
         self.documentVersion = documentVersion
+        self.captureVersion = captureVersion
         self.content = content
         self.excerpt = excerpt
         self.heroImageURL = heroImageURL
@@ -83,6 +86,64 @@ public struct SavedItem: Equatable, Identifiable, Sendable {
         self.isStarred = isStarred
         self.deletedAt = deletedAt
         self.tagIDs = tagIDs
+    }
+}
+
+public enum WebCaptureCompleteness: String, Codable, Equatable, Sendable {
+    case complete = "complete"
+    case partial = "partial"
+}
+
+/// Synced identity and integrity information for one immutable capture.
+public struct WebCaptureManifest: Codable, Equatable, Sendable {
+    public let itemID: UUID
+    public let captureID: UUID
+    public let version: Int
+    public let sha256: String
+    public let byteCount: Int
+    public let chunkCount: Int
+    public let capturedAt: Date
+
+    public init(
+        itemID: UUID,
+        captureID: UUID,
+        sha256: String,
+        byteCount: Int,
+        chunkCount: Int,
+        version: Int = 1,
+        capturedAt: Date = .now
+    ) {
+        self.itemID = itemID
+        self.captureID = captureID
+        self.version = version
+        self.sha256 = sha256
+        self.byteCount = byteCount
+        self.chunkCount = chunkCount
+        self.capturedAt = capturedAt
+    }
+}
+
+public struct WebCaptureChunk: Equatable, Identifiable, Sendable {
+    public let id: UUID
+    public let sequence: Int
+    public let data: Data
+    public let sha256: String
+
+    public init(sequence: Int, data: Data, sha256: String, id: UUID = UUID()) {
+        self.id = id
+        self.sequence = sequence
+        self.data = data
+        self.sha256 = sha256
+    }
+}
+
+public struct SyncedWebCapture: Equatable, Sendable {
+    public let manifest: WebCaptureManifest
+    public let chunks: [WebCaptureChunk]
+
+    public init(manifest: WebCaptureManifest, chunks: [WebCaptureChunk]) {
+        self.manifest = manifest
+        self.chunks = chunks
     }
 }
 
@@ -123,15 +184,26 @@ extension SavedItem {
     }
 }
 
-/// A cached on-device AI summary for an article. Persisted in the local-only
-/// content table; never synced via CloudKit.
+
+/// A cached AI summary for an article. Persisted locally and never synced via
+/// CloudKit. `quality` and `promptVersion` prevent a Quick result from being
+/// served as an Enhanced result after the summarization prompts change.
 public struct CachedSummary: Equatable, Sendable {
     public let text: String
     public let generatedAt: Date
+    public let quality: String
+    public let promptVersion: Int
 
-    public init(text: String, generatedAt: Date) {
+    public init(
+        text: String,
+        generatedAt: Date,
+        quality: String = "quick",
+        promptVersion: Int = 1
+    ) {
         self.text = text
         self.generatedAt = generatedAt
+        self.quality = quality
+        self.promptVersion = promptVersion
     }
 }
 
@@ -305,6 +377,14 @@ public struct ReaderAppearanceSettings: Equatable, Sendable {
 }
 
 public struct IngestionJob: Equatable, Identifiable, Sendable {
+    public enum Status: String, Codable, Sendable {
+        case queued = "queued"
+        case processing = "processing"
+        case failed = "failed"
+        case completed = "completed"
+        case dismissed = "dismissed"
+    }
+
     public enum Kind: String, Codable, Sendable {
         case url = "url"
         case text = "text"
@@ -320,12 +400,29 @@ public struct IngestionJob: Equatable, Identifiable, Sendable {
     public let kind: Kind
     public let payload: String
     public let createdAt: Date
+    public let status: Status
+    public let claimedAt: Date?
+    public let attemptCount: Int
+    public let lastError: String?
 
-    public init(kind: Kind, payload: String, id: UUID = UUID(), createdAt: Date = .now) {
+    public init(
+        kind: Kind,
+        payload: String,
+        id: UUID = UUID(),
+        createdAt: Date = .now,
+        status: Status = .queued,
+        claimedAt: Date? = nil,
+        attemptCount: Int = 0,
+        lastError: String? = nil
+    ) {
         self.id = id
         self.kind = kind
         self.payload = payload
         self.createdAt = createdAt
+        self.status = status
+        self.claimedAt = claimedAt
+        self.attemptCount = attemptCount
+        self.lastError = lastError
     }
 }
 

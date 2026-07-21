@@ -27,7 +27,8 @@ public enum ReaderDocumentHTMLBuilder {
         item: SavedItem,
         document: ReaderDocument,
         appearance: ReaderAppearanceSettings,
-        pageWidth: CGFloat = 10_000
+        pageWidth: CGFloat = 10_000,
+        fontScale: Double = 1
     ) -> String {
         var html = String()
         html.reserveCapacity(document.blocks.count * 256)
@@ -40,7 +41,7 @@ public enum ReaderDocumentHTMLBuilder {
         html += "  <meta name=\"color-scheme\" content=\"light dark\">\n"
         html += "  <title>\(escapeHTML(item.title))</title>\n"
         html += "  <style id=\"stower-reader-css\">\n"
-        html += appearance.readerCSS(pageWidth: pageWidth)
+        html += appearance.readerCSS(pageWidth: pageWidth, fontScale: fontScale)
         html += "\n  </style>\n"
         html += "  <style id=\"stower-runtime-css\">\n"
         html += runtimeCSS
@@ -119,22 +120,28 @@ public enum ReaderDocumentHTMLBuilder {
 
     private static func renderHeader(item: SavedItem, suppressHero: Bool = false) -> String {
         var html = "<header class=\"stower-header\" data-block-index=\"-1\">\n"
-
-        if !suppressHero,
-           let hero = item.heroImageURL, !hero.isEmpty, isSafeHTTPURL(hero) {
-            html += "  <img class=\"stower-hero\" src=\"\(attrEscape(hero))\" alt=\"\">\n"
-        }
-
         html += "  <h1 class=\"stower-title\">\(escapeHTML(item.title))</h1>\n"
+
+        let sourceURL = item.sourceURL.flatMap(URL.init(string:))
+        let sourceName = item.siteName.flatMap { $0.isEmpty ? nil : $0 } ?? sourceURL?.host
+        if let sourceName {
+            if let source = item.sourceURL {
+                html += "  <a class=\"stower-source\" href=\"\(attrEscape(source))\">\(escapeHTML(sourceName))</a>\n"
+            } else {
+                html += "  <span class=\"stower-source\">\(escapeHTML(sourceName))</span>\n"
+            }
+        }
 
         let metaPieces: [String] = {
             var pieces = [String]()
-            if let siteName = item.siteName, !siteName.isEmpty {
-                pieces.append("<span class=\"stower-site\">\(escapeHTML(siteName))</span>")
-            }
             if let author = item.author, !author.isEmpty {
                 pieces.append("<span class=\"stower-author\">by \(escapeHTML(author))</span>")
             }
+            let date = item.publishedAt ?? item.createdAt
+            let dateLabel = item.publishedAt == nil ? "Saved" : "Published"
+            pieces.append(
+                "<time class=\"stower-date\" datetime=\"\(attrEscape(date.ISO8601Format()))\">\(dateLabel) \(escapeHTML(date.formatted(date: .abbreviated, time: .omitted)))</time>"
+            )
             if let minutes = item.readingTimeMinutes {
                 pieces.append("<span class=\"stower-reading-time\">\(minutes) min read</span>")
             }
@@ -144,8 +151,9 @@ public enum ReaderDocumentHTMLBuilder {
             html += "  <div class=\"stower-meta\">\(metaPieces.joined(separator: " &middot; "))</div>\n"
         }
 
-        if let source = item.sourceURL, let sourceURL = URL(string: source), let host = sourceURL.host {
-            html += "  <a class=\"stower-source\" href=\"\(attrEscape(source))\">\(escapeHTML(host))</a>\n"
+        if !suppressHero,
+           let hero = item.heroImageURL, !hero.isEmpty, isSafeHTTPURL(hero) {
+            html += "  <img class=\"stower-hero\" src=\"\(attrEscape(hero))\" alt=\"\">\n"
         }
 
         html += "  <hr class=\"stower-header-rule\">\n"
@@ -515,7 +523,9 @@ public enum ReaderDocumentHTMLBuilder {
     .stower-title {
       font-weight: 700;
       line-height: 1.15;
-      margin: 0 0 14px;
+      margin: 0 0 10px;
+      border-bottom: 0 !important;
+      padding-bottom: 0 !important;
     }
     .stower-meta {
       font-size: 0.9em;
@@ -523,8 +533,10 @@ public enum ReaderDocumentHTMLBuilder {
       margin-bottom: 4px;
     }
     .stower-source {
-      font-size: 0.82em;
-      opacity: 0.6;
+      display: inline-block;
+      font-size: 0.9em;
+      font-weight: 600;
+      margin-bottom: 6px;
       text-decoration: none;
     }
     .stower-header-rule {

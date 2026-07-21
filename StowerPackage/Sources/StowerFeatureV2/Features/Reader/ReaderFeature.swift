@@ -152,6 +152,8 @@ public struct ReaderFeature {
         case openInlineWebEmbed(String)
         case inlineEmbedURL(PresentationAction<InlineEmbedFeature.Action>)
         case switchRenderMode(RenderFormat)
+        case loadDisplayPreference
+        case displayPreferenceLoaded(RenderFormat?)
 
         /// Emitted by the reader view when the top-visible block changes.
         /// Triggers a debounced save of the reading position.
@@ -161,33 +163,48 @@ public struct ReaderFeature {
 
         /// User tapped the toolbar mark-read/unread button.
         case toggleReadTapped
+
+        /// Explicitly completes the article and asks the parent to leave the reader.
+        case doneTapped
+        case delegate(Delegate)
+
+        public enum Delegate: Equatable {
+            case done(itemID: UUID, wasUnread: Bool)
+        }
     }
 
     private enum CancelID {
         case appearanceSave
         case readingProgressSave
         case progressPoll
+        case articleRefresh
     }
 
     @Dependency(\.stowerRepository)
     var repository
     @Dependency(\.urlIngestionClient)
     var ingestionClient
+    @Dependency(\.articleSaveClient)
+    var articleSaveClient
     @Dependency(\.continuousClock)
     var continuousClock
     @Dependency(\.readerProgressClient)
     var readerProgressClient
     @Dependency(\.cloudSyncClient)
     var cloudSyncClient
+    @Dependency(\.readerDisplayPreferenceClient)
+    var readerDisplayPreferenceClient
 
     @Dependency(\.textIngestionClient)
     var textIngestionClient
+    @Dependency(\.date)
+    var date
 
     public var body: some ReducerOf<Self> {
-        Scope(state: \.speech, action: \.speech) {
+        Scope(\.speech, action: \.speech) {
             ReaderSpeechFeature()
         }
-        Scope(state: \.ai, action: \.ai) {
+        Scope(\.ai, action: \.ai) {
             ReaderAIFeature()
         }
         Reduce { state, action in
@@ -202,7 +219,10 @@ public struct ReaderFeature {
                    state.item?.id == state.itemID {
                     state.isLoading = false
                     state.currentBlockIndex = state.item?.lastReadBlockIndex ?? 0
-                    return .send(.speech(.loadPreferences))
+                    return .merge(
+                        .send(.speech(.loadPreferences)),
+                        .send(.loadDisplayPreference)
+                    )
                 }
 
                 state.isLoading = true
@@ -237,7 +257,8 @@ public struct ReaderFeature {
                 return .merge(
                     archiveIfNeeded(item: state.item, sourceHTML: sourceHTML),
                     startProgressPollingEffect(),
-                    .send(.ai(.appeared(itemID: state.itemID)))
+                    .send(.ai(.appeared(itemID: state.itemID))),
+                    .send(.loadDisplayPreference)
                 )
 
             case .failed(let error):
@@ -418,6 +439,7 @@ public struct ReaderFeature {
                     let repository = self.repository
                     let textIngestionClient = self.textIngestionClient
                     let cloudSyncClient = self.cloudSyncClient
+                    let date = self.date
                     return .run { [id = state.itemID] send in
                         do {
                             try? await cloudSyncClient.sendChanges()
@@ -435,24 +457,33 @@ public struct ReaderFeature {
 
                             // Fall back to the text/markdown hydration path.
                             _ = try await repository.hydrateTextItemsFromSyncedContent()
-                            let jobs = try await repository.fetchPendingIngestionJobs()
                             var hydratedTextItem = false
-                            for job in jobs where job.kind == .hydrateText {
-                                let data = Data(job.payload.utf8)
-                                let payload = try JSONDecoder().decode(TextHydrationPayload.self, from: data)
-                                guard payload.itemID == id else { continue }
-                                let mode = payload.rawSourceMode
-                                    .flatMap(TextImportMode.init(rawValue:))
-                                    ?? .auto
-                                let result = try await textIngestionClient.ingest(
-                                    payload.rawSourceText,
-                                    payload.title,
-                                    nil,
-                                    mode
-                                )
-                                try await repository.hydrateItemContent(id, result)
-                                try await repository.markIngestionJobProcessed(job.id)
-                                hydratedTextItem = true
+                            while let job = try await repository.claimNextIngestionJobOfKind(
+                                .hydrateText,
+                                date.now
+                            ) {
+                                do {
+                                    let data = Data(job.payload.utf8)
+                                    let payload = try JSONDecoder().decode(TextHydrationPayload.self, from: data)
+                                    let mode = payload.rawSourceMode
+                                        .flatMap(TextImportMode.init(rawValue:))
+                                        ?? .auto
+                                    let result = try await textIngestionClient.ingest(
+                                        payload.rawSourceText,
+                                        payload.title,
+                                        nil,
+                                        mode
+                                    )
+                                    try await repository.hydrateItemContent(payload.itemID, result)
+                                    try await repository.completeIngestionJob(job.id, date.now)
+                                    hydratedTextItem = hydratedTextItem || payload.itemID == id
+                                } catch {
+                                    try await repository.failIngestionJob(
+                                        job.id,
+                                        error.localizedDescription,
+                                        date.now
+                                    )
+                                }
                             }
 
                             if !hydratedTextItem {
@@ -485,29 +516,18 @@ public struct ReaderFeature {
                 }
 
                 state.isLoading = true
-                let repository = self.repository
-                let ingestionClient = self.ingestionClient
+                let articleSaveClient = self.articleSaveClient
                 return .run { [id = state.itemID] send in
                     do {
-                        let result = try await ingestionClient.ingest(url)
-                        let item = try await repository.updateItemFromIngestion(id, result)
-
-                        // Archive assets for offline WebView rendering.
-                        if result.renderFormat == .webView,
-                           !result.sourceHTML.isEmpty {
-                            AssetArchiver.deleteArchive(for: id)
-                            await AssetArchiver.archiveAssets(
-                                html: result.sourceHTML,
-                                baseURL: url,
-                                itemID: id
-                            )
-                        }
-
-                        await send(.retryFinished(item))
+                        let refreshed = try await articleSaveClient.refresh(id, url)
+                        await send(.retryFinished(refreshed.item))
+                    } catch is CancellationError {
+                        return
                     } catch {
                         await send(.failed(error.localizedDescription))
                     }
                 }
+                .cancellable(id: CancelID.articleRefresh, cancelInFlight: true)
 
             case .retryFinished(let item):
                 if let item {
@@ -531,13 +551,39 @@ public struct ReaderFeature {
 
             case .switchRenderMode(let format):
                 state.renderModeOverride = format
+                let preferenceClient = self.readerDisplayPreferenceClient
+                let host = state.item?.sourceURL
+                    .flatMap(URL.init(string:))?
+                    .host
+                let savePreference: EffectOf<Self> = host.map { host in
+                    .run { _ in await preferenceClient.save(host, format) }
+                } ?? .none
                 // When the user flips to web view on an article that
                 // wasn't originally ingested as `.webView`, the external
                 // assets (CSS, JS, images, SVGs) haven't been archived
                 // yet. Kick off archiving now so the web view works
                 // offline after this first switch.
                 if format == .webView {
-                    return archiveForWebView(item: state.item, sourceHTML: state.sourceHTML)
+                    return .merge(
+                        archiveForWebView(item: state.item, sourceHTML: state.sourceHTML),
+                        savePreference
+                    )
+                }
+                return savePreference
+
+            case .loadDisplayPreference:
+                guard let host = state.item?.sourceURL
+                    .flatMap(URL.init(string:))?
+                    .host
+                else { return .none }
+                let preferenceClient = self.readerDisplayPreferenceClient
+                return .run { send in
+                    await send(.displayPreferenceLoaded(await preferenceClient.load(host)))
+                }
+
+            case .displayPreferenceLoaded(let format):
+                if state.renderModeOverride == nil {
+                    state.renderModeOverride = format
                 }
                 return .none
 
@@ -549,31 +595,16 @@ public struct ReaderFeature {
                 state.currentBlockIndex = blockIndex
                 state.item?.lastReadBlockIndex = blockIndex > 0 ? blockIndex : nil
 
-                // Auto-mark as read the first time the user scrolls past the
-                // intro. Guarded by `isRead == false` so we only fire once.
-                var autoMarkEffect: Effect<Action> = .none
-                if blockIndex > 0, state.item?.isRead == false {
-                    state.item?.isRead = true
-                    let repo = self.repository
-                    let id = state.itemID
-                    autoMarkEffect = .run { _ in
-                        try? await repo.setReadStatus(id, true)
-                    }
-                }
-
                 if blockIndex == 0 {
-                    return .merge(
-                        .cancel(id: CancelID.readingProgressSave),
-                        autoMarkEffect
-                    )
+                    return .cancel(id: CancelID.readingProgressSave)
                 }
                 let clock = self.continuousClock
-                let saveEffect: Effect<Action> = .run { send in
+                let saveEffect: EffectOf<Self> = .run { send in
                     try? await clock.sleep(for: .seconds(1))
                     await send(.saveReadingProgress(blockIndex), animation: nil)
                 }
                 .cancellable(id: CancelID.readingProgressSave, cancelInFlight: true)
-                return .merge(saveEffect, autoMarkEffect)
+                return saveEffect
 
             case .saveReadingProgress(let blockIndex):
                 let repository = self.repository
@@ -594,6 +625,25 @@ public struct ReaderFeature {
                 let id = state.itemID
                 return .run { _ in try? await repo.setReadStatus(id, newValue) }
 
+            case .doneTapped:
+                let wasUnread = state.item?.isRead == false
+                state.item?.isRead = true
+                let repository = self.repository
+                let itemID = state.itemID
+                return .run { send in
+                    do {
+                        if wasUnread {
+                            try await repository.setReadStatus(itemID, true)
+                        }
+                        await send(.delegate(.done(itemID: itemID, wasUnread: wasUnread)))
+                    } catch {
+                        await send(.failed(error.localizedDescription))
+                    }
+                }
+
+            case .delegate:
+                return .none
+
             case .speech:
                 return .none
 
@@ -610,7 +660,7 @@ public struct ReaderFeature {
     /// Called on initial load — only fires for articles ingested as `.webView` to avoid
     /// wastefully downloading assets for articles the user reads in structured view.
     /// For manual switches to web view, `archiveForWebView` is called directly.
-    private func archiveIfNeeded(item: SavedItem?, sourceHTML: String?) -> Effect<Action> {
+    private func archiveIfNeeded(item: SavedItem?, sourceHTML: String?) -> EffectOf<Self> {
         guard let item, item.renderFormat == .webView,
               let html = sourceHTML, !html.isEmpty,
               !AssetArchiver.archiveExists(for: item.id),
@@ -634,7 +684,7 @@ public struct ReaderFeature {
     /// no format gate — so SVG-rich or interactive pages that were ingested as
     /// `.structuredV1` still get their CSS/JS/images downloaded once the user
     /// flips the switch. No-ops if an archive already exists.
-    private func archiveForWebView(item: SavedItem?, sourceHTML: String?) -> Effect<Action> {
+    private func archiveForWebView(item: SavedItem?, sourceHTML: String?) -> EffectOf<Self> {
         guard let item,
               let html = sourceHTML, !html.isEmpty,
               !AssetArchiver.archiveExists(for: item.id),
@@ -659,7 +709,7 @@ public struct ReaderFeature {
     /// `Task` inside `ReaderWebView`, which kept firing during the window
     /// between `navigationDestination`'s state nil-ification and the view's
     /// `.onDisappear`, and tripped a noisy TCA runtime warning on every pop.
-    private func startProgressPollingEffect() -> Effect<Action> {
+    private func startProgressPollingEffect() -> EffectOf<Self> {
         let client = self.readerProgressClient
         let clock = self.continuousClock
         return .run { send in

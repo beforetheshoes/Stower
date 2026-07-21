@@ -82,21 +82,26 @@ extension StowerRepository {
         }
     }
 
-    static func _saveSummary(database: any DatabaseWriter) -> @Sendable (UUID, String) async throws -> Void {
-        { (id: UUID, text: String) async throws in
+    static func _saveSummary(
+        database: any DatabaseWriter
+    ) -> @Sendable (UUID, String, Int, String) async throws -> Void {
+        { (id: UUID, quality: String, promptVersion: Int, text: String) async throws in
             let now = Date.now
             try await database.write { db in
-                // The content row is created during ingestion; if it's missing
-                // we silently drop the write rather than synthesizing a half-
-                // populated row. A missing row means the item itself isn't
-                // persisted, which is an upstream bug the summary cache can't fix.
-                guard try SavedItemContentLocalTable.find(id).fetchOne(db) != nil else { return }
-                try SavedItemContentLocalTable
-                    .find(id)
-                    .update {
-                        $0.summary = #bind(text)
-                        $0.summaryGeneratedAt = #bind(now)
-                        $0.updatedAt = now
+                guard let content = try SavedItemContentLocalTable.find(id).fetchOne(db) else { return }
+                let cacheID = "\(id.uuidString.lowercased()):\(quality)"
+                try ArticleSummaryLocalTable.find(cacheID).delete().execute(db)
+                try ArticleSummaryLocalTable
+                    .insert {
+                        ArticleSummaryLocalTable.Draft(
+                            id: cacheID,
+                            itemID: id,
+                            quality: quality,
+                            promptVersion: promptVersion,
+                            contentHash: sha256Hex(content.plainText),
+                            text: text,
+                            generatedAt: now
+                        )
                     }
                     .execute(db)
             }

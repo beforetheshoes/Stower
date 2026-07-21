@@ -3,7 +3,7 @@ import Foundation
 import FoundationModels
 import StowerData
 
-/// On-device AI client for article summarization and Q&A.
+/// AI client for article summarization and on-device Q&A.
 ///
 /// Wraps Apple's Foundation Models framework (`SystemLanguageModel` +
 /// `LanguageModelSession`) in an `AsyncThrowingStream` event surface that
@@ -18,11 +18,17 @@ import StowerData
 ///   - **Ask**: stuff-context when the article fits; NLEmbedding retrieval
 ///     over chunked sections when it doesn't.
 public struct ArticleAIClient: Sendable {
+    public enum SummaryQuality: String, CaseIterable, Equatable, Sendable {
+        case quick = "quick"
+        case enhanced = "enhanced"
+    }
+
     public enum Availability: Equatable, Sendable {
         case available
         case appleIntelligenceNotEnabled
         case deviceNotEligible
         case modelNotReady
+        case quotaLimitReached(Date?)
         case other(String)
     }
 
@@ -32,6 +38,9 @@ public struct ArticleAIClient: Sendable {
     public enum SummaryEvent: Sendable, Equatable {
         case started
         case stage(String)
+        /// Emitted when Enhanced generation has to continue on device. This
+        /// keeps the result out of the Enhanced cache.
+        case qualityResolved(SummaryQuality)
         case partial(String)
         case finished(String)
     }
@@ -44,8 +53,20 @@ public struct ArticleAIClient: Sendable {
     }
 
     public var availability: @Sendable () -> Availability
+    public var prewarm: @Sendable () -> Void
     public var summarize: @Sendable (_ document: ReaderDocument?, _ plainText: String) -> AsyncThrowingStream<SummaryEvent, Error>
     public var ask: @Sendable (_ document: ReaderDocument?, _ plainText: String, _ question: String) -> AsyncThrowingStream<AnswerEvent, Error>
+    public var enhancedAvailability: @Sendable () -> Availability = {
+        .other("Enhanced summaries aren't configured.")
+    }
+    public var prewarmEnhanced: @Sendable () -> Void = {}
+    public var summarizeEnhanced: @Sendable (
+        _ document: ReaderDocument?,
+        _ plainText: String
+    ) -> AsyncThrowingStream<SummaryEvent, Error> = { _, _ in
+        AsyncThrowingStream { $0.finish() }
+    }
+    public var summaryPromptVersion: @Sendable (SummaryQuality) -> Int = { _ in 1 }
 }
 
 // MARK: - Dependency Registration
@@ -65,6 +86,11 @@ extension DependencyValues {
 // MARK: - Live Implementation
 
 extension ArticleAIClient {
+    /// Keep PCC dormant until the managed entitlement is approved. This gate
+    /// prevents availability checks, prewarming, and generation from touching
+    /// the private-cloud model while preserving the implementation for later.
+    private static let privateCloudComputeEnabled = false
+
     /// Instructions tuning notes:
     ///   - Short, imperative, one task per prompt (per Apple's guidance in
     ///     TN3193 — long instructions consume tokens and degrade quality).
@@ -92,6 +118,21 @@ extension ArticleAIClient {
             Write as if you've just read the article yourself — never \
             mention "sections", "parts", "notes", or "summaries" in your \
             response. Do not add information that isn't in the notes.
+            """
+
+        static let enhancedSummary = """
+            Summarize the supplied article for an attentive reader. Identify \
+            its central claim, the strongest supporting points, why the piece \
+            matters, and important qualifications or disagreement in the \
+            source. Preserve nuance and distinguish the author's claims from \
+            established facts. Never invent details or use outside knowledge.
+            """
+
+        static let enhancedSectionSummary = """
+            Extract dense, faithful notes from this portion of a long article. \
+            Preserve claims, evidence, names, numbers, and qualifications that \
+            may be important to understanding the full piece. Do not add \
+            outside information.
             """
 
         static let stuffedAnswer = """
@@ -137,9 +178,37 @@ extension ArticleAIClient {
         )
     }()
 
+    private static let prewarmSession = LanguageModelSession(
+        model: permissiveModel,
+        instructions: Instructions.singleShotSummary
+    )
+
+    private static let privateCloudModel = PrivateCloudComputeLanguageModel()
+
+    private static let enhancedPrewarmSession = LanguageModelSession(
+        model: privateCloudModel,
+        instructions: Instructions.enhancedSummary
+    )
+
+    @Generable(description: "A faithful, useful summary of a saved article")
+    struct EnhancedArticleSummary {
+        @Guide(description: "A concise overview of the article's central argument in two or three sentences")
+        var overview: String
+
+        @Guide(description: "Three to six specific supporting ideas, findings, or arguments from the article")
+        var keyPoints: [String]
+
+        @Guide(description: "Why the article or its argument matters to the reader")
+        var significance: String
+
+        @Guide(description: "Important caveats, uncertainty, counterarguments, or limitations stated in the article")
+        var qualifications: [String]
+    }
+
     public static let live: ArticleAIClient = {
         ArticleAIClient(
             availability: { liveAvailability() },
+            prewarm: { prewarmSession.prewarm() },
             summarize: { document, plainText in
                 AsyncThrowingStream { continuation in
                     let task = Task {
@@ -178,12 +247,50 @@ extension ArticleAIClient {
                     }
                     continuation.onTermination = { _ in task.cancel() }
                 }
+            },
+            enhancedAvailability: {
+                guard privateCloudComputeEnabled else {
+                    return .other("Enhanced summaries are currently disabled.")
+                }
+                return liveEnhancedAvailability()
+            },
+            prewarmEnhanced: {
+                guard privateCloudComputeEnabled else { return }
+                enhancedPrewarmSession.prewarm()
+            },
+            summarizeEnhanced: { document, plainText in
+                AsyncThrowingStream { continuation in
+                    let task = Task {
+                        do {
+                            try await performEnhancedSummarize(
+                                document: document,
+                                plainText: plainText,
+                                continuation: continuation
+                            )
+                            continuation.finish()
+                        } catch is CancellationError {
+                            continuation.finish()
+                        } catch {
+                            continuation.finish(throwing: error)
+                        }
+                    }
+                    continuation.onTermination = { _ in task.cancel() }
+                }
+            },
+            summaryPromptVersion: { quality in
+                switch quality {
+                case .quick:
+                    2
+                case .enhanced:
+                    1
+                }
             }
         )
     }()
 
     public static let test = ArticleAIClient(
         availability: { .available },
+        prewarm: {},
         summarize: { _, _ in
             AsyncThrowingStream { continuation in
                 continuation.yield(.started)
@@ -222,27 +329,48 @@ extension ArticleAIClient {
         }
     }
 
+    private static func liveEnhancedAvailability() -> Availability {
+        switch privateCloudModel.availability {
+        case .available:
+            let usage = privateCloudModel.quotaUsage
+            return usage.isLimitReached ? .quotaLimitReached(usage.resetDate) : .available
+        case .unavailable(let reason):
+            switch reason {
+            case .deviceNotEligible:
+                return .deviceNotEligible
+            case .systemNotReady:
+                return .modelNotReady
+            @unknown default:
+                return .other("Private Cloud Compute is unavailable.")
+            }
+        }
+    }
+
     // MARK: - Token budgeting
 
-    // Split of the context window: reserve room for instructions and
-    // response, give the rest to the input.
-    //
-    // The reserves are deliberately generous (roughly 1/4 of a 4096 window).
-    // The unit estimator can undercount by ~25% on real articles, so the
-    // extra headroom keeps even mis-estimated inputs from colliding with
-    // the real context ceiling.
-    //
-    // Hard-codes 4096 tokens — the current on-device model window size.
-    private static func computeInputBudget() -> Int {
-        let total = 4096
-        let instructionsReserve = 256
+    private static func computeInputBudget(instructions: String) async throws -> Int {
+        let contextSize = permissiveModel.contextSize
+        let instructionTokens = try await permissiveModel.tokenCount(
+            for: FoundationModels.Instructions(instructions)
+        )
         let responseReserve = 768
-        return max(512, total - instructionsReserve - responseReserve)
+        return max(512, contextSize - instructionTokens - responseReserve)
+    }
+
+    private static func promptFits(
+        _ prompt: String,
+        instructions: String
+    ) async throws -> Bool {
+        let budget = try await computeInputBudget(instructions: instructions)
+        let promptTokens = try await permissiveModel.tokenCount(
+            for: Prompt(prompt)
+        )
+        return promptTokens <= budget
     }
 
     // MARK: - Summarize
 
-    private static func performSummarize(
+    private static func performEnhancedSummarize(
         document: ReaderDocument?,
         plainText: String,
         continuation: AsyncThrowingStream<SummaryEvent, Error>.Continuation
@@ -254,14 +382,189 @@ extension ArticleAIClient {
 
         continuation.yield(.started)
 
-        let budget = computeInputBudget()
-        let approxInputTokens = ArticleChunker.approxTokenCount(plainText)
+        guard privateCloudComputeEnabled else {
+            try await fallBackToQuickSummary(
+                reason: "Generating summary on device",
+                document: document,
+                plainText: plainText,
+                continuation: continuation
+            )
+            return
+        }
+
+        guard liveEnhancedAvailability() == .available else {
+            try await fallBackToQuickSummary(
+                reason: "Enhanced summary unavailable — continuing on device",
+                document: document,
+                plainText: plainText,
+                continuation: continuation
+            )
+            return
+        }
+
+        continuation.yield(.stage("Reasoning across the full article"))
+        do {
+            let result = try await generateEnhancedSummary(from: plainText)
+            continuation.yield(.partial(result))
+            continuation.yield(.finished(result))
+        } catch let error as LanguageModelError {
+            if case .contextSizeExceeded = error {
+                do {
+                    try await performChunkedEnhancedSummarize(
+                        document: document,
+                        plainText: plainText,
+                        continuation: continuation
+                    )
+                } catch is PrivateCloudComputeLanguageModel.Error {
+                    try await fallBackToQuickSummary(
+                        reason: "Private Cloud Compute couldn't finish — continuing on device",
+                        document: document,
+                        plainText: plainText,
+                        continuation: continuation
+                    )
+                }
+            } else {
+                throw error
+            }
+        } catch is PrivateCloudComputeLanguageModel.Error {
+            try await fallBackToQuickSummary(
+                reason: "Private Cloud Compute couldn't finish — continuing on device",
+                document: document,
+                plainText: plainText,
+                continuation: continuation
+            )
+        }
+    }
+
+    private static func generateEnhancedSummary(from articleText: String) async throws -> String {
+        let session = LanguageModelSession(
+            model: privateCloudModel,
+            instructions: Instructions.enhancedSummary
+        )
+        let response = try await session.respond(
+            to: "Article:\n\n\(articleText)",
+            generating: EnhancedArticleSummary.self,
+            options: GenerationOptions(maximumResponseTokens: 1400),
+            contextOptions: ContextOptions(reasoningLevel: .moderate)
+        )
+        return render(response.content)
+    }
+
+    private static func performChunkedEnhancedSummarize(
+        document: ReaderDocument?,
+        plainText: String,
+        continuation: AsyncThrowingStream<SummaryEvent, Error>.Continuation
+    ) async throws {
+        // PCC exposes its context size, but not its tokenizer. This conservative
+        // chunk budget leaves room for instructions and reasoning output; an
+        // overflow at the final pass still surfaces as a normal model error.
+        let chunks = ArticleChunker.chunks(
+            from: document,
+            plainText: plainText,
+            budgetTokens: 20_000
+        )
+        guard !chunks.isEmpty else {
+            continuation.yield(.finished(""))
+            return
+        }
+
+        var notes = [String]()
+        notes.reserveCapacity(chunks.count)
+        for (offset, chunk) in chunks.enumerated() {
+            try Task.checkCancellation()
+            continuation.yield(.stage("Reading part \(offset + 1) of \(chunks.count)"))
+            let session = LanguageModelSession(
+                model: privateCloudModel,
+                instructions: Instructions.enhancedSectionSummary
+            )
+            let response = try await session.respond(
+                to: chunk.text,
+                options: GenerationOptions(maximumResponseTokens: 900),
+                contextOptions: ContextOptions(reasoningLevel: .light)
+            )
+            notes.append(response.content)
+        }
+
+        try Task.checkCancellation()
+        continuation.yield(.stage("Connecting the article's ideas"))
+        let result = try await generateEnhancedSummary(from: notes.joined(separator: "\n\n"))
+        continuation.yield(.partial(result))
+        continuation.yield(.finished(result))
+    }
+
+    private static func fallBackToQuickSummary(
+        reason: String,
+        document: ReaderDocument?,
+        plainText: String,
+        continuation: AsyncThrowingStream<SummaryEvent, Error>.Continuation
+    ) async throws {
+        continuation.yield(.qualityResolved(.quick))
+        continuation.yield(.stage(reason))
+        try await performQuickSummarize(
+            document: document,
+            plainText: plainText,
+            continuation: continuation,
+            emitStarted: false
+        )
+    }
+
+    private static func render(_ summary: EnhancedArticleSummary) -> String {
+        var sections = [summary.overview.trimmingCharacters(in: .whitespacesAndNewlines)]
+        let keyPoints = summary.keyPoints
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        if !keyPoints.isEmpty {
+            sections.append("Key points\n" + keyPoints.map { "• \($0)" }.joined(separator: "\n"))
+        }
+        let significance = summary.significance.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !significance.isEmpty {
+            sections.append("Why it matters\n\(significance)")
+        }
+        let qualifications = summary.qualifications
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        if !qualifications.isEmpty {
+            sections.append("Qualifications\n" + qualifications.map { "• \($0)" }.joined(separator: "\n"))
+        }
+        return sections.filter { !$0.isEmpty }.joined(separator: "\n\n")
+    }
+
+    private static func performSummarize(
+        document: ReaderDocument?,
+        plainText: String,
+        continuation: AsyncThrowingStream<SummaryEvent, Error>.Continuation
+    ) async throws {
+        try await performQuickSummarize(
+            document: document,
+            plainText: plainText,
+            continuation: continuation,
+            emitStarted: true
+        )
+    }
+
+    private static func performQuickSummarize(
+        document: ReaderDocument?,
+        plainText: String,
+        continuation: AsyncThrowingStream<SummaryEvent, Error>.Continuation,
+        emitStarted: Bool
+    ) async throws {
+        guard !plainText.isEmpty else {
+            continuation.yield(.finished(""))
+            return
+        }
+
+        if emitStarted {
+            continuation.yield(.started)
+        }
+
+        let budget = try await computeInputBudget(instructions: Instructions.sectionSummary)
+        let singleShotPrompt = "Summarize this article:\n\n\(plainText)"
 
         // Single-session fast path — attempt, fall back to chunked on any
         // real-world context overflow. The estimator can still be wrong
         // even with the conservative char-per-unit ratio, so this catch
         // is load-bearing for edge-case articles.
-        if approxInputTokens <= budget {
+        if try await promptFits(singleShotPrompt, instructions: Instructions.singleShotSummary) {
             do {
                 try Task.checkCancellation()
                 try await streamSingleSessionSummary(
@@ -269,8 +572,8 @@ extension ArticleAIClient {
                     continuation: continuation
                 )
                 return
-            } catch let error as LanguageModelSession.GenerationError {
-                if case .exceededContextWindowSize = error {
+            } catch let error as LanguageModelError {
+                if case .contextSizeExceeded = error {
                     // Reset any partial snapshot that streamed before the
                     // failure and announce the retry, then fall through.
                     continuation.yield(.partial(""))
@@ -346,8 +649,8 @@ extension ArticleAIClient {
                 continuation.yield(.partial(lastContent))
             }
             continuation.yield(.finished(lastContent))
-        } catch let error as LanguageModelSession.GenerationError {
-            if case .exceededContextWindowSize = error {
+        } catch let error as LanguageModelError {
+            if case .contextSizeExceeded = error {
                 // Combined section summaries are themselves too big for a
                 // single session. Emit the concatenation as the final
                 // result so the user still gets something useful.
@@ -394,12 +697,13 @@ extension ArticleAIClient {
 
         continuation.yield(.started)
 
-        let budget = computeInputBudget()
-        let articleTokens = ArticleChunker.approxTokenCount(plainText)
-        let questionTokens = ArticleChunker.approxTokenCount(trimmedQuestion)
+        let stuffedPrompt = stuffedAnswerPrompt(
+            plainText: plainText,
+            question: trimmedQuestion
+        )
 
         // Stuff-context path — feed the whole article into instructions.
-        if articleTokens + questionTokens <= budget {
+        if try await promptFits(stuffedPrompt, instructions: Instructions.stuffedAnswer) {
             do {
                 try Task.checkCancellation()
                 try await streamStuffedAnswer(
@@ -408,9 +712,9 @@ extension ArticleAIClient {
                     continuation: continuation
                 )
                 return
-            } catch let error as LanguageModelSession.GenerationError {
+            } catch let error as LanguageModelError {
                 // Budget estimator was off; fall through to retrieval.
-                if case .exceededContextWindowSize = error {
+                if case .contextSizeExceeded = error {
                     // fall through
                 } else {
                     throw error
@@ -428,8 +732,15 @@ extension ArticleAIClient {
         // the real context window.
         continuation.yield(.retrievingContext)
 
-        let retrievalChunkBudget = 300
         let retrievalTopK = 8
+        let retrievalInputBudget = try await computeInputBudget(
+            instructions: Instructions.retrievalAnswer
+        )
+        let questionTokens = try await permissiveModel.tokenCount(for: Prompt(trimmedQuestion))
+        let retrievalChunkBudget = max(
+            128,
+            (retrievalInputBudget - questionTokens - 128) / retrievalTopK
+        )
         let retrievalChunks = ArticleChunker.chunks(
             from: document,
             plainText: plainText,
@@ -466,15 +777,7 @@ extension ArticleAIClient {
             model: permissiveModel,
             instructions: Instructions.stuffedAnswer
         )
-        let prompt = """
-            Here is the full article:
-
-            \(plainText)
-
-            ---
-
-            Based on the article above, answer this question: \(question)
-            """
+        let prompt = stuffedAnswerPrompt(plainText: plainText, question: question)
 
         var lastContent = ""
         for try await snapshot in session.streamResponse(to: prompt) {
@@ -483,6 +786,21 @@ extension ArticleAIClient {
             continuation.yield(.partial(lastContent))
         }
         continuation.yield(.finished(lastContent))
+    }
+
+    private static func stuffedAnswerPrompt(
+        plainText: String,
+        question: String
+    ) -> String {
+        """
+            Here is the full article:
+
+            \(plainText)
+
+            ---
+
+            Based on the article above, answer this question: \(question)
+            """
     }
 
     private static func streamRetrievalAnswer(

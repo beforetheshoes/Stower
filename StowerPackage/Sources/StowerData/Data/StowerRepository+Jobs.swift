@@ -1,17 +1,30 @@
+import Dependencies
 import Foundation
 import SQLiteData
 
 extension StowerRepository {
     static func _enqueueIngestionJob(database: any DatabaseWriter) -> @Sendable (IngestionJob.Kind, String) async throws -> Void {
         { (kind: IngestionJob.Kind, payload: String) async throws in
+            @Dependency(\.date.now)
+            var now
+            @Dependency(\.uuid)
+            var uuid
             try await database.write { db in
+                if kind.isHydrationJob {
+                    let existing = try IngestionJobLocalTable
+                        .where { $0.kind.eq(kind.rawValue) }
+                        .where { $0.payload.eq(payload) }
+                        .where { $0.processedAt.is(nil) }
+                        .fetchCount(db)
+                    guard existing == 0 else { return }
+                }
                 try IngestionJobLocalTable
                     .insert {
                         IngestionJobLocalTable.Draft(
-                            id: UUID(),
+                            id: uuid(),
                             kind: kind.rawValue,
                             payload: payload,
-                            createdAt: .now,
+                            createdAt: now,
                             processedAt: nil
                         )
                     }
@@ -20,32 +33,216 @@ extension StowerRepository {
         }
     }
 
-    static func _fetchPendingIngestionJobs(database: any DatabaseWriter) -> @Sendable () async throws -> [IngestionJob] {
-        { () async throws -> [IngestionJob] in
-            try await database.read { db -> [IngestionJob] in
-                let rows: [IngestionJobLocalTable] = try IngestionJobLocalTable
-                    .where { $0.processedAt.is(nil) }
+    static func _claimNextIngestionJob(
+        database: any DatabaseWriter
+    ) -> @Sendable (Date) async throws -> IngestionJob? {
+        { now in
+            try await database.write { db in
+                let staleBefore = now.addingTimeInterval(-600)
+                try IngestionJobLocalTable
+                    .where { $0.status.eq(IngestionJob.Status.processing.rawValue) }
+                    .where { $0.claimedAt < #bind(staleBefore as Date?) }
+                    .where { $0.attemptCount < 3 }
+                    .update {
+                        $0.status = IngestionJob.Status.queued.rawValue
+                        $0.claimedAt = nil as Date?
+                    }
+                    .execute(db)
+
+                try IngestionJobLocalTable
+                    .where { $0.status.eq(IngestionJob.Status.processing.rawValue) }
+                    .where { $0.claimedAt < #bind(staleBefore as Date?) }
+                    .where { $0.attemptCount >= 3 }
+                    .update {
+                        $0.status = IngestionJob.Status.failed.rawValue
+                        $0.claimedAt = nil as Date?
+                        $0.lastError = #bind("Import interrupted before it could finish." as String?)
+                    }
+                    .execute(db)
+
+                let nextJob = IngestionJobLocalTable
+                    .where { $0.status.eq(IngestionJob.Status.queued.rawValue) }
+                    .where { $0.attemptCount < 3 }
                     .order { $0.createdAt }
-                    .fetchAll(db)
-                return rows.compactMap { row -> IngestionJob? in
-                    guard let kind = IngestionJob.Kind(rawValue: row.kind) else { return nil }
-                    return IngestionJob(kind: kind, payload: row.payload, id: row.id, createdAt: row.createdAt)
-                }
+                guard let row = try nextJob.fetchOne(db) else { return nil }
+
+                try IngestionJobLocalTable
+                    .find(row.id)
+                    .update {
+                        $0.status = IngestionJob.Status.processing.rawValue
+                        $0.claimedAt = #bind(now as Date?)
+                        $0.attemptCount += 1
+                        $0.lastError = nil as String?
+                    }
+                    .execute(db)
+
+                var claimed = row
+                claimed.status = IngestionJob.Status.processing.rawValue
+                claimed.claimedAt = now
+                claimed.attemptCount += 1
+                claimed.lastError = nil
+                return ingestionJob(from: claimed)
             }
         }
     }
 
-    static func _markIngestionJobProcessed(database: any DatabaseWriter) -> @Sendable (UUID) async throws -> Void {
-        { (id: UUID) async throws in
+    static func _claimNextIngestionJobOfKind(
+        database: any DatabaseWriter
+    ) -> @Sendable (IngestionJob.Kind, Date) async throws -> IngestionJob? {
+        { kind, now in
+            try await database.write { db in
+                let staleBefore = now.addingTimeInterval(-600)
+                try IngestionJobLocalTable
+                    .where { $0.kind.eq(kind.rawValue) }
+                    .where { $0.status.eq(IngestionJob.Status.processing.rawValue) }
+                    .where { $0.claimedAt < #bind(staleBefore as Date?) }
+                    .where { $0.attemptCount < 3 }
+                    .update {
+                        $0.status = IngestionJob.Status.queued.rawValue
+                        $0.claimedAt = nil as Date?
+                    }
+                    .execute(db)
+
+                try IngestionJobLocalTable
+                    .where { $0.kind.eq(kind.rawValue) }
+                    .where { $0.status.eq(IngestionJob.Status.processing.rawValue) }
+                    .where { $0.claimedAt < #bind(staleBefore as Date?) }
+                    .where { $0.attemptCount >= 3 }
+                    .update {
+                        $0.status = IngestionJob.Status.failed.rawValue
+                        $0.claimedAt = nil as Date?
+                        $0.lastError = #bind("Import interrupted before it could finish." as String?)
+                    }
+                    .execute(db)
+
+                let nextJob = IngestionJobLocalTable
+                    .where { $0.kind.eq(kind.rawValue) }
+                    .where { $0.status.eq(IngestionJob.Status.queued.rawValue) }
+                    .where { $0.attemptCount < 3 }
+                    .order { $0.createdAt }
+                guard let row = try nextJob.fetchOne(db) else { return nil }
+
+                try IngestionJobLocalTable
+                    .find(row.id)
+                    .update {
+                        $0.status = IngestionJob.Status.processing.rawValue
+                        $0.claimedAt = #bind(now as Date?)
+                        $0.attemptCount += 1
+                        $0.lastError = nil as String?
+                    }
+                    .execute(db)
+
+                var claimed = row
+                claimed.status = IngestionJob.Status.processing.rawValue
+                claimed.claimedAt = now
+                claimed.attemptCount += 1
+                claimed.lastError = nil
+                return ingestionJob(from: claimed)
+            }
+        }
+    }
+
+    static func _completeIngestionJob(
+        database: any DatabaseWriter
+    ) -> @Sendable (UUID, Date) async throws -> Void {
+        { id, now in
             try await database.write { db in
                 try IngestionJobLocalTable
                     .find(id)
                     .update {
-                        $0.processedAt = #bind(Date.now as Date?)
+                        $0.status = IngestionJob.Status.completed.rawValue
+                        $0.claimedAt = nil as Date?
+                        $0.processedAt = #bind(now as Date?)
+                        $0.lastError = nil as String?
                     }
                     .execute(db)
             }
         }
+    }
+
+    static func _failIngestionJob(
+        database: any DatabaseWriter
+    ) -> @Sendable (UUID, String, Date) async throws -> Void {
+        { id, message, _ in
+            try await database.write { db in
+                guard let row = try IngestionJobLocalTable.find(id).fetchOne(db) else { return }
+                try IngestionJobLocalTable
+                    .find(id)
+                    .update {
+                        $0.status = row.attemptCount >= 3
+                            ? IngestionJob.Status.failed.rawValue
+                            : IngestionJob.Status.queued.rawValue
+                        $0.claimedAt = nil as Date?
+                        $0.lastError = #bind(message as String?)
+                    }
+                    .execute(db)
+            }
+        }
+    }
+
+    static func _fetchFailedIngestionJobs(
+        database: any DatabaseWriter
+    ) -> @Sendable () async throws -> [IngestionJob] {
+        {
+            try await database.read { db in
+                try IngestionJobLocalTable
+                    .where { $0.status.eq(IngestionJob.Status.failed.rawValue) }
+                    .order { $0.createdAt }
+                    .fetchAll(db)
+                    .compactMap(ingestionJob(from:))
+            }
+        }
+    }
+
+    static func _retryFailedIngestionJobs(
+        database: any DatabaseWriter
+    ) -> @Sendable () async throws -> Void {
+        {
+            try await database.write { db in
+                try IngestionJobLocalTable
+                    .where { $0.status.eq(IngestionJob.Status.failed.rawValue) }
+                    .update {
+                        $0.status = IngestionJob.Status.queued.rawValue
+                        $0.claimedAt = nil as Date?
+                        $0.attemptCount = 0
+                        $0.lastError = nil as String?
+                    }
+                    .execute(db)
+            }
+        }
+    }
+
+    static func _dismissFailedIngestionJobs(
+        database: any DatabaseWriter
+    ) -> @Sendable (Date) async throws -> Void {
+        { now in
+            try await database.write { db in
+                try IngestionJobLocalTable
+                    .where { $0.status.eq(IngestionJob.Status.failed.rawValue) }
+                    .update {
+                        $0.status = IngestionJob.Status.dismissed.rawValue
+                        $0.processedAt = #bind(now as Date?)
+                    }
+                    .execute(db)
+            }
+        }
+    }
+
+    private static func ingestionJob(from row: IngestionJobLocalTable) -> IngestionJob? {
+        guard
+            let kind = IngestionJob.Kind(rawValue: row.kind),
+            let status = IngestionJob.Status(rawValue: row.status)
+        else { return nil }
+        return IngestionJob(
+            kind: kind,
+            payload: row.payload,
+            id: row.id,
+            createdAt: row.createdAt,
+            status: status,
+            claimedAt: row.claimedAt,
+            attemptCount: row.attemptCount,
+            lastError: row.lastError
+        )
     }
 
     /// Hydrates the local content table for PDF items on devices that received
@@ -58,7 +255,8 @@ extension StowerRepository {
     /// and copies the extracted `documentJSON`/`plainText` across.
     static func _hydratePDFItemsFromSyncedContent(database: any DatabaseWriter) -> @Sendable () async throws -> Int {
         { () async throws -> Int in
-            let now = Date.now
+            @Dependency(\.date.now)
+            var now
             return try await database.write { db -> Int in
                 let pdfRows: [SavedPDFContentSyncTable] = try SavedPDFContentSyncTable.fetchAll(db)
                 var hydrated = 0
@@ -121,7 +319,8 @@ extension StowerRepository {
     /// Only writes for text items (sourceURL is nil, renderFormat is not pdf).
     static func _backfillTextSyncTable(database: any DatabaseWriter) -> @Sendable () async throws -> Int {
         { () async throws -> Int in
-            let now = Date.now
+            @Dependency(\.date.now)
+            var now
             return try await database.write { db -> Int in
                 // Find text items that have local content but no sync row.
                 let locals = try SavedItemContentLocalTable
@@ -189,7 +388,10 @@ extension StowerRepository {
     /// client to rebuild the document blocks.
     static func _hydrateTextItemsFromSyncedContent(database: any DatabaseWriter) -> @Sendable () async throws -> Int {
         { () async throws -> Int in
-            let now = Date.now
+            @Dependency(\.date.now)
+            var now
+            @Dependency(\.uuid)
+            var uuid
             return try await database.write { db -> Int in
                 let textRows: [SavedTextContentSyncTable] = try SavedTextContentSyncTable.fetchAll(db)
                 var enqueued = 0
@@ -255,10 +457,16 @@ extension StowerRepository {
                         bytes: JSONEncoder().encode(payload),
                         encoding: .utf8
                     ) ?? ""
+                    let existingJob = try IngestionJobLocalTable
+                        .where { $0.kind.eq(IngestionJob.Kind.hydrateText.rawValue) }
+                        .where { $0.payload.eq(payloadJSON) }
+                        .where { $0.processedAt.is(nil) }
+                        .fetchCount(db)
+                    guard existingJob == 0 else { continue }
                     try IngestionJobLocalTable
                         .insert {
                             IngestionJobLocalTable.Draft(
-                                id: UUID(),
+                                id: uuid(),
                                 kind: IngestionJob.Kind.hydrateText.rawValue,
                                 payload: payloadJSON,
                                 createdAt: now,
@@ -275,7 +483,10 @@ extension StowerRepository {
 
     static func _enqueueHydrationJobsForMissingContent(database: any DatabaseWriter) -> @Sendable () async throws -> Int {
         { () async throws -> Int in
-            let now = Date.now
+            @Dependency(\.date.now)
+            var now
+            @Dependency(\.uuid)
+            var uuid
             return try await database.write { db -> Int in
                 let synced: [SavedItemSyncTable] = try SavedItemSyncTable
                     .where { !$0.isArchived }
@@ -313,7 +524,7 @@ extension StowerRepository {
                     try IngestionJobLocalTable
                         .insert {
                             IngestionJobLocalTable.Draft(
-                                id: UUID(),
+                                id: uuid(),
                                 kind: IngestionJob.Kind.hydrate.rawValue,
                                 payload: payload,
                                 createdAt: now,
@@ -325,6 +536,17 @@ extension StowerRepository {
                 }
                 return enqueued
             }
+        }
+    }
+}
+
+private extension IngestionJob.Kind {
+    var isHydrationJob: Bool {
+        switch self {
+        case .hydrate, .hydrateText, .hydrateWebsite:
+            true
+        case .url, .pdf, .website, .text, .markdown:
+            false
         }
     }
 }

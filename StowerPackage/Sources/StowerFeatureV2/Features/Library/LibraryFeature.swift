@@ -15,7 +15,9 @@ public struct LibraryFeature {
         public var saveState: ProcessingState = .queued
         public var errorMessage: String?
         /// Which list is currently being viewed. Drives `fetchLibrary(_:)`.
-        public var filter: LibraryFilter = .all
+        public var filter: LibraryFilter = .unread
+        public var displayStyle: LibraryDisplayStyle = .compact
+        public var sortOrder: LibrarySortOrder = .newestFirst
         /// All tags known to the repository — drives the "Tags" submenu in the
         /// library row context menu. Refreshed lazily via observeLibraryChanges.
         public var availableTags = [Tag]()
@@ -34,10 +36,7 @@ public struct LibraryFeature {
         /// library window, which is fine at typical library sizes; a
         /// future optimization could push this into a SQLite FTS5 index.
         public var filteredItems: [SavedItem] {
-            guard !query.isEmpty else {
-                return items
-            }
-            return items.filter { item in
+            let matches = query.isEmpty ? items : items.filter { item in
                 if item.title.localizedStandardContains(query) {
                     return true
                 }
@@ -57,6 +56,14 @@ public struct LibraryFeature {
                     return true
                 }
                 return false
+            }
+            switch sortOrder {
+            case .newestFirst:
+                // Repository reads and optimistic inserts already arrive newest-first.
+                // Keeping that order also preserves stable ties and selection indexes.
+                return matches
+            case .oldestFirst:
+                return Array(matches.reversed())
             }
         }
 
@@ -101,6 +108,8 @@ public struct LibraryFeature {
         case failed(String)
         case queryChanged(String)
         case filterChanged(LibraryFilter)
+        case displayStyleChanged(LibraryDisplayStyle)
+        case sortOrderChanged(LibrarySortOrder)
         case deleteItem(UUID)
         case deleteFinished
         case deleteFailed(String)
@@ -113,6 +122,8 @@ public struct LibraryFeature {
         case reprocessFinished(SavedItem)
         case sourceURLChanged(String)
         case saveURLTapped
+        case cancelURLSaveTapped
+        case articleSaveFinished(ArticleSaveResult)
         case saveURLFinished(SavedItem)
         case saveURLFailed(String)
         case importPDFSelected(URL)
@@ -144,12 +155,16 @@ public struct LibraryFeature {
 
     private enum CancelID: Hashable {
         case observeChanges
+        case articleSave
+        case articleRefresh
     }
 
     @Dependency(\.stowerRepository)
     var repository
     @Dependency(\.urlIngestionClient)
     var ingestionClient
+    @Dependency(\.articleSaveClient)
+    var articleSaveClient
     @Dependency(\.pdfIngestionClient)
     var pdfIngestionClient
     @Dependency(\.textIngestionClient)
@@ -331,6 +346,14 @@ public struct LibraryFeature {
                 state.query = ""
                 return .send(.reload)
 
+            case .displayStyleChanged(let displayStyle):
+                state.displayStyle = displayStyle
+                return .none
+
+            case .sortOrderChanged(let sortOrder):
+                state.sortOrder = sortOrder
+                return .none
+
             case .sourceURLChanged(let value):
                 state.sourceURL = value
                 if state.saveState == .failed {
@@ -428,35 +451,42 @@ public struct LibraryFeature {
                 state.errorMessage = nil
                 state.isSaving = true
                 state.saveState = .extracting
-                let repository = self.repository
-                let ingestionClient = self.ingestionClient
+                let articleSaveClient = self.articleSaveClient
                 return .run { send in
                     do {
-                        let result = try await ingestionClient.ingest(url)
-                        let item = try await repository.createItemFromIngestion(result)
-
-                        // Archive all external assets for offline WebView rendering.
-                        if result.renderFormat == .webView,
-                           !result.sourceHTML.isEmpty,
-                           let source = result.sourceURL,
-                           let baseURL = URL(string: source) {
-                            await AssetArchiver.archiveAssets(
-                                html: result.sourceHTML,
-                                baseURL: baseURL,
-                                itemID: item.id
-                            )
-                        }
-
-                        await send(.saveURLFinished(item))
-                        await send(.openItem(item))
+                        let saved = try await articleSaveClient.save(url)
+                        await send(.articleSaveFinished(saved))
+                        await send(.openItem(saved.item))
+                    } catch is CancellationError {
+                        return
                     } catch {
                         await send(.saveURLFailed(error.localizedDescription))
                     }
                 }
+                .cancellable(id: CancelID.articleSave, cancelInFlight: true)
+
+            case .cancelURLSaveTapped:
+                state.isSaving = false
+                state.saveState = .queued
+                state.errorMessage = nil
+                return .cancel(id: CancelID.articleSave)
+
+            case .articleSaveFinished(let result):
+                state.isSaving = false
+                state.saveState = result.state
+                state.errorMessage = result.warnings.isEmpty
+                    ? nil
+                    : result.warnings.joined(separator: "\n")
+                state.sourceURL = ""
+                state.textImportDraft = nil
+                if shouldShowInFilter(result.item, filter: state.filter) {
+                    state.items.insert(result.item, at: 0)
+                }
+                return .none
 
             case .saveURLFinished(let item):
                 state.isSaving = false
-                state.saveState = .ready
+                state.saveState = item.processingState
                 state.sourceURL = ""
                 state.textImportDraft = nil
                 // Only pre-insert if the current filter would include the new
@@ -624,7 +654,7 @@ public struct LibraryFeature {
                     state.items[idx].processingState = .extracting
                 }
                 let repository = self.repository
-                let ingestionClient = self.ingestionClient
+                let articleSaveClient = self.articleSaveClient
                 return .run { send in
                     do {
                         guard let item = try await repository.loadItem(id),
@@ -635,30 +665,15 @@ public struct LibraryFeature {
                             return
                         }
 
-                        let result = try await ingestionClient.ingest(url)
-                        guard let updatedItem = try await repository.updateItemFromIngestion(id, result) else {
-                            await send(.failed("This item no longer exists."))
-                            return
-                        }
-
-                        // Re-archive assets for offline WebView rendering.
-                        if result.renderFormat == .webView,
-                           !result.sourceHTML.isEmpty,
-                           let source = result.sourceURL,
-                           let baseURL = URL(string: source) {
-                            AssetArchiver.deleteArchive(for: id)
-                            await AssetArchiver.archiveAssets(
-                                html: result.sourceHTML,
-                                baseURL: baseURL,
-                                itemID: id
-                            )
-                        }
-
-                        await send(.reprocessFinished(updatedItem))
+                        let refreshed = try await articleSaveClient.refresh(id, url)
+                        await send(.reprocessFinished(refreshed.item))
+                    } catch is CancellationError {
+                        return
                     } catch {
                         await send(.failed(error.localizedDescription))
                     }
                 }
+                .cancellable(id: CancelID.articleRefresh, cancelInFlight: true)
 
             case .deleteFailed(let error):
                 state.errorMessage = error
@@ -689,7 +704,7 @@ private func runTextImport(
     _ request: TextImportRequest,
     repository: StowerRepository,
     textIngestionClient: TextIngestionClient
-) -> Effect<LibraryFeature.Action> {
+) -> EffectOf<LibraryFeature> {
     .run { send in
         do {
             let result = try await textIngestionClient.ingest(

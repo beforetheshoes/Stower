@@ -8,6 +8,11 @@ import Testing
 @Suite
 struct SidebarFeatureTests {
     @Test
+    func defaultsToInbox() {
+        #expect(SidebarFeature.State().selection == .unread)
+    }
+
+    @Test
     func reload_loadsCountsAndTags() async {
         let counts = LibraryListCounts(
             unread: 2,

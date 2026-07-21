@@ -184,7 +184,7 @@ public struct ReaderSpeechFeature {
                 state.rate = max(0.2, min(value, 2.0))
                 let preferencesClient = self.preferencesClient
                 let snapshot = ReaderSpeechPreferences(voiceID: state.selectedVoiceID, rate: state.rate)
-                let saveEffect: Effect<Action> = .run { _ in
+                let saveEffect: EffectOf<Self> = .run { _ in
                     preferencesClient.save(snapshot)
                 }
 
@@ -215,7 +215,7 @@ public struct ReaderSpeechFeature {
                 state.selectedVoiceID = id
                 let preferencesClient = self.preferencesClient
                 let snapshot = ReaderSpeechPreferences(voiceID: state.selectedVoiceID, rate: state.rate)
-                let saveEffect: Effect<Action> = .run { _ in
+                let saveEffect: EffectOf<Self> = .run { _ in
                     preferencesClient.save(snapshot)
                 }
 

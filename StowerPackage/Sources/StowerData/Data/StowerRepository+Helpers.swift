@@ -30,6 +30,7 @@ extension StowerRepository {
             canonicalURL: sync.canonicalURL,
             renderFormat: RenderFormat(rawValue: local?.renderFormat ?? "structuredV1") ?? .structuredV1,
             documentVersion: local?.documentVersion ?? 1,
+            captureVersion: local?.captureVersion ?? 0,
             excerpt: sync.excerpt,
             heroImageURL: sync.heroImageURL,
             author: sync.author,
@@ -59,6 +60,7 @@ extension StowerRepository {
             canonicalURL: draft.canonicalURL,
             renderFormat: RenderFormat(rawValue: local?.renderFormat ?? "structuredV1") ?? .structuredV1,
             documentVersion: local?.documentVersion ?? 1,
+            captureVersion: local?.captureVersion ?? 0,
             excerpt: draft.excerpt,
             heroImageURL: draft.heroImageURL,
             author: draft.author,
@@ -92,6 +94,8 @@ extension StowerRepository {
         switch local?.localStatus {
         case "available":
             return .ready
+        case "partial":
+            return .partial
         case "downloading":
             return .extracting
         case "failed":

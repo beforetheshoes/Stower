@@ -30,9 +30,72 @@ public struct ContentView: View {
     }
 }
 
+#if os(macOS)
+public struct ReaderCommands: Commands {
+    let store: StoreOf<AppFeature>
+
+    public init(store: StoreOf<AppFeature>) {
+        self.store = store
+    }
+
+    public var body: some Commands {
+        CommandMenu("Reader") {
+            Button(store.isReaderFocused ? "Exit Reader Focus" : "Focus Reader") {
+                store.send(.readerFocusButtonTapped)
+            }
+            .keyboardShortcut("f", modifiers: [.command, .shift])
+            .disabled(!store.canFocusReader)
+
+            Divider()
+
+            Button("Previous Article") {
+                store.send(.previousArticleButtonTapped)
+            }
+            .keyboardShortcut("[", modifiers: .command)
+            .disabled(!store.canNavigateToPreviousArticle)
+
+            Button("Next Article") {
+                store.send(.nextArticleButtonTapped)
+            }
+            .keyboardShortcut("]", modifiers: .command)
+            .disabled(!store.canNavigateToNextArticle)
+
+            Divider()
+
+            Button("Toggle Read") {
+                store.send(.toggleSelectedItemRead)
+            }
+            .keyboardShortcut("u", modifiers: [.command, .shift])
+            .disabled(!store.canFocusReader)
+
+            Button("Toggle Star") {
+                store.send(.toggleSelectedItemStarred)
+            }
+            .keyboardShortcut("s", modifiers: [.command, .shift])
+            .disabled(!store.canFocusReader)
+        }
+    }
+}
+#endif
+
+#if os(macOS)
+private enum MacReaderPlacement: Equatable {
+    case split
+    case detached
+    case focused
+}
+#endif
+
 public struct AppView: View {
     @Bindable var store: StoreOf<AppFeature>
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
+    @State private var previousColumnVisibility: NavigationSplitViewVisibility = .all
+    @State private var readerSession = ReaderWebSession()
+    #if os(macOS)
+    @State private var macReaderPlacement = MacReaderPlacement.split
+    @State private var pendingMacReaderPlacement: MacReaderPlacement?
+    @State private var macReaderTransitionTask: Task<Void, Never>?
+    #endif
     #if os(iOS)
     @Environment(\.horizontalSizeClass)
     private var horizontalSizeClass
@@ -54,6 +117,21 @@ public struct AppView: View {
             .tint(palette.primary)
             .preferredColorScheme(palette.colorScheme)
             .environment(\.flexokiPalette, palette)
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                VStack(spacing: 0) {
+                    if let completedItem = store.recentlyCompletedItem {
+                        completedItemNotice(completedItem, palette: palette)
+                    }
+                    if store.failedImportCount > 0 {
+                        importFailureNotice(count: store.failedImportCount, palette: palette)
+                    }
+                }
+            }
+            .onChange(of: store.reader?.itemID) { _, itemID in
+                if itemID == nil {
+                    readerSession.reset()
+                }
+            }
             .alert($store.scope(state: \.resetAlert, action: \.resetAlert))
             .sheet(
                 isPresented: Binding(
@@ -62,7 +140,7 @@ public struct AppView: View {
                 )
             ) {
                 NavigationStack {
-                    SettingsScreen(store: store.scope(state: \.settings, action: \.settings))
+                    SettingsScreen(store: store.scope(\.settings, action: \.settings))
                         .toolbar {
                             ToolbarItem(placement: .cancellationAction) {
                                 Button("Done") { store.send(.closeSettings) }
@@ -75,8 +153,89 @@ public struct AppView: View {
             }
     }
 
+    private func importFailureNotice(
+        count: Int,
+        palette: FlexokiPalette
+    ) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "exclamationmark.arrow.trianglehead.2.clockwise.rotate.90")
+                .foregroundStyle(palette.warning)
+                .accessibilityHidden(true)
+            Text(count == 1 ? "1 import needs attention." : "\(count) imports need attention.")
+                .font(.callout.weight(.medium))
+            Spacer(minLength: 8)
+            Button("Dismiss") {
+                store.send(.dismissFailedImportsTapped)
+            }
+            Button("Retry") {
+                store.send(.retryFailedImportsTapped)
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(.regularMaterial)
+        .overlay(alignment: .top) { Divider() }
+    }
+
+    private func completedItemNotice(
+        _ item: SavedItem,
+        palette: FlexokiPalette
+    ) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(palette.success)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Done")
+                    .font(.callout)
+                    .bold()
+                Text(String(localized: "Still saved in Library"))
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            .lineLimit(1)
+            Spacer(minLength: 8)
+            Button("Undo") {
+                store.send(.undoCompletedItemTapped)
+            }
+            .buttonStyle(.bordered)
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 10)
+        .background(.regularMaterial)
+        .overlay(alignment: .top) { Divider() }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Done. \(item.title) is still saved in Library.")
+        .accessibilityAction(named: "Undo") {
+            store.send(.undoCompletedItemTapped)
+        }
+    }
+
     @ViewBuilder
     private func navigationContainer(palette: FlexokiPalette) -> some View {
+        #if os(macOS)
+        Group {
+            switch macReaderPlacement {
+            case .focused:
+                if let readerStore = store.scope(\.reader, action: \.reader.presented) {
+                    readerSurface(
+                        readerStore,
+                        palette: palette,
+                        isFocused: true
+                    )
+                    .onDisappear(perform: macReaderSurfaceDidDisappear)
+                } else {
+                    splitNavigationView(palette: palette)
+                }
+            case .split, .detached:
+                splitNavigationView(palette: palette)
+            }
+        }
+        .onChange(of: store.isReaderFocused) { _, isFocused in
+            beginMacReaderTransition(isFocused: isFocused)
+        }
+        #else
         #if os(iOS)
         // On iPhone (compact), NavigationSplitView's detail column does not
         // reliably push when an `if let` swap toggles its content — taps on
@@ -87,14 +246,13 @@ public struct AppView: View {
         if horizontalSizeClass == .compact {
             NavigationStack {
                 LibraryScreen(
-                    store: store.scope(state: \.library, action: \.library)
-                ) {
-                    isFilterSheetPresented = true
-                }
+                    store: store.scope(\.library, action: \.library),
+                    onOpenSettings: nil
+                ) { isFilterSheetPresented = true }
                     .scrollContentBackground(.hidden)
                     .background(palette.bg)
                     .navigationDestination(
-                        item: $store.scope(state: \.reader, action: \.reader)
+                        item: $store.scope(\.$reader, action: \.reader)
                     ) { readerStore in
                         ReaderScreen(store: readerStore)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -110,7 +268,42 @@ public struct AppView: View {
         #else
         splitNavigationView(palette: palette)
         #endif
+        #endif
     }
+
+    #if os(macOS)
+    private func beginMacReaderTransition(isFocused: Bool) {
+        let target: MacReaderPlacement = isFocused ? .focused : .split
+        guard macReaderPlacement != target else { return }
+
+        macReaderTransitionTask?.cancel()
+        guard store.reader != nil else {
+            pendingMacReaderPlacement = nil
+            macReaderPlacement = .split
+            return
+        }
+
+        pendingMacReaderPlacement = target
+        macReaderPlacement = .detached
+    }
+
+    private func macReaderSurfaceDidDisappear() {
+        guard macReaderPlacement == .detached else { return }
+        macReaderTransitionTask?.cancel()
+        macReaderTransitionTask = Task { @MainActor in
+            // Wait until SwiftUI has removed the old native WebView before
+            // binding this session's WebPage to the destination WebView.
+            await Task.yield()
+            guard
+                !Task.isCancelled,
+                macReaderPlacement == .detached,
+                let pendingMacReaderPlacement
+            else { return }
+            self.pendingMacReaderPlacement = nil
+            macReaderPlacement = pendingMacReaderPlacement
+        }
+    }
+    #endif
 
     #if os(iOS)
     /// Modal sidebar presented from the iPhone library toolbar. Reuses the
@@ -120,7 +313,7 @@ public struct AppView: View {
     private func filterSheet(palette: FlexokiPalette) -> some View {
         NavigationStack {
             SidebarScreen(
-                store: store.scope(state: \.sidebar, action: \.sidebar),
+                store: store.scope(\.sidebar, action: \.sidebar),
                 onOpenSettings: {
                     isFilterSheetPresented = false
                     store.send(.openSettings)
@@ -149,7 +342,7 @@ public struct AppView: View {
     private func splitNavigationView(palette: FlexokiPalette) -> some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
             SidebarScreen(
-                store: store.scope(state: \.sidebar, action: \.sidebar)
+                store: store.scope(\.sidebar, action: \.sidebar)
             ) {
                 store.send(.openSettings)
             }
@@ -157,7 +350,7 @@ public struct AppView: View {
             .background(palette.bg2)
             .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 320)
         } content: {
-            LibraryScreen(store: store.scope(state: \.library, action: \.library))
+            LibraryScreen(store: store.scope(\.library, action: \.library))
                 .scrollContentBackground(.hidden)
                 .background(palette.bg2)
                 .navigationSplitViewColumnWidth(min: 320, ideal: 380, max: 500)
@@ -168,9 +361,26 @@ public struct AppView: View {
             // `windowBackgroundColor` (white in light mode). We have to
             // explicitly expand the content to fill the column *before*
             // applying the background so the fill paints the entire pane.
-            if let readerStore = store.scope(state: \.reader, action: \.reader.presented) {
+            #if os(macOS)
+            if macReaderPlacement == .split,
+               let readerStore = store.scope(\.reader, action: \.reader.presented) {
+                readerSurface(
+                    readerStore,
+                    palette: palette,
+                    isFocused: false
+                )
+                .onDisappear(perform: macReaderSurfaceDidDisappear)
+            } else {
+                macOSReaderPlaceholder(palette: palette)
+            }
+            #else
+            if let readerStore = store.scope(\.reader, action: \.reader.presented) {
                 NavigationStack {
-                    ReaderScreen(store: readerStore)
+                    ReaderScreen(
+                        store: readerStore,
+                        session: readerSession,
+                        isReaderFocused: store.isReaderFocused
+                    ) { store.send(.readerFocusButtonTapped) }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(palette.bg)
@@ -183,6 +393,52 @@ public struct AppView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(palette.bg)
             }
+            #endif
         }
+        #if os(iOS)
+        .onChange(of: store.isReaderFocused) { _, isFocused in
+            if isFocused {
+                previousColumnVisibility = columnVisibility
+                columnVisibility = .detailOnly
+            } else {
+                columnVisibility = previousColumnVisibility
+            }
+        }
+        #endif
     }
+
+    #if os(macOS)
+    @ViewBuilder
+    private func macOSReaderPlaceholder(palette: FlexokiPalette) -> some View {
+        Group {
+            if store.reader == nil {
+                ContentUnavailableView(
+                    "Select an Item",
+                    systemImage: "doc.text",
+                    description: Text("Choose an article from Library to read.")
+                )
+            } else {
+                Color.clear
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(palette.bg)
+    }
+
+    private func readerSurface(
+        _ readerStore: StoreOf<ReaderFeature>,
+        palette: FlexokiPalette,
+        isFocused: Bool
+    ) -> some View {
+        NavigationStack {
+            ReaderScreen(
+                store: readerStore,
+                session: readerSession,
+                isReaderFocused: isFocused
+            ) { store.send(.readerFocusButtonTapped) }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(palette.bg)
+    }
+    #endif
 }

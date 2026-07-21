@@ -37,12 +37,26 @@ extension StowerRepository {
         }
     }
 
-    static func _loadSummary(database: any DatabaseWriter) -> @Sendable (UUID) async throws -> CachedSummary? {
-        { (id: UUID) async throws -> CachedSummary? in
+    static func _loadSummary(
+        database: any DatabaseWriter
+    ) -> @Sendable (UUID, String, Int) async throws -> CachedSummary? {
+        { (id: UUID, quality: String, promptVersion: Int) async throws -> CachedSummary? in
             try await database.read { db -> CachedSummary? in
-                guard let row: SavedItemContentLocalTable = try SavedItemContentLocalTable.find(id).fetchOne(db) else { return nil }
-                guard let text = row.summary, !text.isEmpty, let generatedAt = row.summaryGeneratedAt else { return nil }
-                return CachedSummary(text: text, generatedAt: generatedAt)
+                guard let content = try SavedItemContentLocalTable.find(id).fetchOne(db) else { return nil }
+                let cacheID = "\(id.uuidString.lowercased()):\(quality)"
+                guard let row = try ArticleSummaryLocalTable.find(cacheID).fetchOne(db),
+                      row.promptVersion == promptVersion,
+                      row.contentHash == sha256Hex(content.plainText),
+                      !row.text.isEmpty
+                else {
+                    return nil
+                }
+                return CachedSummary(
+                    text: row.text,
+                    generatedAt: row.generatedAt,
+                    quality: row.quality,
+                    promptVersion: row.promptVersion
+                )
             }
         }
     }

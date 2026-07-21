@@ -244,6 +244,15 @@ public enum StowerDatabase {
         migrator.registerMigration("purge-mistargeted-text-sync-rows") { db in
             try migration_v13(db)
         }
+        migrator.registerMigration("add-ingestion-job-lifecycle") { db in
+            try migration_v14(db)
+        }
+        migrator.registerMigration("add-versioned-article-summary-cache") { db in
+            try migration_v15(db)
+        }
+        migrator.registerMigration("add-versioned-web-article-captures") { db in
+            try migration_v16(db)
+        }
         try migrator.migrate(database)
     }
 
@@ -660,6 +669,91 @@ public enum StowerDatabase {
             DELETE FROM "savedTextContentSyncTables"
             WHERE "renderFormat" NOT IN ('plainText', 'structuredV1', 'htmlFallback')
             """)
+    }
+
+    private static func migration_v14(_ db: Database) throws {
+        try #sql("""
+            ALTER TABLE "ingestionJobLocalTables"
+            ADD COLUMN "status" TEXT NOT NULL ON CONFLICT REPLACE DEFAULT 'queued'
+            """)
+            .execute(db)
+        try #sql("""
+            ALTER TABLE "ingestionJobLocalTables"
+            ADD COLUMN "claimedAt" TEXT
+            """)
+            .execute(db)
+        try #sql("""
+            ALTER TABLE "ingestionJobLocalTables"
+            ADD COLUMN "attemptCount" INTEGER NOT NULL ON CONFLICT REPLACE DEFAULT 0
+            """)
+            .execute(db)
+        try #sql("""
+            ALTER TABLE "ingestionJobLocalTables"
+            ADD COLUMN "lastError" TEXT
+            """)
+            .execute(db)
+        try #sql("""
+            UPDATE "ingestionJobLocalTables"
+            SET "status" = CASE
+              WHEN "processedAt" IS NULL THEN 'queued'
+              ELSE 'completed'
+            END
+            """)
+            .execute(db)
+        try #sql("""
+            CREATE INDEX "idx_ingestionJobLocalTables_status_createdAt"
+            ON "ingestionJobLocalTables"("status", "createdAt")
+            """)
+            .execute(db)
+    }
+
+    /// Stores Quick and PCC-backed Enhanced summaries independently. The
+    /// content hash and prompt version make stale entries harmless after an
+    /// article is re-ingested or the prompts are retuned for a new model.
+    private static func migration_v15(_ db: Database) throws {
+        try db.execute(sql: """
+            CREATE TABLE IF NOT EXISTS "articleSummaryLocalTables" (
+              "id" TEXT PRIMARY KEY NOT NULL,
+              "itemID" TEXT NOT NULL,
+              "quality" TEXT NOT NULL,
+              "promptVersion" INTEGER NOT NULL,
+              "contentHash" TEXT NOT NULL,
+              "text" TEXT NOT NULL,
+              "generatedAt" TEXT NOT NULL,
+              FOREIGN KEY("itemID") REFERENCES "savedItemSyncTables"("id") ON DELETE CASCADE
+            ) STRICT
+            """)
+        try db.execute(sql: """
+            CREATE UNIQUE INDEX IF NOT EXISTS "idx_articleSummaryLocalTables_item_quality"
+            ON "articleSummaryLocalTables"("itemID", "quality")
+            """)
+    }
+
+    /// Exact web captures are additive: existing URL items remain untouched
+    /// until the user explicitly refreshes them.
+    private static func migration_v16(_ db: Database) throws {
+        try db.execute(sql: #"ALTER TABLE "savedItemContentLocalTables" ADD COLUMN "captureID" TEXT"#)
+        try db.execute(sql: #"ALTER TABLE "savedItemContentLocalTables" ADD COLUMN "captureVersion" INTEGER NOT NULL DEFAULT 0"#)
+        try db.execute(sql: """
+            CREATE TABLE IF NOT EXISTS "savedArticleCaptureSyncTables" (
+              "id" TEXT PRIMARY KEY NOT NULL, "itemID" TEXT NOT NULL,
+              "captureID" TEXT NOT NULL, "version" INTEGER NOT NULL DEFAULT 1,
+              "sha256" TEXT NOT NULL DEFAULT '', "byteCount" INTEGER NOT NULL DEFAULT 0,
+              "chunkCount" INTEGER NOT NULL DEFAULT 0, "capturedAt" TEXT NOT NULL,
+              "updatedAt" TEXT NOT NULL
+            ) STRICT
+            """)
+        try db.execute(sql: """
+            CREATE TABLE IF NOT EXISTS "savedArticleCaptureChunkSyncTables" (
+              "id" TEXT PRIMARY KEY NOT NULL, "itemID" TEXT NOT NULL,
+              "captureID" TEXT NOT NULL, "sequence" INTEGER NOT NULL DEFAULT 0,
+              "data" BLOB NOT NULL DEFAULT x'', "byteCount" INTEGER NOT NULL DEFAULT 0,
+              "sha256" TEXT NOT NULL DEFAULT '', "createdAt" TEXT NOT NULL
+            ) STRICT
+            """)
+        try db.execute(sql: #"CREATE INDEX IF NOT EXISTS "idx_savedArticleCaptureSyncTables_itemID" ON "savedArticleCaptureSyncTables"("itemID")"#)
+        try db.execute(sql: #"CREATE INDEX IF NOT EXISTS "idx_savedArticleCaptureChunkSyncTables_capture_sequence" ON "savedArticleCaptureChunkSyncTables"("captureID", "sequence")"#)
+        try db.execute(sql: #"CREATE INDEX IF NOT EXISTS "idx_savedArticleCaptureChunkSyncTables_itemID" ON "savedArticleCaptureChunkSyncTables"("itemID")"#)
     }
 
     private static func migration_v10(_ db: Database) throws {

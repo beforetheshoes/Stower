@@ -8,6 +8,14 @@ import Testing
 @Suite
 struct LibraryFeatureTests {
     @Test
+    func defaultsToInboxWithCompactNewestFirstLayout() {
+        let state = LibraryFeature.State()
+        #expect(state.filter == .unread)
+        #expect(state.displayStyle == .compact)
+        #expect(state.sortOrder == .newestFirst)
+    }
+
+    @Test
     func reloadPopulatesItems() async {
         let expected = [
             SavedItem(title: "Alpha", content: "A", sourceURL: "https://a.com"),
@@ -334,13 +342,160 @@ struct LibraryFeatureTests {
             $0.isSaving = true
             $0.saveState = .extracting
         }
-        await store.receive(.saveURLFinished(item)) {
+        await store.receive(.articleSaveFinished(ArticleSaveResult(item: item, state: .ready))) {
             $0.isSaving = false
             $0.saveState = .ready
             $0.sourceURL = ""
             $0.items = [item]
         }
         await store.receive(.openItem(item))
+    }
+
+    @Test
+    func saveURLReportsPartialCaptureAndSpecificWarning() async {
+        let warning = "The lead video was saved as a poster and online launcher."
+        let item = SavedItem(
+            title: "Partial",
+            content: "Meaningful body",
+            sourceURL: "https://example.com/partial",
+            captureVersion: 1,
+            processingState: .partial
+        )
+        let result = ArticleSaveResult(item: item, state: .partial, warnings: [warning])
+
+        let store = TestStore(initialState: LibraryFeature.State()) {
+            LibraryFeature()
+        } withDependencies: {
+            $0.articleSaveClient = ArticleSaveClient(
+                save: { _ in result },
+                refresh: { _, _ in throw TestCaptureError.failed },
+                hydrate: { _, _ in throw TestCaptureError.failed }
+            )
+        }
+
+        await store.send(.sourceURLChanged("https://example.com/partial")) {
+            $0.sourceURL = "https://example.com/partial"
+        }
+        await store.send(.saveURLTapped) {
+            $0.isSaving = true
+            $0.saveState = .extracting
+        }
+        await store.receive(.articleSaveFinished(result)) {
+            $0.isSaving = false
+            $0.saveState = .partial
+            $0.errorMessage = warning
+            $0.sourceURL = ""
+            $0.items = [item]
+        }
+        await store.receive(.openItem(item))
+    }
+
+    @Test
+    func saveURLReportsCaptureFailureWithoutCreatingAnItem() async {
+        let store = TestStore(initialState: LibraryFeature.State()) {
+            LibraryFeature()
+        } withDependencies: {
+            $0.articleSaveClient = ArticleSaveClient(
+                save: { _ in throw TestCaptureError.failed },
+                refresh: { _, _ in throw TestCaptureError.failed },
+                hydrate: { _, _ in throw TestCaptureError.failed }
+            )
+        }
+
+        await store.send(.sourceURLChanged("https://example.com/failure")) {
+            $0.sourceURL = "https://example.com/failure"
+        }
+        await store.send(.saveURLTapped) {
+            $0.isSaving = true
+            $0.saveState = .extracting
+        }
+        await store.receive(.saveURLFailed("Capture failed.")) {
+            $0.isSaving = false
+            $0.saveState = .failed
+            $0.errorMessage = "Capture failed."
+        }
+        #expect(store.state.items.isEmpty)
+    }
+
+    @Test
+    func saveURLCanBeCancelledWithoutPublishingAResult() async {
+        let cancelled = LockIsolated(false)
+        let (started, startedContinuation) = AsyncStream<Void>.makeStream()
+        var startedIterator = started.makeAsyncIterator()
+        let store = TestStore(initialState: LibraryFeature.State()) {
+            LibraryFeature()
+        } withDependencies: {
+            $0.articleSaveClient = ArticleSaveClient(
+                save: { _ in
+                    startedContinuation.yield()
+                    return try await withTaskCancellationHandler {
+                        try await Task<Never, Never>.sleep(nanoseconds: 60_000_000_000)
+                        throw TestCaptureError.failed
+                    } onCancel: {
+                        cancelled.setValue(true)
+                    }
+                },
+                refresh: { _, _ in throw TestCaptureError.failed },
+                hydrate: { _, _ in throw TestCaptureError.failed }
+            )
+        }
+
+        await store.send(.sourceURLChanged("https://example.com/slow")) {
+            $0.sourceURL = "https://example.com/slow"
+        }
+        await store.send(.saveURLTapped) {
+            $0.isSaving = true
+            $0.saveState = .extracting
+        }
+        _ = await startedIterator.next()
+        await store.send(.cancelURLSaveTapped) {
+            $0.isSaving = false
+            $0.saveState = .queued
+        }
+        await store.finish()
+        #expect(cancelled.value)
+        #expect(store.state.items.isEmpty)
+    }
+
+    @Test
+    func refreshExplicitlyUpgradesLegacyItemToCaptureVersionOne() async {
+        let legacy = SavedItem(
+            title: "Legacy",
+            content: "Old",
+            sourceURL: "https://example.com/article"
+        )
+        let refreshed = SavedItem(
+            title: "Captured",
+            content: "New",
+            id: legacy.id,
+            sourceURL: "https://example.com/article",
+            captureVersion: 1,
+            processingState: .ready
+        )
+        var initial = LibraryFeature.State()
+        initial.items = [legacy]
+
+        let store = TestStore(initialState: initial) {
+            LibraryFeature()
+        } withDependencies: {
+            $0.stowerRepository.loadItem = { id in id == legacy.id ? legacy : nil }
+            $0.articleSaveClient = ArticleSaveClient(
+                save: { _ in throw TestCaptureError.failed },
+                refresh: { id, url in
+                    #expect(id == legacy.id)
+                    #expect(url.absoluteString == "https://example.com/article")
+                    return ArticleSaveResult(item: refreshed, state: .ready)
+                },
+                hydrate: { _, _ in throw TestCaptureError.failed }
+            )
+        }
+
+        await store.send(.reprocessItem(legacy.id)) {
+            $0.items[0].processingState = .extracting
+        }
+        await store.receive(.reprocessFinished(refreshed)) {
+            $0.items = [refreshed]
+        }
     }
 
     @Test
@@ -417,4 +572,10 @@ struct LibraryFeatureTests {
             $0.items = [item]
         }
     }
+}
+
+private enum TestCaptureError: Error, LocalizedError {
+    case failed
+
+    var errorDescription: String? { "Capture failed." }
 }

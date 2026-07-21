@@ -13,23 +13,21 @@ public enum ShareIngestionClient {
         }
     }
 
-    public static func enqueueURL(_ url: URL) throws {
+    public static func enqueueURL(_ url: URL) async throws {
         try prepareDependencies {
             // Share extension should avoid CloudKit work.
             try $0.bootstrapStowerDatabase(enableSync: false)
         }
         @Dependency(\.stowerRepository)
         var repository
-        Task {
-            try? await repository.enqueueIngestionJob(.url, url.absoluteString)
-        }
+        try await repository.enqueueIngestionJob(.url, url.absoluteString)
     }
 
     public static func enqueueText(
         _ text: String,
         titleHint: String? = nil,
         mode: TextImportMode = .auto
-    ) throws {
+    ) async throws {
         try prepareDependencies {
             // Share extension should avoid CloudKit work.
             try $0.bootstrapStowerDatabase(enableSync: false)
@@ -43,12 +41,10 @@ public enum ShareIngestionClient {
                 titleHint: titleHint
             )
         )
-        Task {
-            try? await repository.enqueueIngestionJob(.text, payload)
-        }
+        try await repository.enqueueIngestionJob(.text, payload)
     }
 
-    public static func enqueueMarkdown(_ markdown: String, titleHint: String? = nil) throws {
+    public static func enqueueMarkdown(_ markdown: String, titleHint: String? = nil) async throws {
         try prepareDependencies {
             try $0.bootstrapStowerDatabase(enableSync: false)
         }
@@ -61,9 +57,7 @@ public enum ShareIngestionClient {
                 titleHint: titleHint
             )
         )
-        Task {
-            try? await repository.enqueueIngestionJob(.markdown, payload)
-        }
+        try await repository.enqueueIngestionJob(.markdown, payload)
     }
 
     /// Copies a PDF at `sourceURL` into the shared App Group container under
@@ -74,7 +68,7 @@ public enum ShareIngestionClient {
     /// storage before the job is drained by the main app. The source file is
     /// not deleted — the caller is responsible for cleaning up any scratch
     /// copies it made itself.
-    public static func enqueuePDF(_ sourceURL: URL) throws {
+    public static func enqueuePDF(_ sourceURL: URL) async throws {
         try prepareDependencies {
             try $0.bootstrapStowerDatabase(enableSync: false)
         }
@@ -84,6 +78,8 @@ public enum ShareIngestionClient {
         else {
             throw Error.appGroupUnavailable
         }
+        @Dependency(\.uuid)
+        var uuid
 
         // Use a UUID-named subdirectory so we can preserve the original
         // filename. `PDFIngestionClient.live` uses the file URL's
@@ -91,7 +87,7 @@ public enum ShareIngestionClient {
         // embedded title attribute, so writing to `PendingPDFs/{uuid}.pdf`
         // would produce items titled with a raw UUID in the library.
         let pendingRoot = container.appendingPathComponent("PendingPDFs", isDirectory: true)
-        let pendingDir = pendingRoot.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let pendingDir = pendingRoot.appendingPathComponent(uuid().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(
             at: pendingDir,
             withIntermediateDirectories: true
@@ -105,9 +101,7 @@ public enum ShareIngestionClient {
         @Dependency(\.stowerRepository)
         var repository
         let path = destination.path
-        Task {
-            try? await repository.enqueueIngestionJob(.pdf, path)
-        }
+        try await repository.enqueueIngestionJob(.pdf, path)
     }
 
     /// Copies a `.zip` website archive at `sourceURL` into the shared App
@@ -116,7 +110,7 @@ public enum ShareIngestionClient {
     /// path. Mirrors `enqueuePDF` so the main-app ingester can rely on the
     /// original filename for the title fallback before the `<title>` tag has
     /// been parsed out of index.html.
-    public static func enqueueWebsiteZip(_ sourceURL: URL) throws {
+    public static func enqueueWebsiteZip(_ sourceURL: URL) async throws {
         try prepareDependencies {
             try $0.bootstrapStowerDatabase(enableSync: false)
         }
@@ -126,9 +120,11 @@ public enum ShareIngestionClient {
         else {
             throw Error.appGroupUnavailable
         }
+        @Dependency(\.uuid)
+        var uuid
 
         let pendingRoot = container.appendingPathComponent("PendingWebsites", isDirectory: true)
-        let pendingDir = pendingRoot.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let pendingDir = pendingRoot.appendingPathComponent(uuid().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(
             at: pendingDir,
             withIntermediateDirectories: true
@@ -142,8 +138,6 @@ public enum ShareIngestionClient {
         @Dependency(\.stowerRepository)
         var repository
         let path = destination.path
-        Task {
-            try? await repository.enqueueIngestionJob(.website, path)
-        }
+        try await repository.enqueueIngestionJob(.website, path)
     }
 }

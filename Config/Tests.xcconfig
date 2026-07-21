@@ -7,8 +7,8 @@
 // ==========================================
 // Deployment targets (must match Shared.xcconfig)
 // ==========================================
-IPHONEOS_DEPLOYMENT_TARGET = 26.0
-MACOSX_DEPLOYMENT_TARGET = 26.0
+IPHONEOS_DEPLOYMENT_TARGET = 27.0
+MACOSX_DEPLOYMENT_TARGET = 27.0
 
 // ==========================================
 // Test Target Identity

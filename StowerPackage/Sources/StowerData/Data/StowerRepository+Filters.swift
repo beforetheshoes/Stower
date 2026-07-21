@@ -16,31 +16,31 @@ extension StowerRepository {
                 case .all:
                     synced = try SavedItemSyncTable
                         .where { $0.deletedAt.is(nil) }
-                        .order { $0.updatedAt.desc() }
+                        .order { $0.createdAt.desc() }
                         .fetchAll(db)
 
                 case .unread:
                     synced = try SavedItemSyncTable
                         .where { $0.deletedAt.is(nil) && !$0.isRead }
-                        .order { $0.updatedAt.desc() }
+                        .order { $0.createdAt.desc() }
                         .fetchAll(db)
 
                 case .read:
                     synced = try SavedItemSyncTable
                         .where { $0.deletedAt.is(nil) && $0.isRead }
-                        .order { $0.updatedAt.desc() }
+                        .order { $0.createdAt.desc() }
                         .fetchAll(db)
 
                 case .starred:
                     synced = try SavedItemSyncTable
                         .where { $0.deletedAt.is(nil) && $0.isStarred }
-                        .order { $0.updatedAt.desc() }
+                        .order { $0.createdAt.desc() }
                         .fetchAll(db)
 
                 case .recentlyDeleted:
                     synced = try SavedItemSyncTable
                         .where { $0.deletedAt.isNot(nil) }
-                        .order { $0.updatedAt.desc() }
+                        .order { $0.deletedAt.desc() }
                         .fetchAll(db)
 
                 case .untagged:
@@ -49,7 +49,7 @@ extension StowerRepository {
                     let taggedIDs: [UUID] = Array(Set(taggedRows.map(\.itemID)))
                     synced = try SavedItemSyncTable
                         .where { $0.deletedAt.is(nil) && !$0.id.in(taggedIDs) }
-                        .order { $0.updatedAt.desc() }
+                        .order { $0.createdAt.desc() }
                         .fetchAll(db)
 
                 case .tag(let tagID):
@@ -62,7 +62,7 @@ extension StowerRepository {
                     } else {
                         synced = try SavedItemSyncTable
                             .where { $0.deletedAt.is(nil) && $0.id.in(itemIDs) }
-                            .order { $0.updatedAt.desc() }
+                            .order { $0.createdAt.desc() }
                             .fetchAll(db)
                     }
                 }
@@ -189,6 +189,8 @@ extension StowerRepository {
         { (id: UUID) async throws in
             try await database.write { db in
                 try ItemTagSyncTable.where { $0.itemID.eq(id) }.delete().execute(db)
+                try SavedArticleCaptureChunkSyncTable.where { $0.itemID.eq(id) }.delete().execute(db)
+                try SavedArticleCaptureSyncTable.where { $0.itemID.eq(id) }.delete().execute(db)
                 try SavedItemSyncTable.find(id).delete().execute(db)
             }
             scheduleSync()
@@ -214,6 +216,8 @@ extension StowerRepository {
                 let ids = expired.map(\.id)
                 if !ids.isEmpty {
                     try ItemTagSyncTable.where { $0.itemID.in(ids) }.delete().execute(db)
+                    try SavedArticleCaptureChunkSyncTable.where { $0.itemID.in(ids) }.delete().execute(db)
+                    try SavedArticleCaptureSyncTable.where { $0.itemID.in(ids) }.delete().execute(db)
                     try SavedItemSyncTable.where { $0.id.in(ids) }.delete().execute(db)
                 }
                 return ids
