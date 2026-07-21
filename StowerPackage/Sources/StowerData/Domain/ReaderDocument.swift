@@ -21,6 +21,8 @@ public struct ReaderDocument: Codable, Equatable, Sendable {
     public var sourceURL: String?
     public var canonicalURL: String?
     public var title: String
+    // Mutable while sanitizing documents loaded from older database versions.
+    // swiftlint:disable:next prefer_let_over_var
     public var blocks: [ReaderBlock]
 
     public init(
@@ -337,11 +339,11 @@ public struct WebCaptureArtifact: Equatable, Sendable {
 
     public init(
         captureID: UUID,
-        version: Int = 1,
         stagedPackageURL: URL,
         sha256: String,
         byteCount: Int,
         completeness: WebCaptureCompleteness,
+        version: Int = 1,
         warnings: [String] = []
     ) {
         self.captureID = captureID

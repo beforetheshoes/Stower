@@ -13,6 +13,13 @@ struct ArticleCaptureMetadata: Codable, Equatable, Sendable {
 }
 
 enum ArticleCapturePackage {
+    struct Content {
+        let readerArchive: Data
+        let originalArchive: Data
+        let document: ReaderDocument
+        let plainText: String
+    }
+
     static let captureVersion = 1
     static let chunkByteLimit = 20 * 1_048_576
     static let packageByteLimit = 200 * 1_048_576
@@ -27,10 +34,7 @@ enum ArticleCapturePackage {
     static func stage(
         captureID: UUID,
         sourceURL: URL,
-        readerArchive: Data,
-        originalArchive: Data,
-        document: ReaderDocument,
-        plainText: String,
+        content: Content,
         completeness: WebCaptureCompleteness,
         warnings: [String]
     ) throws -> WebCaptureArtifact {
@@ -55,19 +59,19 @@ enum ArticleCapturePackage {
             to: packageDirectory.appendingPathComponent(metadataFilename),
             options: .atomic
         )
-        try readerArchive.write(
+        try content.readerArchive.write(
             to: packageDirectory.appendingPathComponent(readerArchiveFilename),
             options: .atomic
         )
-        try originalArchive.write(
+        try content.originalArchive.write(
             to: packageDirectory.appendingPathComponent(originalArchiveFilename),
             options: .atomic
         )
-        try encoder.encode(document).write(
+        try encoder.encode(content.document).write(
             to: packageDirectory.appendingPathComponent(documentFilename),
             options: .atomic
         )
-        try Data(plainText.utf8).write(
+        try Data(content.plainText.utf8).write(
             to: packageDirectory.appendingPathComponent(plainTextFilename),
             options: .atomic
         )
@@ -79,11 +83,11 @@ enum ArticleCapturePackage {
         }
         return WebCaptureArtifact(
             captureID: captureID,
-            version: captureVersion,
             stagedPackageURL: zipURL,
             sha256: sha256(data),
             byteCount: data.count,
             completeness: completeness,
+            version: captureVersion,
             warnings: warnings
         )
     }
@@ -169,10 +173,10 @@ enum ArticleCapturePackage {
             WebCaptureManifest(
                 itemID: itemID,
                 captureID: artifact.captureID,
-                version: artifact.version,
                 sha256: artifact.sha256,
                 byteCount: artifact.byteCount,
-                chunkCount: chunks.count
+                chunkCount: chunks.count,
+                version: artifact.version
             ),
             chunks
         )

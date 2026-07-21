@@ -592,7 +592,8 @@ private func processIngestionJob(
     pdfIngestionClient: PDFIngestionClient,
     textIngestionClient: TextIngestionClient
 ) async throws {
-    @Dependency(\.articleSaveClient) var articleSaveClient
+    @Dependency(\.articleSaveClient)
+    var articleSaveClient
     switch job.kind {
         case .url:
             let trimmed = job.payload.trimmingCharacters(in: .whitespacesAndNewlines)

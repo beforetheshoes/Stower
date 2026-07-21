@@ -25,7 +25,8 @@ public struct URLIngestionClient: Sendable {
     }
 
     public static let live = URLIngestionClient { url in
-        @Dependency(\.webArticleCaptureClient) var webArticleCaptureClient
+        @Dependency(\.webArticleCaptureClient)
+        var webArticleCaptureClient
         // Short-circuit for YouTube URLs. The watch page is a JS shell with no
         // article-extractable content, so we bypass the HTML fetch entirely
         // and build the ingestion result from oEmbed metadata + a cached

@@ -90,8 +90,8 @@ public struct SavedItem: Equatable, Identifiable, Sendable {
 }
 
 public enum WebCaptureCompleteness: String, Codable, Equatable, Sendable {
-    case complete
-    case partial
+    case complete = "complete"
+    case partial = "partial"
 }
 
 /// Synced identity and integrity information for one immutable capture.
@@ -107,10 +107,10 @@ public struct WebCaptureManifest: Codable, Equatable, Sendable {
     public init(
         itemID: UUID,
         captureID: UUID,
-        version: Int = 1,
         sha256: String,
         byteCount: Int,
         chunkCount: Int,
+        version: Int = 1,
         capturedAt: Date = .now
     ) {
         self.itemID = itemID
@@ -129,7 +129,7 @@ public struct WebCaptureChunk: Equatable, Identifiable, Sendable {
     public let data: Data
     public let sha256: String
 
-    public init(id: UUID = UUID(), sequence: Int, data: Data, sha256: String) {
+    public init(sequence: Int, data: Data, sha256: String, id: UUID = UUID()) {
         self.id = id
         self.sequence = sequence
         self.data = data

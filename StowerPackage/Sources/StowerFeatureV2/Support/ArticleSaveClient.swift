@@ -40,16 +40,20 @@ public struct ArticleSaveClient: Sendable {
 
     public static let live = ArticleSaveClient(
         save: { url in
-            @Dependency(\.stowerRepository) var repository
-            @Dependency(\.urlIngestionClient) var ingestionClient
+            @Dependency(\.stowerRepository)
+            var repository
+            @Dependency(\.urlIngestionClient)
+            var ingestionClient
             let result = try await ingestionClient.ingest(url)
             try Task.checkCancellation()
             let item = try await repository.createItemFromIngestion(result)
             return try await finish(result: result, item: item, repository: repository)
         },
         refresh: { itemID, url in
-            @Dependency(\.stowerRepository) var repository
-            @Dependency(\.urlIngestionClient) var ingestionClient
+            @Dependency(\.stowerRepository)
+            var repository
+            @Dependency(\.urlIngestionClient)
+            var ingestionClient
             let result = try await ingestionClient.ingest(url)
             try Task.checkCancellation()
             guard let item = try await repository.updateItemFromIngestion(itemID, result) else {
@@ -58,7 +62,8 @@ public struct ArticleSaveClient: Sendable {
             return try await finish(result: result, item: item, repository: repository)
         },
         hydrate: { itemID, url in
-            @Dependency(\.stowerRepository) var repository
+            @Dependency(\.stowerRepository)
+            var repository
 
             // Exact synced bytes always win. A source refetch is reserved for
             // legacy rows with no capture manifest.
@@ -86,7 +91,8 @@ public struct ArticleSaveClient: Sendable {
                 )
             }
 
-            @Dependency(\.urlIngestionClient) var ingestionClient
+            @Dependency(\.urlIngestionClient)
+            var ingestionClient
             let result = try await ingestionClient.ingest(url)
             try Task.checkCancellation()
             try await repository.hydrateItemContent(itemID, result)
@@ -142,7 +148,8 @@ public enum ArticleSaveError: Error, LocalizedError, Equatable {
 
     public var errorDescription: String? {
         switch self {
-        case .itemNoLongerExists: "This saved item no longer exists."
+        case .itemNoLongerExists:
+            "This saved item no longer exists."
         }
     }
 }

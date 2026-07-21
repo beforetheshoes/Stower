@@ -12,10 +12,12 @@ struct ArticleCapturePackageTests {
         let artifact = try ArticleCapturePackage.stage(
             captureID: captureID,
             sourceURL: URL(string: "https://example.com/story")!,
-            readerArchive: Data("reader archive".utf8),
-            originalArchive: Data("original archive".utf8),
-            document: ReaderDocument(title: "Story", blocks: [.paragraph([.text("Body")])]),
-            plainText: "Body",
+            content: ArticleCapturePackage.Content(
+                readerArchive: Data("reader archive".utf8),
+                originalArchive: Data("original archive".utf8),
+                document: ReaderDocument(title: "Story", blocks: [.paragraph([.text("Body")])]),
+                plainText: "Body"
+            ),
             completeness: .partial,
             warnings: ["One image was unavailable."]
         )

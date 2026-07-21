@@ -5,7 +5,8 @@ import WebKit
 
 @Suite(.serialized)
 struct WebArticleCaptureIntegrationTests {
-    @Test @MainActor
+    @Test
+    @MainActor
     func capturesJavaScriptRenderedPageAndReplaysOffline() async throws {
         let fixture = FileManager.default.temporaryDirectory
             .appendingPathComponent("web-capture-fixture-\(UUID())", isDirectory: true)

@@ -64,7 +64,7 @@ extension StowerRepository {
         database: any DatabaseWriter
     ) -> @Sendable (UUID) async throws -> SyncedWebCapture? {
         { itemID in
-            try await database.read { db in
+            try await database.read { db -> SyncedWebCapture? in
                 guard let row = try SavedArticleCaptureSyncTable
                     .where({ $0.itemID.eq(itemID) })
                     .fetchOne(db)
@@ -77,14 +77,14 @@ extension StowerRepository {
                 let manifest = WebCaptureManifest(
                     itemID: row.itemID,
                     captureID: row.captureID,
-                    version: row.version,
                     sha256: row.sha256,
                     byteCount: row.byteCount,
                     chunkCount: row.chunkCount,
+                    version: row.version,
                     capturedAt: row.capturedAt
                 )
                 let chunks = chunkRows.map {
-                    WebCaptureChunk(id: $0.id, sequence: $0.sequence, data: $0.data, sha256: $0.sha256)
+                    WebCaptureChunk(sequence: $0.sequence, data: $0.data, sha256: $0.sha256, id: $0.id)
                 }
                 return SyncedWebCapture(manifest: manifest, chunks: chunks)
             }
@@ -97,12 +97,14 @@ extension StowerRepository {
         { itemID, captureID, version in
             try await database.write { db in
                 guard try SavedItemContentLocalTable.find(itemID).fetchOne(db) != nil else { return }
-                try SavedItemContentLocalTable.find(itemID).update {
-                    $0.captureID = #bind(captureID)
-                    $0.captureVersion = version
-                    $0.updatedAt = Date.now
-                }
-                .execute(db)
+                try SavedItemContentLocalTable
+                    .find(itemID)
+                    .update {
+                        $0.captureID = #bind(captureID)
+                        $0.captureVersion = version
+                        $0.updatedAt = Date.now
+                    }
+                    .execute(db)
             }
         }
     }

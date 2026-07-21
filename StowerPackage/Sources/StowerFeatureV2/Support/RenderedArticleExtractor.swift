@@ -26,7 +26,13 @@ struct MozillaReadabilityResult: Codable, Equatable, Sendable {
     var publishedTime: String?
 
     enum CodingKeys: String, CodingKey {
-        case title, byline, content, textContent, excerpt, siteName, publishedTime
+        case title = "title"
+        case byline = "byline"
+        case content = "content"
+        case textContent = "textContent"
+        case excerpt = "excerpt"
+        case siteName = "siteName"
+        case publishedTime = "publishedTime"
         case language = "lang"
     }
 }
@@ -43,7 +49,7 @@ enum RenderedArticleExtractor {
         "[class*=newsletter]", "[id*=newsletter]", "[class*=subscribe]", "[id*=subscribe]",
         "[class*=recommend]", "[id*=recommend]", "[class*=related]", "[id*=related]",
         "[class*=comment]", "[id*=comment]", "[class*=share]", "[id*=share]",
-        "[class*=social]", "[id*=social]", "[class*=cookie]", "[id*=cookie]"
+        "[class*=social]", "[id*=social]", "[class*=cookie]", "[id*=cookie]",
     ].joined(separator: ",")
 
     static func extract(
@@ -180,15 +186,23 @@ enum RenderedArticleExtractor {
             } else { continue }
             for object in candidates where isArticleType(object["@type"]) {
                 let author: String?
-                if let value = object["author"] as? String { author = value }
-                else if let value = object["author"] as? [String: Any] { author = value["name"] as? String }
-                else if let values = object["author"] as? [[String: Any]] {
+                if let value = object["author"] as? String {
+                    author = value
+                } else if let value = object["author"] as? [String: Any] {
+                    author = value["name"] as? String
+                } else if let values = object["author"] as? [[String: Any]] {
                     author = values.compactMap { $0["name"] as? String }.joined(separator: ", ")
-                } else { author = nil }
+                } else {
+                    author = nil
+                }
                 let image: String?
-                if let value = object["image"] as? String { image = value }
-                else if let value = object["image"] as? [String: Any] { image = value["url"] as? String }
-                else { image = (object["image"] as? [String])?.first }
+                if let value = object["image"] as? String {
+                    image = value
+                } else if let value = object["image"] as? [String: Any] {
+                    image = value["url"] as? String
+                } else {
+                    image = (object["image"] as? [String])?.first
+                }
                 return JSONLDMetadata(
                     title: nonEmpty(object["headline"] as? String) ?? nonEmpty(object["name"] as? String),
                     deck: nonEmpty(object["description"] as? String),
@@ -238,7 +252,9 @@ enum RenderedArticleExtractor {
 
     private static func semanticOverlap(_ element: Element, _ needle: String) -> Double {
         let haystack = normalizedText((try? element.text()) ?? "")
-        if haystack.contains(needle) { return 1 }
+        if haystack.contains(needle) {
+            return 1
+        }
         let words = Set<String>(needle.split(whereSeparator: \.isWhitespace).map(String.init).filter { $0.count > 3 })
         guard !words.isEmpty else { return 0 }
         let haystackWords = Set<String>(haystack.split(whereSeparator: \.isWhitespace).map(String.init))
@@ -311,8 +327,12 @@ enum RenderedArticleExtractor {
     }
 
     private static func detectMeaningfulInteractivity(_ document: Document) throws -> Bool {
-        if !(try document.select("canvas,model-viewer,iframe[src],video[src],audio[src]").isEmpty()) { return true }
-        if !(try document.select("svg [onclick],svg animate,svg animateTransform,svg[role=application]").isEmpty()) { return true }
+        if !(try document.select("canvas,model-viewer,iframe[src],video[src],audio[src]").isEmpty()) {
+            return true
+        }
+        if !(try document.select("svg [onclick],svg animate,svg animateTransform,svg[role=application]").isEmpty()) {
+            return true
+        }
         let scripts = try document.select("script").array()
         return scripts.contains { script in
             let source = ((try? script.attr("src")) ?? "") + script.data()
@@ -340,7 +360,9 @@ enum RenderedArticleExtractor {
 
     private static func isSafeURL(_ value: String, allowDataImage: Bool) -> Bool {
         guard let url = URL(string: value), let scheme = url.scheme?.lowercased() else { return false }
-        if ["http", "https", "mailto"].contains(scheme) { return true }
+        if ["http", "https", "mailto"].contains(scheme) {
+            return true
+        }
         return allowDataImage && scheme == "data" && value.lowercased().hasPrefix("data:image/")
     }
 

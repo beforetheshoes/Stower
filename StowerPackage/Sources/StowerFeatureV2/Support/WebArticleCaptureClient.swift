@@ -124,10 +124,12 @@ private final class WebArticleCaptureSession {
         let artifact = try ArticleCapturePackage.stage(
             captureID: captureID,
             sourceURL: finalURL,
-            readerArchive: readerArchive,
-            originalArchive: originalArchive,
-            document: indexed.document,
-            plainText: indexed.plainText,
+            content: ArticleCapturePackage.Content(
+                readerArchive: readerArchive,
+                originalArchive: originalArchive,
+                document: indexed.document,
+                plainText: indexed.plainText
+            ),
             completeness: completeness,
             warnings: warnings
         )
@@ -184,7 +186,9 @@ private final class WebArticleCaptureSession {
                 """)) ?? ""
             if signature == previous, !signature.isEmpty {
                 stableSamples += 1
-                if stableSamples >= 3 { return true }
+                if stableSamples >= 3 {
+                    return true
+                }
             } else {
                 previous = signature
                 stableSamples = 0
@@ -197,8 +201,11 @@ private final class WebArticleCaptureSession {
     private func javascriptString(_ source: String) async throws -> String? {
         try await withCheckedThrowingContinuation { continuation in
             webView.evaluateJavaScript(source) { result, error in
-                if let error { continuation.resume(throwing: error) }
-                else { continuation.resume(returning: result as? String) }
+                if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume(returning: result as? String)
+                }
             }
         }
     }
@@ -206,8 +213,11 @@ private final class WebArticleCaptureSession {
     private func javascriptVoid(_ source: String) async throws {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             webView.evaluateJavaScript(source) { _, error in
-                if let error { continuation.resume(throwing: error) }
-                else { continuation.resume(returning: ()) }
+                if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume(returning: ())
+                }
             }
         }
     }
