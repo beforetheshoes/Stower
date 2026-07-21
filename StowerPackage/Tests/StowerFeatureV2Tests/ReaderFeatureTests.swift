@@ -100,10 +100,32 @@ struct ReaderFeatureTests {
         await store.send(.scrollProgressChanged(2)) {
             $0.currentBlockIndex = 2
             $0.item?.lastReadBlockIndex = 2
-            $0.item?.isRead = true
         }
 
         #expect(store.state.readingProgress?.percentComplete == 50)
+        #expect(store.state.item?.isRead == false)
+    }
+
+    @Test
+    func doneExplicitlyMarksReadAndDelegates() async {
+        let item = SavedItem(title: "Keep for reference", content: "Body")
+        let writes = LockIsolated<[(UUID, Bool)]>([])
+        let store = TestStore(initialState: ReaderFeature.State(item: item)) {
+            ReaderFeature()
+        } withDependencies: {
+            $0.stowerRepository.setReadStatus = { id, isRead in
+                writes.withValue { $0.append((id, isRead)) }
+            }
+        }
+
+        await store.send(.doneTapped) {
+            $0.item?.isRead = true
+        }
+        await store.receive(.delegate(.done(itemID: item.id, wasUnread: true)))
+
+        #expect(writes.value.count == 1)
+        #expect(writes.value.first?.0 == item.id)
+        #expect(writes.value.first?.1 == true)
     }
 
     @Test

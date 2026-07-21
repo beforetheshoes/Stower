@@ -22,9 +22,12 @@ public struct ReaderAIFeature {
     public struct State: Equatable {
         public var itemID: UUID?
         public var availability: ArticleAIClient.Availability = .available
+        public var enhancedAvailability: ArticleAIClient.Availability = .available
         public var mode: Mode = .summary
 
         // MARK: Summary tab
+        public var summaryQuality: ArticleAIClient.SummaryQuality = .quick
+        public var summaryResultQuality: ArticleAIClient.SummaryQuality = .quick
         public var summaryText: String = ""
         public var summaryStage: String?
         public var summaryWasCached = false
@@ -64,10 +67,16 @@ public struct ReaderAIFeature {
         /// Parent forwards this after the reader finishes loading so we can
         /// warm the availability check and the cached-summary lookup.
         case appeared(itemID: UUID)
-        case cacheLoaded(text: String?, generatedAt: Date?)
+        case cacheLoaded(
+            quality: ArticleAIClient.SummaryQuality,
+            text: String?,
+            generatedAt: Date?
+        )
+        case panelOpened
         case modeChanged(State.Mode)
 
         // Summary
+        case summaryQualityChanged(ArticleAIClient.SummaryQuality)
         case summarizeRequested(document: ReaderDocument?, plainText: String)
         case summaryEvent(ArticleAIClient.SummaryEvent)
         case summaryFailed(String)
@@ -99,19 +108,27 @@ public struct ReaderAIFeature {
             case .appeared(let itemID):
                 state.itemID = itemID
                 state.availability = ai.availability()
-                let repository = self.repository
-                return .run { send in
-                    // Cache lookup is best-effort: a DB miss shouldn't block
-                    // the popover from showing a "Summarize" button.
-                    let cached = try? await repository.loadSummary(itemID)
-                    await send(.cacheLoaded(text: cached?.text, generatedAt: cached?.generatedAt))
-                }
+                state.enhancedAvailability = ai.enhancedAvailability()
+                return loadCachedSummary(itemID: itemID, quality: state.summaryQuality)
 
-            case let .cacheLoaded(text, generatedAt):
+            case let .cacheLoaded(quality, text, generatedAt):
+                guard quality == state.summaryQuality else { return .none }
                 if let text, !text.isEmpty {
                     state.summaryText = text
                     state.summaryGeneratedAt = generatedAt
                     state.summaryWasCached = true
+                    state.summaryResultQuality = quality
+                }
+                return .none
+
+            case .panelOpened:
+                state.availability = ai.availability()
+                state.enhancedAvailability = ai.enhancedAvailability()
+                switch state.summaryQuality {
+                case .quick:
+                    ai.prewarm()
+                case .enhanced:
+                    ai.prewarmEnhanced()
                 }
                 return .none
 
@@ -119,9 +136,45 @@ public struct ReaderAIFeature {
                 state.mode = mode
                 return .none
 
+            case .summaryQualityChanged(let quality):
+                guard quality != state.summaryQuality else { return .none }
+                state.summaryQuality = quality
+                state.summaryResultQuality = quality
+                state.summaryText = ""
+                state.summaryStage = nil
+                state.summaryError = nil
+                state.summaryWasCached = false
+                state.summaryGeneratedAt = nil
+                state.isSummarizing = false
+
+                switch quality {
+                case .quick:
+                    ai.prewarm()
+                case .enhanced:
+                    state.enhancedAvailability = ai.enhancedAvailability()
+                    ai.prewarmEnhanced()
+                }
+
+                guard let itemID = state.itemID else {
+                    return .cancel(id: CancelID.summarize)
+                }
+                return .merge(
+                    .cancel(id: CancelID.summarize),
+                    loadCachedSummary(itemID: itemID, quality: quality)
+                )
+
             case let .summarizeRequested(document, plainText):
-                guard state.availability == .available else {
-                    return .none
+                switch state.summaryQuality {
+                case .quick:
+                    guard state.availability == .available else { return .none }
+                case .enhanced:
+                    // An unavailable PCC model can still fall back to Quick,
+                    // but only if the on-device model is available.
+                    guard state.enhancedAvailability == .available
+                        || state.availability == .available
+                    else {
+                        return .none
+                    }
                 }
                 guard !state.isSummarizing else { return .none }
                 guard !plainText.isEmpty else {
@@ -135,11 +188,19 @@ public struct ReaderAIFeature {
                 state.summaryError = nil
                 state.summaryWasCached = false
                 state.summaryGeneratedAt = nil
+                state.summaryResultQuality = state.summaryQuality
 
                 let ai = self.ai
+                let quality = state.summaryQuality
                 return .run { send in
                     do {
-                        for try await event in ai.summarize(document, plainText) {
+                        let events = switch quality {
+                        case .quick:
+                            ai.summarize(document, plainText)
+                        case .enhanced:
+                            ai.summarizeEnhanced(document, plainText)
+                        }
+                        for try await event in events {
                             await send(.summaryEvent(event))
                         }
                     } catch is CancellationError {
@@ -157,6 +218,10 @@ public struct ReaderAIFeature {
 
                 case .stage(let label):
                     state.summaryStage = label
+                    return .none
+
+                case .qualityResolved(let quality):
+                    state.summaryResultQuality = quality
                     return .none
 
                 case .partial(let snapshot):
@@ -179,10 +244,17 @@ public struct ReaderAIFeature {
                         return .cancel(id: CancelID.summarize)
                     }
                     let repository = self.repository
+                    let quality = state.summaryResultQuality
+                    let promptVersion = ai.summaryPromptVersion(quality)
                     return .merge(
                         .cancel(id: CancelID.summarize),
                         .run { _ in
-                            try? await repository.saveSummary(itemID, final)
+                            try? await repository.saveSummary(
+                                itemID,
+                                quality.rawValue,
+                                promptVersion,
+                                final
+                            )
                         }
                     )
                 }
@@ -276,6 +348,28 @@ public struct ReaderAIFeature {
                     .cancel(id: CancelID.ask)
                 )
             }
+        }
+    }
+
+    private func loadCachedSummary(
+        itemID: UUID,
+        quality: ArticleAIClient.SummaryQuality
+    ) -> EffectOf<Self> {
+        let repository = self.repository
+        let promptVersion = ai.summaryPromptVersion(quality)
+        return .run { send in
+            let cached = try? await repository.loadSummary(
+                itemID,
+                quality.rawValue,
+                promptVersion
+            )
+            await send(
+                .cacheLoaded(
+                    quality: quality,
+                    text: cached?.text,
+                    generatedAt: cached?.generatedAt
+                )
+            )
         }
     }
 }

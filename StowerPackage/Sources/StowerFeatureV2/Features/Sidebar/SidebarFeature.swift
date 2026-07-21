@@ -7,7 +7,7 @@ public struct SidebarFeature {
 
     @ObservableState
     public struct State: Equatable {
-        public var selection: LibraryFilter = .all
+        public var selection: LibraryFilter = .unread
         public var counts: LibraryListCounts = .zero
         public var tags = [Tag]()
         public var isLoading = false

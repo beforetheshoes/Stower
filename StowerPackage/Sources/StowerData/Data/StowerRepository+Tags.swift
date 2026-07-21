@@ -49,6 +49,29 @@ extension StowerRepository {
 
     // MARK: Mutations
 
+    static func _reconcileOrphanedTagAssignments(
+        database: any DatabaseWriter,
+        scheduleSync: @escaping @Sendable () -> Void
+    ) -> @Sendable () async throws -> Int {
+        {
+            let removed = try await database.write { db in
+                let itemIDs = Set(try SavedItemSyncTable.fetchAll(db).map(\.id))
+                let tagIDs = Set(try TagSyncTable.fetchAll(db).map(\.id))
+                let assignments = try ItemTagSyncTable.fetchAll(db)
+                var removed = 0
+
+                for assignment in assignments
+                where !itemIDs.contains(assignment.itemID) || !tagIDs.contains(assignment.tagID) {
+                    try ItemTagSyncTable.find(assignment.id).delete().execute(db)
+                    removed += 1
+                }
+                return removed
+            }
+            if removed > 0 { scheduleSync() }
+            return removed
+        }
+    }
+
     /// Creates a tag, returning the existing row if a case-insensitive name
     /// match is already present (idempotent).
     static func _createTag(

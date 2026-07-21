@@ -65,70 +65,12 @@ public struct LibraryScreen: View {
                 Button {
                     store.send(.openItem(item))
                 } label: {
-                    HStack(alignment: .top, spacing: 12) {
-                        LibraryItemThumbnail(item: item)
-
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                                Text(LibrarySearchHighlight.highlighted(item.title, query: store.query))
-                                    .font(.headline)
-                                    .lineLimit(3)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                // Pill is only shown for states the user
-                                // might want to act on. `.ready` and
-                                // `.queued` are just noise in the common
-                                // case where every row in the list is
-                                // already ready to read.
-                                if shouldShowBadge(for: item.processingState) {
-                                    processingBadge(item.processingState)
-                                }
-                            }
-
-                            tagPillsRow(for: item)
-
-                            // When the query matches body text (not title),
-                            // surface the hit as a snippet so the user can
-                            // tell why the row showed up in results. Nil
-                            // when the title already contains the match —
-                            // no need to duplicate the context.
-                            if let snippet = LibrarySearchHighlight.bodySnippet(
-                                item: item,
-                                query: store.query
-                            ) {
-                                Text(snippet)
-                                    .font(.caption)
-                                    .foregroundStyle(.primary.opacity(0.85))
-                                    .lineLimit(2)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            }
-
-                            if let sourceURL = item.sourceURL,
-                               let host = URL(string: sourceURL)?.host ?? Optional(sourceURL) {
-                                Text(host)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            }
-
-                            HStack(spacing: 8) {
-                                if let siteName = item.siteName {
-                                    Label(siteName, systemImage: "globe")
-                                }
-                                if let reading = item.readingTimeMinutes {
-                                    Label("\(reading) min", systemImage: "clock")
-                                }
-                            }
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-
-                            if let progress = item.libraryReadingProgress {
-                                libraryProgressRow(progress)
-                            }
-                        }
-                    }
-                    .contentShape(Rectangle())
+                    LibraryItemRow(
+                        item: item,
+                        query: store.query,
+                        tags: resolvedTags(for: item),
+                        displayStyle: store.displayStyle
+                    )
                 }
                 .buttonStyle(.plain)
                 .swipeActions(edge: .leading) {
@@ -175,7 +117,7 @@ public struct LibraryScreen: View {
                         Button {
                             store.send(.reprocessItem(item.id))
                         } label: {
-                            Label("Improve", systemImage: "wand.and.stars")
+                            Label("Refresh Reader View", systemImage: "arrow.clockwise")
                         }
                         .tint(palette.secondary)
                     }
@@ -208,7 +150,7 @@ public struct LibraryScreen: View {
                             store.send(.toggleRead(item.id))
                         }
                         tagsSubmenu(for: item)
-                        Button("Improve Formatting") {
+                        Button("Refresh Reader View") {
                             store.send(.reprocessItem(item.id))
                         }
                         Button("Delete", role: .destructive) {
@@ -233,6 +175,8 @@ public struct LibraryScreen: View {
         .overlay {
             if store.isLoading {
                 ProgressView()
+            } else if store.filteredItems.isEmpty {
+                libraryEmptyState
             }
         }
         #if os(iOS)
@@ -252,6 +196,26 @@ public struct LibraryScreen: View {
                         onOpenSettings()
                     } label: {
                         Label("Settings", systemImage: "gearshape")
+                    }
+                }
+            }
+            ToolbarItem(placement: .primaryAction) {
+                Menu("View Options", systemImage: "rectangle.grid.1x2") {
+                    Picker(
+                        "Layout",
+                        selection: $store.displayStyle.sending(\.displayStyleChanged)
+                    ) {
+                        ForEach(LibraryDisplayStyle.allCases, id: \.self) { style in
+                            Text(style.title).tag(style)
+                        }
+                    }
+                    Picker(
+                        "Sort",
+                        selection: $store.sortOrder.sending(\.sortOrderChanged)
+                    ) {
+                        ForEach(LibrarySortOrder.allCases, id: \.self) { order in
+                            Text(order.title).tag(order)
+                        }
                     }
                 }
             }
@@ -744,6 +708,47 @@ public struct LibraryScreen: View {
         }
     }
 
+    @ViewBuilder private var libraryEmptyState: some View {
+        if !store.query.isEmpty {
+            ContentUnavailableView(
+                "No Results",
+                systemImage: "magnifyingglass",
+                description: Text("Try another title, publication, tag, or phrase from the article.")
+            )
+        } else {
+            switch store.filter {
+            case .unread:
+                ContentUnavailableView {
+                    Label("Inbox Zero", systemImage: "checkmark.circle")
+                } description: {
+                    Text("Nothing is waiting to be read. Completed articles stay available in Library, Starred, and Tags.")
+                } actions: {
+                    #if os(iOS)
+                    Button("Add a Link", systemImage: "link", action: presentAddURLSheet)
+                        .buttonStyle(.borderedProminent)
+                    #endif
+                }
+            case .all:
+                ContentUnavailableView {
+                    Label(String(localized: "Your Library Is Empty"), systemImage: "books.vertical")
+                } description: {
+                    Text("Save an article or website to keep it here for reading and future reference.")
+                } actions: {
+                    #if os(iOS)
+                    Button("Add a Link", systemImage: "link", action: presentAddURLSheet)
+                        .buttonStyle(.borderedProminent)
+                    #endif
+                }
+            default:
+                ContentUnavailableView(
+                    "Nothing Here Yet",
+                    systemImage: "tray",
+                    description: Text("Articles that match this list will appear here.")
+                )
+            }
+        }
+    }
+
     private func tagPillColor(_ hex: String?) -> Color {
         guard let hex, !hex.isEmpty else { return palette.secondary }
         return Color(hex: hex)
@@ -802,9 +807,9 @@ public struct LibraryScreen: View {
     private var navigationTitle: String {
         switch store.filter {
         case .all:
-            return "All"
+            return "Library"
         case .unread:
-            return "Unread"
+            return "Inbox"
         case .read:
             return "Read"
         case .starred:
@@ -840,15 +845,14 @@ public struct LibraryScreen: View {
 
             #if os(macOS)
             Button {
-                store.send(.saveURLTapped)
+                store.send(store.isSaving ? .cancelURLSaveTapped : .saveURLTapped)
             } label: {
                 if store.isSaving {
-                    ProgressView()
+                    Label("Cancel", systemImage: "xmark.circle.fill")
                 } else {
                     Label("Add", systemImage: "plus.circle.fill")
                 }
             }
-            .disabled(store.isSaving)
             .buttonStyle(.glassProminent)
             .fixedSize()
 
@@ -887,15 +891,14 @@ public struct LibraryScreen: View {
             .disabled(store.isSaving)
             #else
             Button {
-                store.send(.saveURLTapped)
+                store.send(store.isSaving ? .cancelURLSaveTapped : .saveURLTapped)
             } label: {
                 if store.isSaving {
-                    ProgressView()
+                    Label("Cancel", systemImage: "xmark.circle.fill")
                 } else {
                     Label("Add URL", systemImage: "plus.circle.fill")
                 }
             }
-            .disabled(store.isSaving)
             #endif
         }
     }

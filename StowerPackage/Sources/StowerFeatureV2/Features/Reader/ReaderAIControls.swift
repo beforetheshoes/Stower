@@ -49,28 +49,50 @@ struct ReaderAIControls: View {
     // MARK: - Content routing
 
     @ViewBuilder private var content: some View {
-        switch store.availability {
-        case .available:
-            switch store.mode {
-            case .summary:
+        switch store.mode {
+        case .summary:
+            if store.availability == .available {
                 summaryTab
-            case .ask:
-                askTab
+            } else {
+                availabilityCard(for: store.availability, features: "AI summaries")
             }
+        case .ask:
+            switch store.availability {
+            case .available:
+                askTab
+            default:
+                availabilityCard(for: store.availability, features: "Ask")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func availabilityCard(
+        for availability: ArticleAIClient.Availability,
+        features: String
+    ) -> some View {
+        switch availability {
+        case .available:
+            EmptyView()
         case .appleIntelligenceNotEnabled:
             unavailableCard(
                 title: "Apple Intelligence is off",
-                message: "Turn on Apple Intelligence in Settings to use Summary and Ask."
+                message: "Turn on Apple Intelligence in Settings to use \(features)."
             )
         case .deviceNotEligible:
             unavailableCard(
                 title: "Not supported",
-                message: "This device doesn't support Apple Intelligence. Summary and Ask require a newer device."
+                message: "This device doesn't support Apple Intelligence."
             )
         case .modelNotReady:
             unavailableCard(
                 title: "Preparing model",
                 message: "Apple Intelligence is still getting ready. Try again in a minute."
+            )
+        case .quotaLimitReached:
+            unavailableCard(
+                title: "AI temporarily unavailable",
+                message: "Try again later."
             )
         case .other(let message):
             unavailableCard(
@@ -98,6 +120,10 @@ struct ReaderAIControls: View {
 
     @ViewBuilder private var summaryTab: some View {
         VStack(alignment: .leading, spacing: 12) {
+            Text("Generated entirely on this device.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
             if !store.summaryText.isEmpty {
                 ScrollView {
                     Text(store.summaryText)
@@ -115,7 +141,7 @@ struct ReaderAIControls: View {
                     } label: {
                         Label("Regenerate", systemImage: "arrow.clockwise")
                     }
-                    .disabled(store.isSummarizing)
+                    .disabled(store.isSummarizing || !canSummarize)
                 }
             } else if store.isSummarizing {
                 VStack(spacing: 12) {
@@ -133,17 +159,14 @@ struct ReaderAIControls: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("Generate an on-device AI summary of this article.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
                     Button {
                         store.send(.summarizeRequested(document: document, plainText: plainText))
                     } label: {
-                        Label("Summarize article", systemImage: "sparkles")
+                        Label("Generate summary", systemImage: "sparkles")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(plainText.isEmpty)
+                    .disabled(plainText.isEmpty || !canSummarize)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -159,16 +182,20 @@ struct ReaderAIControls: View {
 
     @ViewBuilder private var summaryFootnote: some View {
         if store.summaryWasCached, let date = store.summaryGeneratedAt {
-            Text("Cached \(relativeDateText(date))")
+            Text("On-device · cached \(relativeDateText(date))")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         } else if store.summaryGeneratedAt != nil {
-            Text("Just now")
+            Text("On-device · just now")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         } else {
             EmptyView()
         }
+    }
+
+    private var canSummarize: Bool {
+        store.availability == .available
     }
 
     private func relativeDateText(_ date: Date) -> String {

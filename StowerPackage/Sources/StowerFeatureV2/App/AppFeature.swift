@@ -1,5 +1,6 @@
 import ComposableArchitecture
 import Foundation
+import SQLiteData
 
 @Reducer
 public struct AppFeature {
@@ -10,15 +11,36 @@ public struct AppFeature {
         public var sidebar = SidebarFeature.State()
         public var library = LibraryFeature.State()
         public var settings = SettingsFeature.State()
+        public var isReaderFocused = false
         public var isSettingsPresented: Bool = false
         public var cachedAppearance: ReaderAppearanceSettings
         @Presents public var reader: ReaderFeature.State?
         public var startupFinished = false
         public var startupErrorMessage: String?
+        public var failedImportCount = 0
+        public var recentlyCompletedItem: SavedItem?
         public var cloudSyncStatus: CloudSyncStatus = .starting
         @Presents public var resetAlert: AlertState<Action.ResetAlert>?
 
         public var palette: FlexokiPalette { cachedAppearance.palette }
+
+        public var canFocusReader: Bool { reader != nil }
+
+        public var canNavigateToNextArticle: Bool {
+            guard
+                let itemID = reader?.itemID,
+                let index = library.filteredItems.firstIndex(where: { $0.id == itemID })
+            else { return false }
+            return library.filteredItems.indices.contains(index + 1)
+        }
+
+        public var canNavigateToPreviousArticle: Bool {
+            guard
+                let itemID = reader?.itemID,
+                let index = library.filteredItems.firstIndex(where: { $0.id == itemID })
+            else { return false }
+            return library.filteredItems.indices.contains(index - 1)
+        }
 
         public init() {
             // Seed the initial appearance from UserDefaults so the very
@@ -74,8 +96,19 @@ public struct AppFeature {
         case sceneDidBecomeActive
         case startupFinished
         case startupFailed(String)
+        case failedImportsLoaded(Int)
+        case retryFailedImportsTapped
+        case dismissFailedImportsTapped
         case readerAppearanceLoaded(ReaderAppearanceSettings)
         case readerAppearanceFailed(String)
+        case readerFocusButtonTapped
+        case exitReaderFocus
+        case nextArticleButtonTapped
+        case previousArticleButtonTapped
+        case toggleSelectedItemRead
+        case toggleSelectedItemStarred
+        case undoCompletedItemTapped
+        case completedItemNoticeExpired(UUID)
         case openSettings
         case closeSettings
         case cloudSyncStatusChanged(CloudSyncStatus)
@@ -108,17 +141,21 @@ public struct AppFeature {
     var syncEngine
     @Dependency(\.continuousClock)
     var clock
+    @Dependency(\.date)
+    var date
+    @Dependency(\.ingestionCoordinator)
+    var ingestionCoordinator
     @Dependency(\.context)
     var context
 
     public var body: some ReducerOf<Self> {
-        Scope(state: \.sidebar, action: \.sidebar) {
+        Scope(\.sidebar, action: \.sidebar) {
             SidebarFeature()
         }
-        Scope(state: \.library, action: \.library) {
+        Scope(\.library, action: \.library) {
             LibraryFeature()
         }
-        Scope(state: \.settings, action: \.settings) {
+        Scope(\.settings, action: \.settings) {
             SettingsFeature()
         }
         .ifLet(\.$reader, action: \.reader) {
@@ -133,8 +170,10 @@ public struct AppFeature {
                 let ingestionClient = self.ingestionClient
                 let pdfIngestionClient = self.pdfIngestionClient
                 let textIngestionClient = self.textIngestionClient
+                let date = self.date
+                let ingestionCoordinator = self.ingestionCoordinator
                 let clock = self.clock
-                let periodicSync: Effect<Action> =
+                let periodicSync: EffectOf<Self> =
                     context == .live
                     ? .run { _ in
                         // CloudKit push delivery is not guaranteed (especially on macOS). While the app is
@@ -168,22 +207,32 @@ public struct AppFeature {
                     // Sidebar subscription: loads counts + tags and listens for changes.
                     .send(.sidebar(.onAppear)),
                     // Purge expired trash items (fire-and-forget).
-                    .run { _ in _ = try? await repository.purgeOldTrash() },
+                    .run { _ in
+                        for itemID in (try? await repository.purgeOldTrash()) ?? [] {
+                            AssetArchiver.deleteArchive(for: itemID)
+                        }
+                    },
                     .run { send in
                         do {
                             try await cloudSyncClient.start()
+                            _ = try await repository.reconcileOrphanedTagAssignments()
                             // Backfill the text sync table from local content
                             // for any text items missing a sync row (recovery
                             // from the v11 DROP TABLE migration or items that
                             // predate the sync table).
                             _ = try await repository.backfillTextSyncTable()
                             _ = try await repository.enqueueHydrationJobsForMissingContent()
-                            try await processIngestionJobs(
-                                repository: repository,
-                                ingestionClient: ingestionClient,
-                                pdfIngestionClient: pdfIngestionClient,
-                                textIngestionClient: textIngestionClient
-                            )
+                            try await ingestionCoordinator.run {
+                                try await processIngestionJobs(
+                                    repository: repository,
+                                    ingestionClient: ingestionClient,
+                                    pdfIngestionClient: pdfIngestionClient,
+                                    textIngestionClient: textIngestionClient
+                                ) { date.now }
+                            }
+                            await send(.failedImportsLoaded(
+                                try await repository.fetchFailedIngestionJobs().count
+                            ))
                             try await cloudSyncClient.sendChanges()
                             await send(.startupFinished)
                             await send(.library(.reload))
@@ -205,6 +254,41 @@ public struct AppFeature {
                 state.startupErrorMessage = message
                 return .none
 
+            case .failedImportsLoaded(let count):
+                state.failedImportCount = count
+                return .none
+
+            case .retryFailedImportsTapped:
+                let repository = self.repository
+                let ingestionClient = self.ingestionClient
+                let pdfIngestionClient = self.pdfIngestionClient
+                let textIngestionClient = self.textIngestionClient
+                let date = self.date
+                let ingestionCoordinator = self.ingestionCoordinator
+                state.failedImportCount = 0
+                return .run { send in
+                    try? await repository.retryFailedIngestionJobs()
+                    try? await ingestionCoordinator.run {
+                        try await processIngestionJobs(
+                            repository: repository,
+                            ingestionClient: ingestionClient,
+                            pdfIngestionClient: pdfIngestionClient,
+                            textIngestionClient: textIngestionClient
+                        ) { date.now }
+                    }
+                    let count = (try? await repository.fetchFailedIngestionJobs().count) ?? 0
+                    await send(.failedImportsLoaded(count))
+                    await send(.library(.reload))
+                }
+
+            case .dismissFailedImportsTapped:
+                let repository = self.repository
+                let now = date.now
+                state.failedImportCount = 0
+                return .run { _ in
+                    try? await repository.dismissFailedIngestionJobs(now)
+                }
+
             case .sceneDidBecomeActive:
                 // The share extension enqueues ingestion jobs into the shared
                 // App Group database but has no way to notify the running main
@@ -220,13 +304,19 @@ public struct AppFeature {
                 let ingestionClient = self.ingestionClient
                 let pdfIngestionClient = self.pdfIngestionClient
                 let textIngestionClient = self.textIngestionClient
+                let date = self.date
+                let ingestionCoordinator = self.ingestionCoordinator
                 return .run { send in
-                    try? await processIngestionJobs(
-                        repository: repository,
-                        ingestionClient: ingestionClient,
-                        pdfIngestionClient: pdfIngestionClient,
-                        textIngestionClient: textIngestionClient
-                    )
+                    try? await ingestionCoordinator.run {
+                        try await processIngestionJobs(
+                            repository: repository,
+                            ingestionClient: ingestionClient,
+                            pdfIngestionClient: pdfIngestionClient,
+                            textIngestionClient: textIngestionClient
+                        ) { date.now }
+                    }
+                    let count = (try? await repository.fetchFailedIngestionJobs().count) ?? 0
+                    await send(.failedImportsLoaded(count))
                     await send(.library(.reload))
                     await send(.sidebar(.reload))
                 }
@@ -237,6 +327,50 @@ public struct AppFeature {
                 return .none
 
             case .readerAppearanceFailed:
+                return .none
+
+            case .readerFocusButtonTapped:
+                guard state.reader != nil else {
+                    state.isReaderFocused = false
+                    return .none
+                }
+                state.isReaderFocused.toggle()
+                return .none
+
+            case .exitReaderFocus:
+                state.isReaderFocused = false
+                return .none
+
+            case .nextArticleButtonTapped:
+                return navigateReader(offset: 1, state: &state)
+
+            case .previousArticleButtonTapped:
+                return navigateReader(offset: -1, state: &state)
+
+            case .toggleSelectedItemRead:
+                guard let itemID = state.reader?.itemID else { return .none }
+                state.reader?.item?.isRead.toggle()
+                return .send(.library(.toggleRead(itemID)))
+
+            case .toggleSelectedItemStarred:
+                guard let itemID = state.reader?.itemID else { return .none }
+                state.reader?.item?.isStarred.toggle()
+                return .send(.library(.toggleStar(itemID)))
+
+            case .undoCompletedItemTapped:
+                guard let item = state.recentlyCompletedItem else { return .none }
+                state.recentlyCompletedItem = nil
+                let repository = self.repository
+                return .run { send in
+                    try? await repository.setReadStatus(item.id, false)
+                    await send(.library(.reload))
+                    await send(.sidebar(.reload))
+                }
+                .cancellable(id: CancelID.completedItemNotice, cancelInFlight: true)
+
+            case .completedItemNoticeExpired(let itemID):
+                guard state.recentlyCompletedItem?.id == itemID else { return .none }
+                state.recentlyCompletedItem = nil
                 return .none
 
             case .openSettings:
@@ -264,17 +398,24 @@ public struct AppFeature {
                     let ingestionClient = self.ingestionClient
                     let pdfIngestionClient = self.pdfIngestionClient
                     let textIngestionClient = self.textIngestionClient
+                    let date = self.date
+                    let ingestionCoordinator = self.ingestionCoordinator
                     return .run { send in
                         _ = try? await repository.enqueueHydrationJobsForMissingContent()
                         _ = try? await repository.hydratePDFItemsFromSyncedContent()
                         _ = try? await repository.hydrateTextItemsFromSyncedContent()
                         _ = try? await repository.hydrateWebsiteItemsFromSyncedContent()
-                        try? await processIngestionJobs(
-                            repository: repository,
-                            ingestionClient: ingestionClient,
-                            pdfIngestionClient: pdfIngestionClient,
-                            textIngestionClient: textIngestionClient
-                        )
+                        _ = try? await repository.reconcileOrphanedTagAssignments()
+                        try? await ingestionCoordinator.run {
+                            try await processIngestionJobs(
+                                repository: repository,
+                                ingestionClient: ingestionClient,
+                                pdfIngestionClient: pdfIngestionClient,
+                                textIngestionClient: textIngestionClient
+                            ) { date.now }
+                        }
+                        let count = (try? await repository.fetchFailedIngestionJobs().count) ?? 0
+                        await send(.failedImportsLoaded(count))
                         await send(.library(.reload))
                         await send(.sidebar(.reload))
                     }
@@ -361,6 +502,32 @@ public struct AppFeature {
                 }
                 return .none
 
+            case let .reader(.presented(.delegate(.done(itemID, wasUnread)))):
+                if wasUnread, let item = state.reader?.item {
+                    state.recentlyCompletedItem = item
+                }
+                state.reader = nil
+                state.isReaderFocused = false
+
+                let clock = self.clock
+                let expiration: EffectOf<Self> = wasUnread
+                    ? .run { send in
+                        try? await clock.sleep(for: .seconds(6))
+                        await send(.completedItemNoticeExpired(itemID))
+                    }
+                    .cancellable(id: CancelID.completedItemNotice, cancelInFlight: true)
+                    : .none
+
+                return .merge(
+                    .send(.library(.reload)),
+                    .send(.sidebar(.reload)),
+                    expiration
+                )
+
+            case .reader(.dismiss):
+                state.isReaderFocused = false
+                return .none
+
             case .library, .settings, .reader:
                 return .none
             }
@@ -371,6 +538,24 @@ public struct AppFeature {
         case startup
         case syncStatus
         case periodicSync
+        case completedItemNotice
+    }
+
+    private func navigateReader(
+        offset: Int,
+        state: inout State
+    ) -> EffectOf<Self> {
+        guard
+            let itemID = state.reader?.itemID,
+            let index = state.library.filteredItems.firstIndex(where: { $0.id == itemID }),
+            state.library.filteredItems.indices.contains(index + offset)
+        else { return .none }
+
+        state.reader = ReaderFeature.State(
+            item: state.library.filteredItems[index + offset],
+            appearance: state.cachedAppearance
+        )
+        return .none
     }
 }
 
@@ -378,53 +563,43 @@ private func processIngestionJobs(
     repository: StowerRepository,
     ingestionClient: URLIngestionClient,
     pdfIngestionClient: PDFIngestionClient,
+    textIngestionClient: TextIngestionClient,
+    now: @escaping @Sendable () -> Date
+) async throws {
+    while let job = try await repository.claimNextIngestionJob(now()) {
+        do {
+            try await processIngestionJob(
+                job,
+                repository: repository,
+                ingestionClient: ingestionClient,
+                pdfIngestionClient: pdfIngestionClient,
+                textIngestionClient: textIngestionClient
+            )
+            try await repository.completeIngestionJob(job.id, now())
+        } catch is CancellationError {
+            try? await repository.failIngestionJob(job.id, "Import cancelled.", now())
+            throw CancellationError()
+        } catch {
+            try await repository.failIngestionJob(job.id, error.localizedDescription, now())
+        }
+    }
+}
+
+private func processIngestionJob(
+    _ job: IngestionJob,
+    repository: StowerRepository,
+    ingestionClient: URLIngestionClient,
+    pdfIngestionClient: PDFIngestionClient,
     textIngestionClient: TextIngestionClient
 ) async throws {
-    let jobs = try await repository.fetchPendingIngestionJobs()
-    for job in jobs {
-        switch job.kind {
+    @Dependency(\.articleSaveClient) var articleSaveClient
+    switch job.kind {
         case .url:
-            // Wrap the URL ingestion path in a do/catch so a single throwing
-            // ingest (bad host, timeout, YouTube API hiccup) does not abandon
-            // the rest of the queued batch. On failure we fall back to
-            // storing the raw payload as a plaintext item so the user can
-            // still see what they tried to add.
-            do {
-                let trimmed = job.payload.trimmingCharacters(in: .whitespacesAndNewlines)
-                if let url = URL(string: trimmed) {
-                    let result = try await ingestionClient.ingest(url)
-                    let item = try await repository.createItemFromIngestion(result)
-
-                    // Archive all external assets for offline WebView rendering.
-                    if result.renderFormat == .webView,
-                       !result.sourceHTML.isEmpty,
-                       let source = result.sourceURL,
-                       let baseURL = URL(string: source) {
-                        await AssetArchiver.archiveAssets(
-                            html: result.sourceHTML,
-                            baseURL: baseURL,
-                            itemID: item.id
-                        )
-                    }
-
-                    // If the URL ingester short-circuited into the PDF path,
-                    // the bytes are staged in `tmp/stower-pdf-stage-{hash}.pdf`.
-                    // Move them into the archive directory now that we have
-                    // an item ID.
-                    if result.renderFormat == .pdf, let hash = result.pdfSHA256 {
-                        let staged = FileManager.default.temporaryDirectory
-                            .appendingPathComponent("stower-pdf-stage-\(hash).pdf")
-                        if FileManager.default.fileExists(atPath: staged.path) {
-                            try? PDFArchiver.archivePDF(from: staged, itemID: item.id)
-                            try? FileManager.default.removeItem(at: staged)
-                        }
-                    }
-                } else {
-                    _ = try await repository.createItemFromIngestion(.sharedText(trimmed))
-                }
-            } catch {
-                _ = try? await repository.createItemFromIngestion(.sharedText(job.payload))
+            let trimmed = job.payload.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let url = URL(string: trimmed), ["http", "https"].contains(url.scheme?.lowercased() ?? "") else {
+                throw IngestionProcessingError.invalidHydrationURL(trimmed)
             }
+            _ = try await articleSaveClient.save(url)
         case .pdf:
             // Payload is the absolute path of a PDF file that the share
             // extension or in-app picker copied into the shared App Group
@@ -479,6 +654,7 @@ private func processIngestionJobs(
                 try await repository.hydrateItemContent(payload.itemID, result)
             } catch {
                 try? await repository.updateLocalContentStatus(payload.itemID, "failed", error.localizedDescription)
+                throw error
             }
         case .hydrate:
             let data = Data(job.payload.utf8)
@@ -486,23 +662,13 @@ private func processIngestionJobs(
             if let url = URL(string: payload.url) {
                 do {
                     try await repository.updateLocalContentStatus(payload.itemID, "downloading", nil)
-                    let result = try await ingestionClient.ingest(url)
-                    try await repository.hydrateItemContent(payload.itemID, result)
-
-                    // Archive assets for offline WebView rendering.
-                    if result.renderFormat == .webView,
-                       !result.sourceHTML.isEmpty,
-                       let source = result.sourceURL,
-                       let baseURL = URL(string: source) {
-                        await AssetArchiver.archiveAssets(
-                            html: result.sourceHTML,
-                            baseURL: baseURL,
-                            itemID: payload.itemID
-                        )
-                    }
+                    _ = try await articleSaveClient.hydrate(payload.itemID, url)
                 } catch {
                     try? await repository.updateLocalContentStatus(payload.itemID, "failed", error.localizedDescription)
+                    throw error
                 }
+            } else {
+                throw IngestionProcessingError.invalidHydrationURL(payload.url)
             }
         case .website:
             // Payload is the absolute path of a .zip file the share extension
@@ -533,9 +699,9 @@ private func processIngestionJobs(
             let data = Data(job.payload.utf8)
             let payload = try JSONDecoder().decode(WebsiteHydrationPayload.self, from: data)
             do {
-                guard
-                    let archive = try await repository.loadWebsiteArchive(payload.itemID)
-                else { break }
+                guard let archive = try await repository.loadWebsiteArchive(payload.itemID) else {
+                    throw IngestionProcessingError.missingWebsiteArchive
+                }
                 try await WebsiteImportService.hydrateWebsite(
                     itemID: payload.itemID,
                     archive: archive,
@@ -547,8 +713,21 @@ private func processIngestionJobs(
                     "failed",
                     error.localizedDescription
                 )
+                throw error
             }
         }
-        try await repository.markIngestionJobProcessed(job.id)
+}
+
+private enum IngestionProcessingError: LocalizedError {
+    case invalidHydrationURL(String)
+    case missingWebsiteArchive
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidHydrationURL(let value):
+            "Invalid hydration URL: \(value)"
+        case .missingWebsiteArchive:
+            "The synced website archive is not available yet."
+        }
     }
 }

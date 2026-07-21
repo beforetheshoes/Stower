@@ -48,6 +48,20 @@ struct RepositoryFilterTests {
     }
 
     @Test
+    func changingReadOrStarredStateDoesNotReorderLibrary() async throws {
+        let repository = try makeRepository()
+        let first = try await repository.createItemFromIngestion(.sharedText("First"))
+        let second = try await repository.createItemFromIngestion(.sharedText("Second"))
+        let originalOrder = try await repository.fetchLibrary(.all).map(\.id)
+
+        try await repository.setStarred(first.id, true)
+        try await repository.setReadStatus(first.id, true)
+
+        #expect(try await repository.fetchLibrary(.all).map(\.id) == originalOrder)
+        #expect(Set(originalOrder) == Set([first.id, second.id]))
+    }
+
+    @Test
     func softDelete_restore_permanent() async throws {
         let repository = try makeRepository()
         let a = try await repository.createItemFromIngestion(.sharedText("Alpha"))
@@ -174,6 +188,25 @@ struct RepositoryFilterTests {
         )
         #expect(diagnostics.syncedTagsCount == 1)
         #expect(diagnostics.syncedItemTagsCount == 1)
+    }
+
+    @Test
+    func reconcileOrphanedTagAssignments_removesRemoteDeletionResidue() async throws {
+        let database = try StowerDatabase.makeDatabase()
+        let repository = StowerRepository.live(database: database, cloudSyncClient: .noop)
+        let item = try await repository.createItemFromIngestion(.sharedText("Tagged"))
+        let tag = try await repository.createTag("Temporary", nil)
+        try await repository.addTag(item.id, tag.id)
+
+        // Simulate CloudKit delivering the tag deletion without the matching
+        // junction deletion. These sync tables intentionally have no FKs.
+        try await database.write { db in
+            try TagSyncTable.find(tag.id).delete().execute(db)
+        }
+
+        #expect(try await repository.fetchTagIDs(item.id) == [tag.id])
+        #expect(try await repository.reconcileOrphanedTagAssignments() == 1)
+        #expect(try await repository.fetchTagIDs(item.id).isEmpty)
     }
 
     @Test

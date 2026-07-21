@@ -164,6 +164,9 @@ public struct IngestionResult: Equatable, Sendable {
     /// staged PDF file in temp so it can be moved into the archive directory
     /// after the item ID is assigned.
     public var pdfSHA256: String?
+    /// Staged exact web capture. Persistence installs this package atomically
+    /// after the database item has its stable ID.
+    public var webCapture: WebCaptureArtifact?
 
     public init(
         title: String,
@@ -186,7 +189,8 @@ public struct IngestionResult: Equatable, Sendable {
         rawSourceText: String? = nil,
         rawSourceMode: TextImportMode? = nil,
         sourceHTML: String = "",
-        pdfSHA256: String? = nil
+        pdfSHA256: String? = nil,
+        webCapture: WebCaptureArtifact? = nil
     ) {
         self.title = title
         self.sourceURL = sourceURL
@@ -209,6 +213,7 @@ public struct IngestionResult: Equatable, Sendable {
         self.rawSourceMode = rawSourceMode
         self.sourceHTML = sourceHTML
         self.pdfSHA256 = pdfSHA256
+        self.webCapture = webCapture
     }
 
     public static func sharedText(
@@ -318,6 +323,34 @@ public struct IngestionResult: Equatable, Sendable {
             rawSourceText: rawSourceText,
             rawSourceMode: rawSourceMode
         )
+    }
+}
+
+public struct WebCaptureArtifact: Equatable, Sendable {
+    public let captureID: UUID
+    public let version: Int
+    public let stagedPackageURL: URL
+    public let sha256: String
+    public let byteCount: Int
+    public let completeness: WebCaptureCompleteness
+    public let warnings: [String]
+
+    public init(
+        captureID: UUID,
+        version: Int = 1,
+        stagedPackageURL: URL,
+        sha256: String,
+        byteCount: Int,
+        completeness: WebCaptureCompleteness,
+        warnings: [String] = []
+    ) {
+        self.captureID = captureID
+        self.version = version
+        self.stagedPackageURL = stagedPackageURL
+        self.sha256 = sha256
+        self.byteCount = byteCount
+        self.completeness = completeness
+        self.warnings = warnings
     }
 }
 

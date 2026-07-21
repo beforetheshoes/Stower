@@ -8,6 +8,93 @@ import Testing
 @Suite
 struct AppFeatureTests {
     @Test
+    func doneDismissesReaderButKeepsItemAvailableForUndo() async {
+        let item = SavedItem(title: "Reference", content: "Body")
+        let writes = LockIsolated<[Bool]>([])
+        let clock = TestClock()
+        var state = AppFeature.State()
+        state.reader = ReaderFeature.State(item: item, appearance: state.cachedAppearance)
+
+        let store = TestStore(initialState: state) {
+            AppFeature()
+        } withDependencies: {
+            $0.continuousClock = clock
+            $0.stowerRepository.setReadStatus = { _, isRead in
+                writes.withValue { $0.append(isRead) }
+            }
+            $0.stowerRepository.fetchLibrary = { _ in [] }
+            $0.stowerRepository.fetchListCounts = { .zero }
+            $0.stowerRepository.fetchTags = { [] }
+        }
+        store.exhaustivity = .off(showSkippedAssertions: false)
+
+        await store.send(.reader(.presented(.doneTapped))) {
+            $0.reader?.item?.isRead = true
+        }
+        await store.receive(
+            .reader(.presented(.delegate(.done(itemID: item.id, wasUnread: true))))
+        ) {
+            var completed = item
+            completed.isRead = true
+            $0.recentlyCompletedItem = completed
+            $0.reader = nil
+        }
+
+        await store.send(.undoCompletedItemTapped) {
+            $0.recentlyCompletedItem = nil
+        }
+        #expect(writes.value == [true, false])
+    }
+
+    @Test
+    func readerFocusRequiresSelectionAndToggles() async {
+        let item = SavedItem(title: "Focused", content: "Body")
+        let store = TestStore(initialState: AppFeature.State()) {
+            AppFeature()
+        }
+
+        await store.send(.readerFocusButtonTapped)
+
+        await store.send(.library(.openItem(item))) {
+            $0.reader = ReaderFeature.State(item: item, appearance: $0.cachedAppearance)
+        }
+        await store.send(.readerFocusButtonTapped) {
+            $0.isReaderFocused = true
+        }
+        await store.send(.readerFocusButtonTapped) {
+            $0.isReaderFocused = false
+        }
+    }
+
+    @Test
+    func readerFocusNavigatesAndExitsWhenReaderDismisses() async {
+        let first = SavedItem(title: "First", content: "One")
+        let second = SavedItem(title: "Second", content: "Two")
+        var state = AppFeature.State()
+        state.library.items = [first, second]
+        state.reader = ReaderFeature.State(item: first, appearance: state.cachedAppearance)
+        state.isReaderFocused = true
+
+        let store = TestStore(initialState: state) {
+            AppFeature()
+        }
+
+        #expect(!store.state.canNavigateToPreviousArticle)
+        #expect(store.state.canNavigateToNextArticle)
+
+        await store.send(.nextArticleButtonTapped) {
+            $0.reader = ReaderFeature.State(item: second, appearance: $0.cachedAppearance)
+        }
+        #expect(store.state.canNavigateToPreviousArticle)
+        #expect(!store.state.canNavigateToNextArticle)
+
+        await store.send(.reader(.dismiss)) {
+            $0.isReaderFocused = false
+            $0.reader = nil
+        }
+    }
+
+    @Test
     func saveURL_thenOpenItem_readerLoadsSuccessfully() async throws {
         // Use a REAL database to test the full flow
         let database = try StowerDatabase.makeDatabase()
@@ -60,7 +147,6 @@ struct AppFeatureTests {
                 scheduleSendChanges: {},
                 statusStream: { AsyncStream { continuation in continuation.finish() } }
             )
-            $0.stowerRepository.fetchPendingIngestionJobs = { [] }
             $0.stowerRepository.fetchLibrary = { _ in [item] }
             $0.stowerRepository.fetchListCounts = { .zero }
             $0.stowerRepository.fetchTags = { [] }
@@ -69,7 +155,10 @@ struct AppFeatureTests {
             $0.stowerRepository.loadSettings = { settings }
             $0.stowerRepository.loadReaderAppearanceSettings = { appearance }
             $0.stowerRepository.enqueueHydrationJobsForMissingContent = { 0 }
+            $0.stowerRepository.claimNextIngestionJob = { _ in nil }
+            $0.stowerRepository.claimNextIngestionJobOfKind = { _, _ in nil }
             $0.continuousClock = ImmediateClock()
+            $0.date.now = Date(timeIntervalSince1970: 1000)
             $0.syncDiagnosticsClient = .noop
         }
 
@@ -98,6 +187,9 @@ struct AppFeatureTests {
                 titleHint: "Meeting Notes"
             )
         )
+        let queuedJobs = LockIsolated([
+            IngestionJob(kind: .markdown, payload: payload),
+        ])
 
         let store = TestStore(initialState: AppFeature.State()) {
             AppFeature()
@@ -108,14 +200,17 @@ struct AppFeatureTests {
                 scheduleSendChanges: {},
                 statusStream: { AsyncStream { continuation in continuation.finish() } }
             )
-            $0.stowerRepository.fetchPendingIngestionJobs = {
-                [IngestionJob(kind: .markdown, payload: payload)]
+            $0.stowerRepository.claimNextIngestionJob = { _ in
+                queuedJobs.withValue { jobs in
+                    jobs.isEmpty ? nil : jobs.removeFirst()
+                }
             }
+            $0.stowerRepository.claimNextIngestionJobOfKind = { _, _ in nil }
             $0.stowerRepository.createItemFromIngestion = { result in
                 created.withValue { $0.append(result) }
                 return SavedItem(title: result.title, content: result.plainText, renderFormat: result.renderFormat)
             }
-            $0.stowerRepository.markIngestionJobProcessed = { _ in }
+            $0.stowerRepository.completeIngestionJob = { _, _ in }
             $0.stowerRepository.fetchLibrary = { _ in [] }
             $0.stowerRepository.fetchListCounts = { .zero }
             $0.stowerRepository.fetchTags = { [] }
@@ -123,6 +218,7 @@ struct AppFeatureTests {
             $0.stowerRepository.purgeOldTrash = { [] }
             $0.stowerRepository.enqueueHydrationJobsForMissingContent = { 0 }
             $0.continuousClock = ImmediateClock()
+            $0.date.now = Date(timeIntervalSince1970: 1000)
             $0.syncDiagnosticsClient = .noop
         }
 
@@ -148,6 +244,9 @@ struct AppFeatureTests {
         - one
         - two
         """
+        let queuedJobs = LockIsolated([
+            IngestionJob(kind: .text, payload: markdown),
+        ])
 
         let store = TestStore(initialState: AppFeature.State()) {
             AppFeature()
@@ -158,14 +257,17 @@ struct AppFeatureTests {
                 scheduleSendChanges: {},
                 statusStream: { AsyncStream { continuation in continuation.finish() } }
             )
-            $0.stowerRepository.fetchPendingIngestionJobs = {
-                [IngestionJob(kind: .text, payload: markdown)]
+            $0.stowerRepository.claimNextIngestionJob = { _ in
+                queuedJobs.withValue { jobs in
+                    jobs.isEmpty ? nil : jobs.removeFirst()
+                }
             }
+            $0.stowerRepository.claimNextIngestionJobOfKind = { _, _ in nil }
             $0.stowerRepository.createItemFromIngestion = { result in
                 created.withValue { $0.append(result) }
                 return SavedItem(title: result.title, content: result.plainText, renderFormat: result.renderFormat)
             }
-            $0.stowerRepository.markIngestionJobProcessed = { _ in }
+            $0.stowerRepository.completeIngestionJob = { _, _ in }
             $0.stowerRepository.fetchLibrary = { _ in [] }
             $0.stowerRepository.fetchListCounts = { .zero }
             $0.stowerRepository.fetchTags = { [] }
@@ -173,6 +275,7 @@ struct AppFeatureTests {
             $0.stowerRepository.purgeOldTrash = { [] }
             $0.stowerRepository.enqueueHydrationJobsForMissingContent = { 0 }
             $0.continuousClock = ImmediateClock()
+            $0.date.now = Date(timeIntervalSince1970: 1000)
             $0.syncDiagnosticsClient = .noop
         }
 
@@ -188,4 +291,67 @@ struct AppFeatureTests {
         #expect(results[0].title == "Queued Heading")
         #expect(results[0].renderFormat == .structuredV1)
     }
+
+    @Test
+    func failedQueuedURLDoesNotCreatePlainTextFallbackItem() async {
+        let queuedJobs = LockIsolated([
+            IngestionJob(kind: .url, payload: "https://example.com/article"),
+        ])
+        let createdItems = LockIsolated(0)
+        let failures = LockIsolated<[String]>([])
+
+        let store = TestStore(initialState: AppFeature.State()) {
+            AppFeature()
+        } withDependencies: {
+            $0.articleSaveClient = ArticleSaveClient(
+                save: { _ in throw QueuedURLCaptureError.failed },
+                refresh: { _, _ in throw QueuedURLCaptureError.failed },
+                hydrate: { _, _ in throw QueuedURLCaptureError.failed }
+            )
+            $0.cloudSyncClient = CloudSyncClient(
+                start: {},
+                sendChanges: {},
+                scheduleSendChanges: {},
+                statusStream: { AsyncStream { $0.finish() } }
+            )
+            $0.stowerRepository.claimNextIngestionJob = { _ in
+                queuedJobs.withValue { jobs in
+                    jobs.isEmpty ? nil : jobs.removeFirst()
+                }
+            }
+            $0.stowerRepository.claimNextIngestionJobOfKind = { _, _ in nil }
+            $0.stowerRepository.createItemFromIngestion = { result in
+                createdItems.withValue { $0 += 1 }
+                return SavedItem(title: result.title, content: result.plainText)
+            }
+            $0.stowerRepository.failIngestionJob = { _, message, _ in
+                failures.withValue { $0.append(message) }
+            }
+            $0.stowerRepository.completeIngestionJob = { _, _ in }
+            $0.stowerRepository.fetchLibrary = { _ in [] }
+            $0.stowerRepository.fetchListCounts = { .zero }
+            $0.stowerRepository.fetchTags = { [] }
+            $0.stowerRepository.observeLibraryChanges = { AsyncStream { $0.finish() } }
+            $0.stowerRepository.purgeOldTrash = { [] }
+            $0.stowerRepository.enqueueHydrationJobsForMissingContent = { 0 }
+            $0.continuousClock = ImmediateClock()
+            $0.date.now = Date(timeIntervalSince1970: 1000)
+            $0.syncDiagnosticsClient = .noop
+        }
+
+        store.exhaustivity = .off(showSkippedAssertions: false)
+        await store.send(.onAppear)
+        await store.receive(.startupFinished) {
+            $0.startupFinished = true
+        }
+
+        #expect(createdItems.value == 0)
+        #expect(failures.value == ["Queued URL capture failed."])
+    }
+}
+
+private enum QueuedURLCaptureError: Error, LocalizedError {
+    case failed
+
+    var errorDescription: String? { "Queued URL capture failed." }
 }

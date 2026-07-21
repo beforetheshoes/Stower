@@ -1,3 +1,4 @@
+import ComposableArchitecture
 import StowerFeature
 import SwiftUI
 
@@ -9,5 +10,10 @@ struct StowerApp: App {
         WindowGroup {
             ContentView(store: store)
         }
+        #if os(macOS)
+        .commands {
+            ReaderCommands(store: store)
+        }
+        #endif
     }
 }

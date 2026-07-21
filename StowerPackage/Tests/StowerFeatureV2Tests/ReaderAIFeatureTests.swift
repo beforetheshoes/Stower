@@ -8,21 +8,31 @@ import Testing
 @Suite
 struct ReaderAIFeatureTests {
     @Test
+    func liveClientKeepsPrivateCloudComputeDisabled() {
+        #expect(
+            ArticleAIClient.live.enhancedAvailability()
+                == .other("Enhanced summaries are currently disabled.")
+        )
+    }
+
+    @Test
     func appeared_withCachedSummary_populatesStateAsCached() async {
         let itemID = UUID()
         let cached = CachedSummary(text: "Cached summary text.", generatedAt: Date(timeIntervalSince1970: 100))
 
         let fakeAI = ArticleAIClient(
             availability: { .available },
+            prewarm: {},
             summarize: { _, _ in AsyncThrowingStream { $0.finish() } },
-            ask: { _, _, _ in AsyncThrowingStream { $0.finish() } }
+            ask: { _, _, _ in AsyncThrowingStream { $0.finish() } },
+            enhancedAvailability: { .available }
         )
 
         let store = TestStore(initialState: ReaderAIFeature.State()) {
             ReaderAIFeature()
         } withDependencies: {
             $0.articleAIClient = fakeAI
-            $0.stowerRepository.loadSummary = { _ in cached }
+            $0.stowerRepository.loadSummary = { _, _, _ in cached }
         }
 
         await store.send(.appeared(itemID: itemID)) {
@@ -30,7 +40,13 @@ struct ReaderAIFeatureTests {
             $0.availability = .available
         }
 
-        await store.receive(.cacheLoaded(text: cached.text, generatedAt: cached.generatedAt)) {
+        await store.receive(
+            .cacheLoaded(
+                quality: .quick,
+                text: cached.text,
+                generatedAt: cached.generatedAt
+            )
+        ) {
             $0.summaryText = cached.text
             $0.summaryGeneratedAt = cached.generatedAt
             $0.summaryWasCached = true
@@ -46,6 +62,7 @@ struct ReaderAIFeatureTests {
 
         let fakeAI = ArticleAIClient(
             availability: { .available },
+            prewarm: {},
             summarize: { _, _ in
                 AsyncThrowingStream { continuation in
                     continuation.yield(.started)
@@ -64,8 +81,10 @@ struct ReaderAIFeatureTests {
             ReaderAIFeature()
         } withDependencies: {
             $0.articleAIClient = fakeAI
-            $0.stowerRepository.loadSummary = { _ in nil }
-            $0.stowerRepository.saveSummary = { _, text in
+            $0.stowerRepository.loadSummary = { _, _, _ in nil }
+            $0.stowerRepository.saveSummary = { _, quality, version, text in
+                #expect(quality == ArticleAIClient.SummaryQuality.quick.rawValue)
+                #expect(version == 1)
                 savedSummary.withValue { $0 = text }
             }
         }
@@ -93,6 +112,7 @@ struct ReaderAIFeatureTests {
     func summarizeRequested_whenAIUnavailable_isNoop() async {
         let fakeAI = ArticleAIClient(
             availability: { .appleIntelligenceNotEnabled },
+            prewarm: {},
             summarize: { _, _ in
                 // Should never be called.
                 AsyncThrowingStream { continuation in
@@ -111,7 +131,7 @@ struct ReaderAIFeatureTests {
             ReaderAIFeature()
         } withDependencies: {
             $0.articleAIClient = fakeAI
-            $0.stowerRepository.loadSummary = { _ in nil }
+            $0.stowerRepository.loadSummary = { _, _, _ in nil }
         }
 
         // No state mutation, no effect dispatched.
@@ -125,6 +145,7 @@ struct ReaderAIFeatureTests {
 
         let fakeAI = ArticleAIClient(
             availability: { .available },
+            prewarm: {},
             summarize: { _, _ in AsyncThrowingStream { $0.finish() } },
             ask: { _, _, _ in
                 AsyncThrowingStream { continuation in
@@ -144,8 +165,8 @@ struct ReaderAIFeatureTests {
             ReaderAIFeature()
         } withDependencies: {
             $0.articleAIClient = fakeAI
-            $0.stowerRepository.loadSummary = { _ in nil }
-            $0.stowerRepository.saveSummary = { _, _ in }
+            $0.stowerRepository.loadSummary = { _, _, _ in nil }
+            $0.stowerRepository.saveSummary = { _, _, _, _ in }
         }
         store.exhaustivity = .off(showSkippedAssertions: false)
 
@@ -176,15 +197,17 @@ struct ReaderAIFeatureTests {
 
         let fakeAI = ArticleAIClient(
             availability: { .available },
+            prewarm: {},
             summarize: { _, _ in AsyncThrowingStream { $0.finish() } },
-            ask: { _, _, _ in AsyncThrowingStream { $0.finish() } }
+            ask: { _, _, _ in AsyncThrowingStream { $0.finish() } },
+            enhancedAvailability: { .available }
         )
 
         let store = TestStore(initialState: initial) {
             ReaderAIFeature()
         } withDependencies: {
             $0.articleAIClient = fakeAI
-            $0.stowerRepository.loadSummary = { _ in nil }
+            $0.stowerRepository.loadSummary = { _, _, _ in nil }
         }
 
         await store.send(.cancelAll) {
@@ -193,5 +216,129 @@ struct ReaderAIFeatureTests {
             $0.isRetrieving = false
             $0.summaryStage = nil
         }
+    }
+
+    @Test
+    func selectingEnhancedLoadsItsOwnCacheAndPrewarmsPCC() async {
+        let itemID = UUID()
+        let didPrewarm = LockIsolated(false)
+        let requestedCache = LockIsolated<(String, Int)?>(nil)
+        let cached = CachedSummary(
+            text: "A deeper cached summary.",
+            generatedAt: Date(timeIntervalSince1970: 200),
+            quality: "enhanced",
+            promptVersion: 7
+        )
+        let fakeAI = ArticleAIClient(
+            availability: { .available },
+            prewarm: {},
+            summarize: { _, _ in AsyncThrowingStream { $0.finish() } },
+            ask: { _, _, _ in AsyncThrowingStream { $0.finish() } },
+            enhancedAvailability: { .available },
+            prewarmEnhanced: { didPrewarm.setValue(true) },
+            summaryPromptVersion: { $0 == .enhanced ? 7 : 2 }
+        )
+
+        var initial = ReaderAIFeature.State()
+        initial.itemID = itemID
+        initial.summaryText = "Quick summary"
+        let store = TestStore(initialState: initial) {
+            ReaderAIFeature()
+        } withDependencies: {
+            $0.articleAIClient = fakeAI
+            $0.stowerRepository.loadSummary = { _, quality, version in
+                requestedCache.setValue((quality, version))
+                return cached
+            }
+        }
+
+        await store.send(.summaryQualityChanged(.enhanced)) {
+            $0.summaryQuality = .enhanced
+            $0.summaryResultQuality = .enhanced
+            $0.summaryText = ""
+        }
+        await store.receive(
+            .cacheLoaded(
+                quality: .enhanced,
+                text: cached.text,
+                generatedAt: cached.generatedAt
+            )
+        ) {
+            $0.summaryText = cached.text
+            $0.summaryGeneratedAt = cached.generatedAt
+            $0.summaryWasCached = true
+        }
+
+        #expect(didPrewarm.value)
+        #expect(requestedCache.value?.0 == "enhanced")
+        #expect(requestedCache.value?.1 == 7)
+    }
+
+    @Test
+    func enhancedFallbackIsPersistedAsQuick() async {
+        let itemID = UUID()
+        let saved = LockIsolated<(String, Int, String)?>(nil)
+        let fakeAI = ArticleAIClient(
+            availability: { .available },
+            prewarm: {},
+            summarize: { _, _ in AsyncThrowingStream { $0.finish() } },
+            ask: { _, _, _ in AsyncThrowingStream { $0.finish() } },
+            enhancedAvailability: { .available },
+            summarizeEnhanced: { _, _ in
+                AsyncThrowingStream { continuation in
+                    continuation.yield(.started)
+                    continuation.yield(.qualityResolved(.quick))
+                    continuation.yield(.stage("Continuing on device"))
+                    continuation.yield(.finished("Quick fallback result"))
+                    continuation.finish()
+                }
+            },
+            summaryPromptVersion: { $0 == .enhanced ? 7 : 2 }
+        )
+
+        var initial = ReaderAIFeature.State()
+        initial.itemID = itemID
+        initial.summaryQuality = .enhanced
+        initial.summaryResultQuality = .enhanced
+        let store = TestStore(initialState: initial) {
+            ReaderAIFeature()
+        } withDependencies: {
+            $0.articleAIClient = fakeAI
+            $0.stowerRepository.saveSummary = { _, quality, version, text in
+                saved.setValue((quality, version, text))
+            }
+        }
+        store.exhaustivity = .off(showSkippedAssertions: false)
+
+        await store.send(.summarizeRequested(document: nil, plainText: "Article"))
+        await store.receive(.summaryEvent(.finished("Quick fallback result")))
+        await store.finish()
+
+        #expect(store.state.summaryResultQuality == .quick)
+        #expect(saved.value?.0 == "quick")
+        #expect(saved.value?.1 == 2)
+        #expect(saved.value?.2 == "Quick fallback result")
+    }
+
+    @Test
+    func panelOpened_refreshesAvailabilityAndPrewarms() async {
+        let didPrewarm = LockIsolated(false)
+        let fakeAI = ArticleAIClient(
+            availability: { .modelNotReady },
+            prewarm: { didPrewarm.setValue(true) },
+            summarize: { _, _ in AsyncThrowingStream { $0.finish() } },
+            ask: { _, _, _ in AsyncThrowingStream { $0.finish() } },
+            enhancedAvailability: { .available }
+        )
+        let store = TestStore(initialState: ReaderAIFeature.State()) {
+            ReaderAIFeature()
+        } withDependencies: {
+            $0.articleAIClient = fakeAI
+        }
+
+        await store.send(.panelOpened) {
+            $0.availability = .modelNotReady
+        }
+        #expect(didPrewarm.value)
     }
 }

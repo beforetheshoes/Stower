@@ -1,3 +1,4 @@
+import Dependencies
 import Foundation
 import SQLiteData
 
@@ -15,7 +16,8 @@ extension StowerRepository {
         scheduleSync: @escaping @Sendable () -> Void
     ) -> @Sendable (UUID, Data, String, String) async throws -> Void {
         { (itemID: UUID, zipData: Data, sha256: String, originalFilename: String) in
-            let now = Date.now
+            @Dependency(\.date.now)
+            var now
             try await database.write { db in
                 try SavedWebsiteArchiveSyncTable
                     .upsert {
@@ -65,7 +67,10 @@ extension StowerRepository {
         archiveExists: @escaping @Sendable (UUID) -> Bool
     ) -> @Sendable () async throws -> Int {
         { () async throws -> Int in
-            let now = Date.now
+            @Dependency(\.date.now)
+            var now
+            @Dependency(\.uuid)
+            var uuid
             return try await database.write { db -> Int in
                 let archiveRows: [SavedWebsiteArchiveSyncTable] =
                     try SavedWebsiteArchiveSyncTable.fetchAll(db)
@@ -80,10 +85,16 @@ extension StowerRepository {
                         bytes: JSONEncoder().encode(WebsiteHydrationPayload(itemID: row.id)),
                         encoding: .utf8
                     ) ?? ""
+                    let existingJob = try IngestionJobLocalTable
+                        .where { $0.kind.eq(IngestionJob.Kind.hydrateWebsite.rawValue) }
+                        .where { $0.payload.eq(payload) }
+                        .where { $0.processedAt.is(nil) }
+                        .fetchCount(db)
+                    guard existingJob == 0 else { continue }
                     try IngestionJobLocalTable
                         .insert {
                             IngestionJobLocalTable.Draft(
-                                id: UUID(),
+                                id: uuid(),
                                 kind: IngestionJob.Kind.hydrateWebsite.rawValue,
                                 payload: payload,
                                 createdAt: now,

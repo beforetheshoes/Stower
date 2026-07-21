@@ -1,3 +1,4 @@
+import Dependencies
 import Foundation
 @testable import StowerData
 @testable import StowerFeature
@@ -5,6 +6,39 @@ import Testing
 
 @Suite
 struct DatabaseTests {
+    @Test
+    func articleCaptureManifestChunksAndPartialStateRoundTrip() async throws {
+        let database = try StowerDatabase.makeDatabase()
+        let repository = StowerRepository.live(database: database, cloudSyncClient: .noop)
+        var ingestion = IngestionResult.sharedText("Meaningful partial article content")
+        ingestion.processingState = .partial
+        ingestion.processingError = "One image was unavailable."
+        let item = try await repository.createItemFromIngestion(ingestion)
+        #expect(item.processingState == .partial)
+
+        let captureID = UUID()
+        let bytes = Data("capture bytes".utf8)
+        let chunk = WebCaptureChunk(sequence: 0, data: bytes, sha256: ArticleCapturePackage.sha256(bytes))
+        let manifest = WebCaptureManifest(
+            itemID: item.id,
+            captureID: captureID,
+            sha256: ArticleCapturePackage.sha256(bytes),
+            byteCount: bytes.count,
+            chunkCount: 1
+        )
+        try await repository.saveArticleCapture(manifest, [chunk])
+        let loaded = try #require(try await repository.loadArticleCapture(item.id))
+        #expect(loaded.manifest.itemID == manifest.itemID)
+        #expect(loaded.manifest.captureID == manifest.captureID)
+        #expect(loaded.manifest.sha256 == manifest.sha256)
+        #expect(loaded.manifest.byteCount == manifest.byteCount)
+        #expect(abs(loaded.manifest.capturedAt.timeIntervalSince(manifest.capturedAt)) < 0.01)
+        #expect(loaded.chunks == [chunk])
+
+        try await repository.markArticleCaptureInstalled(item.id, captureID, 1)
+        #expect(try await repository.loadItem(item.id)?.captureVersion == 1)
+    }
+
     @Test
     func bootstrapAndCRUD() async throws {
         let database = try StowerDatabase.makeDatabase()
@@ -29,6 +63,30 @@ struct DatabaseTests {
         let loaded = try await repository.loadReaderDocument(item.id)
         let unwrapped = try #require(loaded)
         #expect(unwrapped.blocks.count == 1)
+    }
+
+    @Test
+    func summaryCacheSeparatesQualityVersionAndArticleContent() async throws {
+        let database = try StowerDatabase.makeDatabase()
+        let repository = StowerRepository.live(database: database, cloudSyncClient: .noop)
+        let item = try await repository.createItemFromIngestion(.sharedText("Original article"))
+
+        try await repository.saveSummary(item.id, "quick", 2, "Quick result")
+        try await repository.saveSummary(item.id, "enhanced", 1, "Enhanced result")
+
+        #expect(try await repository.loadSummary(item.id, "quick", 2)?.text == "Quick result")
+        #expect(try await repository.loadSummary(item.id, "enhanced", 1)?.text == "Enhanced result")
+        #expect(try await repository.loadSummary(item.id, "quick", 3) == nil)
+
+        let replacement = ReaderDocument(
+            title: "Updated",
+            blocks: [.paragraph([.text("Updated article")])],
+            sourceURL: nil
+        )
+        try await repository.saveReaderDocument(item.id, replacement, "Updated article")
+
+        #expect(try await repository.loadSummary(item.id, "quick", 2) == nil)
+        #expect(try await repository.loadSummary(item.id, "enhanced", 1) == nil)
     }
 
     @Test
@@ -59,15 +117,73 @@ struct DatabaseTests {
         let database = try StowerDatabase.makeDatabase()
         let repository = StowerRepository.live(database: database, cloudSyncClient: .noop)
 
-        try await repository.enqueueIngestionJob(.url, "https://example.com/post")
-        let jobs = try await repository.fetchPendingIngestionJobs()
+        try await withDependencies {
+            $0.date.now = Date(timeIntervalSince1970: 1000)
+            $0.uuid = .constant(UUID(0))
+        } operation: {
+            try await repository.enqueueIngestionJob(.url, "https://example.com/post")
+        }
+        let first = try #require(
+            try await repository.claimNextIngestionJob(Date(timeIntervalSince1970: 1000))
+        )
+        #expect(first.payload == "https://example.com/post")
+        try await repository.completeIngestionJob(first.id, Date(timeIntervalSince1970: 1001))
+        #expect(try await repository.claimNextIngestionJob(Date(timeIntervalSince1970: 1002)) == nil)
+    }
 
-        #expect(!jobs.isEmpty)
-        let first = try #require(jobs.first)
-        try await repository.markIngestionJobProcessed(first.id)
+    @Test
+    func ingestionClaimsAreAtomicAndStaleClaimsRecover() async throws {
+        let database = try StowerDatabase.makeDatabase()
+        let repository = StowerRepository.live(database: database, cloudSyncClient: .noop)
+        let start = Date(timeIntervalSince1970: 2000)
 
-        let remaining = try await repository.fetchPendingIngestionJobs()
-        #expect(!remaining.contains { $0.id == first.id })
+        try await withDependencies {
+            $0.date.now = start
+            $0.uuid = .incrementing
+        } operation: {
+            try await repository.enqueueIngestionJob(.text, "recover me")
+        }
+
+        let firstClaim = try #require(try await repository.claimNextIngestionJob(start))
+        #expect(firstClaim.attemptCount == 1)
+        #expect(try await repository.claimNextIngestionJob(start) == nil)
+
+        let recovered = try #require(
+            try await repository.claimNextIngestionJob(start.addingTimeInterval(601))
+        )
+        #expect(recovered.id == firstClaim.id)
+        #expect(recovered.attemptCount == 2)
+    }
+
+    @Test
+    func poisonImportFailsAfterThreeAttemptsWithoutBlockingLaterJobs() async throws {
+        let database = try StowerDatabase.makeDatabase()
+        let repository = StowerRepository.live(database: database, cloudSyncClient: .noop)
+        let now = Date(timeIntervalSince1970: 3000)
+
+        try await withDependencies {
+            $0.date.now = now
+            $0.uuid = .incrementing
+        } operation: {
+            try await repository.enqueueIngestionJob(.text, "poison")
+            try await repository.enqueueIngestionJob(.text, "healthy")
+        }
+
+        for attempt in 1...3 {
+            let job = try #require(try await repository.claimNextIngestionJob(now))
+            #expect(job.payload == "poison")
+            #expect(job.attemptCount == attempt)
+            try await repository.failIngestionJob(job.id, "Malformed import", now)
+        }
+
+        let next = try #require(try await repository.claimNextIngestionJob(now))
+        #expect(next.payload == "healthy")
+        let failures = try await repository.fetchFailedIngestionJobs()
+        #expect(failures.count == 1)
+        #expect(failures.first?.lastError == "Malformed import")
+
+        try await repository.retryFailedIngestionJobs()
+        #expect(try await repository.fetchFailedIngestionJobs().isEmpty)
     }
 
     @Test

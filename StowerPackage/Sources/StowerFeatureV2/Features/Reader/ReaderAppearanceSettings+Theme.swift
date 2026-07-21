@@ -152,7 +152,7 @@ extension ReaderAppearanceSettings {
     /// CSS string that applies the reader theme to a WebView. All colors are
     /// exposed as CSS custom properties so the shared `<style>` template
     /// reads exactly like the native palette tokens.
-    public func readerCSS(pageWidth: CGFloat) -> String {
+    public func readerCSS(pageWidth: CGFloat, fontScale: Double = 1) -> String {
         let p = palette
         let font = cssFont
         let policy = ReaderLineWidthPolicy(viewportWidth: Double(pageWidth))
@@ -178,7 +178,7 @@ extension ReaderAppearanceSettings {
           background-color: var(--stower-bg) !important;
           color: var(--stower-tx) !important;
           font-family: \(font), -apple-system, serif !important;
-          font-size: \(fontSize)px !important;
+          font-size: \(fontSize * max(fontScale, 0.75))px !important;
           line-height: \(1.4 + lineSpacing / 20) !important;
           width: 100% !important;
           max-width: 100% !important;
@@ -220,7 +220,7 @@ extension ReaderAppearanceSettings {
         td, th { border: 1px solid var(--stower-ui); padding: 6px 10px; color: var(--stower-tx); }
         th { background: var(--stower-bg2); }
         ::selection { background: var(--stower-primary-wash); color: var(--stower-tx); }
-        nav, header, footer, .sidebar, .comments, .share, .related, [role="banner"], [role="navigation"] {
+        nav, header:not(.stower-header), footer, .sidebar, .comments, .share, .related, [role="banner"], [role="navigation"] {
           display: none !important;
         }
         """

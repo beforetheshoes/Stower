@@ -40,6 +40,8 @@ extension StowerDatabase {
                 SavedPDFContentSyncTable.self,
                 SavedTextContentSyncTable.self,
                 SavedWebsiteArchiveSyncTable.self,
+                SavedArticleCaptureSyncTable.self,
+                SavedArticleCaptureChunkSyncTable.self,
                 containerIdentifier: StowerDatabase.cloudKitContainerID,
                 delegate: delegate
             )

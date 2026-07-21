@@ -9,14 +9,14 @@
 PRODUCT_NAME = Stower
 PRODUCT_DISPLAY_NAME = Stower
 PRODUCT_BUNDLE_IDENTIFIER = com.ryanleewilliams.stower
-MARKETING_VERSION = 0.3.0
-CURRENT_PROJECT_VERSION = 3
+MARKETING_VERSION = 0.4.0
+CURRENT_PROJECT_VERSION = 10
 
 // ==========================================
 // Platform Configuration
 // ==========================================
-IPHONEOS_DEPLOYMENT_TARGET = 26.0
-MACOSX_DEPLOYMENT_TARGET = 26.0
+IPHONEOS_DEPLOYMENT_TARGET = 27.0
+MACOSX_DEPLOYMENT_TARGET = 27.0
 
 // (1 == iPhone, 2 == iPad) — ignored on macOS
 TARGETED_DEVICE_FAMILY = 1,2

@@ -92,6 +92,40 @@ enum ReaderWebPageFactory {
         })();
         """
 
+    @MainActor
+    static func installReaderRuntime(on page: WebPage) async {
+        let script = """
+            (() => {
+              var currentHighlight = null;
+              window.stowerHighlight = function(index) {
+                if (currentHighlight) currentHighlight.classList.remove('stower-highlight');
+                currentHighlight = null;
+                if (index == null || index < 0) return;
+                const el = document.querySelector('[data-block-index="' + index + '"]');
+                if (!el) return;
+                el.classList.add('stower-highlight'); currentHighlight = el;
+                const rect = el.getBoundingClientRect();
+                if (rect.top < 60 || rect.bottom > innerHeight - 60) el.scrollIntoView({behavior:'smooth',block:'start'});
+              };
+              window.stowerScrollToBlock = function(index) {
+                const el = document.querySelector('[data-block-index="' + index + '"]');
+                if (el) el.scrollIntoView({behavior:'auto',block:'start'});
+              };
+              window.stowerGetTopBlockIndex = function() {
+                const blocks = document.querySelectorAll('[data-block-index]');
+                for (const block of blocks) {
+                  if (block.getBoundingClientRect().bottom >= 80) {
+                    const value = parseInt(block.dataset.blockIndex, 10);
+                    if (!Number.isNaN(value)) return value;
+                  }
+                }
+                return -1;
+              };
+            })();
+            """
+        _ = try? await page.callJavaScript(script)
+    }
+
     /// Highlights the block with the given index (or clears all highlights if nil).
     @MainActor
     static func runHighlight(_ index: Int?, on page: WebPage) async {

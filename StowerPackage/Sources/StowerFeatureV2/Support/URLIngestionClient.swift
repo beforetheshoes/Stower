@@ -25,6 +25,7 @@ public struct URLIngestionClient: Sendable {
     }
 
     public static let live = URLIngestionClient { url in
+        @Dependency(\.webArticleCaptureClient) var webArticleCaptureClient
         // Short-circuit for YouTube URLs. The watch page is a JS shell with no
         // article-extractable content, so we bypass the HTML fetch entirely
         // and build the ingestion result from oEmbed metadata + a cached
@@ -42,26 +43,7 @@ public struct URLIngestionClient: Sendable {
             return pdfResult
         }
 
-        var request = URLRequest(url: url)
-        request.timeoutInterval = 30
-        request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
-        request.setValue(
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 (KHTML, like Gecko)",
-            forHTTPHeaderField: "User-Agent"
-        )
-
-        let (data, _) = try await URLSession.shared.data(for: request)
-        let html = String(bytes: data, encoding: .utf8) ?? ""
-
-        var result = try await ExtractionPipelineClient.live.extract(html, url)
-        result.media = try await MediaResolutionClient.live.resolve(result.media)
-        result.hasRichMedia = !result.media.isEmpty || !result.embeds.isEmpty
-
-        // Store raw HTML. For webView format, the raw HTML preserves original
-        // asset references that the OfflineSchemeHandler can serve from the local archive.
-        // HTMLAssetInliner is not needed when using the scheme handler approach.
-        result.sourceHTML = html
-        return result
+        return try await webArticleCaptureClient.capture(url).ingestion
     }
 }
 

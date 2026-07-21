@@ -66,6 +66,10 @@ nonisolated public struct SavedItemContentLocalTable: Hashable, Identifiable, Se
     public var documentJSON: String = ""
     public var sourceHTMLHash: String = ""
     public var sourceHTML: String = ""
+    /// Nil/zero denotes an existing legacy item that still renders from
+    /// `sourceHTML`. New captures install native Reader and Original archives.
+    public var captureID: UUID?
+    public var captureVersion: Int = 0
     public var rawSourceText: String = ""
     public var rawSourceMode: String?
     public var localStatus: String = "notDownloaded"  // notDownloaded, downloading, available, failed
@@ -84,6 +88,22 @@ nonisolated public struct SavedItemContentLocalTable: Hashable, Identifiable, Se
     public var pdfSHA256: String?
 
     public var id: UUID { itemID }
+}
+
+/// Versioned, local-only AI output. Keeping summaries in their own table lets
+/// the reader cache Quick and Enhanced results independently and invalidates a
+/// cache entry whenever either the prompt or article text changes.
+@Table
+nonisolated public struct ArticleSummaryLocalTable: Hashable, Identifiable, Sendable {
+    @Column(primaryKey: true)
+    public let id: String
+
+    public let itemID: UUID
+    public let quality: String
+    public let promptVersion: Int
+    public let contentHash: String
+    public let text: String
+    public let generatedAt: Date
 }
 
 /// CloudKit-synced extracted text for PDF items. Populated when a PDF is
@@ -134,6 +154,36 @@ nonisolated public struct SavedWebsiteArchiveSyncTable: Hashable, Identifiable, 
     public var byteCount: Int = 0
     public var createdAt: Date = .now
     public var updatedAt: Date = .now
+}
+
+/// Authoritative metadata for a captured web article package. Package bytes
+/// live in chunk rows so a receiving device can reject stale or incomplete
+/// captures before replacing its installed archive.
+@Table
+nonisolated public struct SavedArticleCaptureSyncTable: Hashable, Identifiable, Sendable {
+    public let id: UUID
+    public var itemID: UUID
+    public var captureID: UUID
+    public var version: Int = 1
+    public var sha256: String = ""
+    public var byteCount: Int = 0
+    public var chunkCount: Int = 0
+    public var capturedAt: Date = .now
+    public var updatedAt: Date = .now
+}
+
+/// One CloudKit-asset-sized slice of a versioned article capture. UUID primary
+/// keys and the absence of uniqueness constraints keep this SyncEngine-safe.
+@Table
+nonisolated public struct SavedArticleCaptureChunkSyncTable: Hashable, Identifiable, Sendable {
+    public let id: UUID
+    public var itemID: UUID
+    public var captureID: UUID
+    public var sequence: Int = 0
+    public var data: Data = .init()
+    public var byteCount: Int = 0
+    public var sha256: String = ""
+    public var createdAt: Date = .now
 }
 
 @Table
@@ -220,4 +270,8 @@ nonisolated public struct IngestionJobLocalTable: Hashable, Identifiable, Sendab
     public var payload: String = ""
     public var createdAt: Date = .now
     public var processedAt: Date?
+    public var status: String = "queued"
+    public var claimedAt: Date?
+    public var attemptCount: Int = 0
+    public var lastError: String?
 }
