@@ -78,24 +78,11 @@ public struct ReaderCommands: Commands {
 }
 #endif
 
-#if os(macOS)
-private enum MacReaderPlacement: Equatable {
-    case split
-    case detached
-    case focused
-}
-#endif
-
 public struct AppView: View {
     @Bindable var store: StoreOf<AppFeature>
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var previousColumnVisibility: NavigationSplitViewVisibility = .all
     @State private var readerSession = ReaderWebSession()
-    #if os(macOS)
-    @State private var macReaderPlacement = MacReaderPlacement.split
-    @State private var pendingMacReaderPlacement: MacReaderPlacement?
-    @State private var macReaderTransitionTask: Task<Void, Never>?
-    #endif
     #if os(iOS)
     @Environment(\.horizontalSizeClass)
     private var horizontalSizeClass
@@ -214,28 +201,6 @@ public struct AppView: View {
 
     @ViewBuilder
     private func navigationContainer(palette: FlexokiPalette) -> some View {
-        #if os(macOS)
-        Group {
-            switch macReaderPlacement {
-            case .focused:
-                if let readerStore = store.scope(\.reader, action: \.reader.presented) {
-                    readerSurface(
-                        readerStore,
-                        palette: palette,
-                        isFocused: true
-                    )
-                    .onDisappear(perform: macReaderSurfaceDidDisappear)
-                } else {
-                    splitNavigationView(palette: palette)
-                }
-            case .split, .detached:
-                splitNavigationView(palette: palette)
-            }
-        }
-        .onChange(of: store.isReaderFocused) { _, isFocused in
-            beginMacReaderTransition(isFocused: isFocused)
-        }
-        #else
         #if os(iOS)
         // On iPhone (compact), NavigationSplitView's detail column does not
         // reliably push when an `if let` swap toggles its content — taps on
@@ -268,42 +233,7 @@ public struct AppView: View {
         #else
         splitNavigationView(palette: palette)
         #endif
-        #endif
     }
-
-    #if os(macOS)
-    private func beginMacReaderTransition(isFocused: Bool) {
-        let target: MacReaderPlacement = isFocused ? .focused : .split
-        guard macReaderPlacement != target else { return }
-
-        macReaderTransitionTask?.cancel()
-        guard store.reader != nil else {
-            pendingMacReaderPlacement = nil
-            macReaderPlacement = .split
-            return
-        }
-
-        pendingMacReaderPlacement = target
-        macReaderPlacement = .detached
-    }
-
-    private func macReaderSurfaceDidDisappear() {
-        guard macReaderPlacement == .detached else { return }
-        macReaderTransitionTask?.cancel()
-        macReaderTransitionTask = Task { @MainActor in
-            // Wait until SwiftUI has removed the old native WebView before
-            // binding this session's WebPage to the destination WebView.
-            await Task.yield()
-            guard
-                !Task.isCancelled,
-                macReaderPlacement == .detached,
-                let pendingMacReaderPlacement
-            else { return }
-            self.pendingMacReaderPlacement = nil
-            macReaderPlacement = pendingMacReaderPlacement
-        }
-    }
-    #endif
 
     #if os(iOS)
     /// Modal sidebar presented from the iPhone library toolbar. Reuses the
@@ -361,19 +291,6 @@ public struct AppView: View {
             // `windowBackgroundColor` (white in light mode). We have to
             // explicitly expand the content to fill the column *before*
             // applying the background so the fill paints the entire pane.
-            #if os(macOS)
-            if macReaderPlacement == .split,
-               let readerStore = store.scope(\.reader, action: \.reader.presented) {
-                readerSurface(
-                    readerStore,
-                    palette: palette,
-                    isFocused: false
-                )
-                .onDisappear(perform: macReaderSurfaceDidDisappear)
-            } else {
-                macOSReaderPlaceholder(palette: palette)
-            }
-            #else
             if let readerStore = store.scope(\.reader, action: \.reader.presented) {
                 NavigationStack {
                     ReaderScreen(
@@ -393,9 +310,11 @@ public struct AppView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(palette.bg)
             }
-            #endif
         }
-        #if os(iOS)
+        // Keep the reader in one stable detail hierarchy. WebKit permits a
+        // WebPage to be bound to only one WebView at a time, so moving this
+        // screen into a second focus-mode hierarchy can trap while SwiftUI is
+        // still dismantling the first native view.
         .onChange(of: store.isReaderFocused) { _, isFocused in
             if isFocused {
                 previousColumnVisibility = columnVisibility
@@ -404,41 +323,5 @@ public struct AppView: View {
                 columnVisibility = previousColumnVisibility
             }
         }
-        #endif
     }
-
-    #if os(macOS)
-    @ViewBuilder
-    private func macOSReaderPlaceholder(palette: FlexokiPalette) -> some View {
-        Group {
-            if store.reader == nil {
-                ContentUnavailableView(
-                    "Select an Item",
-                    systemImage: "doc.text",
-                    description: Text("Choose an article from Library to read.")
-                )
-            } else {
-                Color.clear
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(palette.bg)
-    }
-
-    private func readerSurface(
-        _ readerStore: StoreOf<ReaderFeature>,
-        palette: FlexokiPalette,
-        isFocused: Bool
-    ) -> some View {
-        NavigationStack {
-            ReaderScreen(
-                store: readerStore,
-                session: readerSession,
-                isReaderFocused: isFocused
-            ) { store.send(.readerFocusButtonTapped) }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(palette.bg)
-    }
-    #endif
 }
