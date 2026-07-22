@@ -1,7 +1,6 @@
 #if os(macOS)
 import AppKit
 import ComposableArchitecture
-import Observation
 import StowerData
 @testable import StowerFeature
 import SwiftUI
@@ -27,13 +26,10 @@ struct ReaderWebViewLifecycleTests {
         )
     }
 
-    @Test("Reader remains alive while entering and exiting focus mode")
-    func focusTransitionDoesNotRebindWebPage() async throws {
-        let model = ReaderFocusHarnessModel()
-        let store = makeReaderStore()
-        let hostingView = NSHostingView(
-            rootView: ReaderFocusHarness(model: model, store: store)
-        )
+    @Test("Focus mode replaces the split view with a reader-only layout")
+    func focusTransitionUsesReaderOnlyLayout() async throws {
+        let store = makeAppStore()
+        let hostingView = NSHostingView(rootView: AppView(store: store))
         let window = makeWindow(contentView: hostingView)
         defer {
             window.orderOut(nil)
@@ -42,14 +38,33 @@ struct ReaderWebViewLifecycleTests {
 
         let initialWebView = await waitForWebView(in: hostingView)
         #expect(initialWebView != nil, "The test must mount the native WebView before changing focus.")
+        #expect(
+            descendants(of: NSSplitView.self, in: hostingView).isEmpty == false,
+            "The ordinary reader layout must begin inside the navigation split view."
+        )
 
-        for isFocused in [true, false, true, false] {
-            model.setFocused(isFocused)
-            try await Task.sleep(for: .milliseconds(400))
-            hostingView.layoutSubtreeIfNeeded()
+        for transitionNumber in 1 ... 2 {
+            store.send(.readerFocusButtonTapped)
+            let didEnterReaderOnlyLayout = await waitUntil {
+                hostingView.layoutSubtreeIfNeeded()
+                return descendants(of: NSSplitView.self, in: hostingView).isEmpty
+                    && descendants(of: WKWebView.self, in: hostingView).count == 1
+            }
+            #expect(
+                didEnterReaderOnlyLayout,
+                "Focus transition \(transitionNumber) must remove the sidebar and library split view while keeping one reader alive."
+            )
 
-            let webViews = descendants(of: WKWebView.self, in: hostingView)
-            #expect(webViews.count == 1, "The reader should have exactly one native WebView after a focus transition.")
+            store.send(.readerFocusButtonTapped)
+            let didRestoreSplitLayout = await waitUntil {
+                hostingView.layoutSubtreeIfNeeded()
+                return descendants(of: NSSplitView.self, in: hostingView).isEmpty == false
+                    && descendants(of: WKWebView.self, in: hostingView).count == 1
+            }
+            #expect(
+                didRestoreSplitLayout,
+                "Exit transition \(transitionNumber) must restore the split view while keeping one reader alive."
+            )
         }
     }
 
@@ -66,6 +81,24 @@ struct ReaderWebViewLifecycleTests {
         )
         return Store(initialState: state) {
             ReaderFeature()
+        }
+    }
+
+    private func makeAppStore() -> StoreOf<AppFeature> {
+        let item = SavedItem(
+            title: "Reader focus test",
+            content: "Reader focus test",
+            renderFormat: .structuredV1
+        )
+        var state = AppFeature.State()
+        var reader = ReaderFeature.State(item: item, appearance: state.cachedAppearance)
+        reader.document = ReaderDocument(
+            title: item.title,
+            blocks: [.paragraph([.text("Reader focus test")])]
+        )
+        state.reader = reader
+        return Store(initialState: state) {
+            AppFeature()
         }
     }
 
@@ -100,6 +133,22 @@ struct ReaderWebViewLifecycleTests {
         return descendants(of: WKWebView.self, in: rootView)
     }
 
+    private func waitUntil(
+        timeout: Duration = .seconds(5),
+        _ predicate: () -> Bool
+    ) async -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+
+        while clock.now < deadline {
+            if predicate() {
+                return true
+            }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        return predicate()
+    }
+
     private func descendants<ViewType: NSView>(
         of type: ViewType.Type,
         in rootView: NSView
@@ -123,41 +172,4 @@ private struct ReaderOverlapHarness: View {
     }
 }
 
-@MainActor
-@Observable
-private final class ReaderFocusHarnessModel {
-    var columnVisibility: NavigationSplitViewVisibility = .all
-    var isFocused = false
-
-    func setFocused(_ newValue: Bool) {
-        isFocused = newValue
-    }
-}
-
-private struct ReaderFocusHarness: View {
-    @Bindable var model: ReaderFocusHarnessModel
-    let store: StoreOf<ReaderFeature>
-    @State private var session = ReaderWebSession()
-
-    var body: some View {
-        NavigationSplitView(columnVisibility: $model.columnVisibility) {
-            Text("Sidebar")
-        } content: {
-            Text("Library")
-        } detail: {
-            NavigationStack {
-                ReaderScreen(
-                    store: store,
-                    session: session,
-                    isReaderFocused: model.isFocused
-                ) {
-                    model.setFocused(model.isFocused == false)
-                }
-            }
-        }
-        .onChange(of: model.isFocused) { _, isFocused in
-            model.columnVisibility = isFocused ? .detailOnly : .all
-        }
-    }
-}
 #endif
