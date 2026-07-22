@@ -38,6 +38,15 @@ extension DependencyValues {
     }
 }
 
+enum WebCaptureDOMProbe {
+    static let deliveredTextJavaScript = "document.body ? document.body.textContent : ''"
+
+    static func containsUsableText(_ text: String?) -> Bool {
+        guard let text else { return false }
+        return text.trimmingCharacters(in: .whitespacesAndNewlines).count >= 40
+    }
+}
+
 @MainActor
 private final class WebArticleCaptureSession {
     private let webView: WKWebView
@@ -70,8 +79,8 @@ private final class WebArticleCaptureSession {
         do {
             try await navigator.load(timeout: .seconds(30)) { self.webView.load(request) }
         } catch CaptureNavigationError.timeout {
-            let text = (try? await javascriptString("document.body ? document.body.innerText : ''")) ?? ""
-            guard text.trimmingCharacters(in: .whitespacesAndNewlines).count >= 40 else { throw CaptureNavigationError.timeout }
+            let text = try? await javascriptString(WebCaptureDOMProbe.deliveredTextJavaScript)
+            guard WebCaptureDOMProbe.containsUsableText(text) else { throw CaptureNavigationError.timeout }
             completeness = .partial
             warnings.append("The page did not finish loading within 30 seconds; content that had rendered was saved.")
         }
