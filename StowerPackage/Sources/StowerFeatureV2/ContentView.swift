@@ -201,6 +201,18 @@ public struct AppView: View {
 
     @ViewBuilder
     private func navigationContainer(palette: FlexokiPalette) -> some View {
+        #if os(macOS)
+        if store.isReaderFocused,
+           let readerStore = store.scope(\.reader, action: \.reader.presented) {
+            readerSurface(
+                readerStore,
+                palette: palette,
+                isFocused: true
+            )
+        } else {
+            splitNavigationView(palette: palette)
+        }
+        #else
         #if os(iOS)
         // On iPhone (compact), NavigationSplitView's detail column does not
         // reliably push when an `if let` swap toggles its content — taps on
@@ -232,6 +244,7 @@ public struct AppView: View {
         }
         #else
         splitNavigationView(palette: palette)
+        #endif
         #endif
     }
 
@@ -291,6 +304,23 @@ public struct AppView: View {
             // `windowBackgroundColor` (white in light mode). We have to
             // explicitly expand the content to fill the column *before*
             // applying the background so the fill paints the entire pane.
+            #if os(macOS)
+            if let readerStore = store.scope(\.reader, action: \.reader.presented) {
+                readerSurface(
+                    readerStore,
+                    palette: palette,
+                    isFocused: false
+                )
+            } else {
+                ContentUnavailableView(
+                    "Select an Item",
+                    systemImage: "doc.text",
+                    description: Text("Choose an article from Library to read.")
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(palette.bg)
+            }
+            #else
             if let readerStore = store.scope(\.reader, action: \.reader.presented) {
                 NavigationStack {
                     ReaderScreen(
@@ -310,11 +340,9 @@ public struct AppView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(palette.bg)
             }
+            #endif
         }
-        // Keep the reader in one stable detail hierarchy. WebKit permits a
-        // WebPage to be bound to only one WebView at a time, so moving this
-        // screen into a second focus-mode hierarchy can trap while SwiftUI is
-        // still dismantling the first native view.
+        #if os(iOS)
         .onChange(of: store.isReaderFocused) { _, isFocused in
             if isFocused {
                 previousColumnVisibility = columnVisibility
@@ -323,5 +351,24 @@ public struct AppView: View {
                 columnVisibility = previousColumnVisibility
             }
         }
+        #endif
     }
+
+    #if os(macOS)
+    private func readerSurface(
+        _ readerStore: StoreOf<ReaderFeature>,
+        palette: FlexokiPalette,
+        isFocused: Bool
+    ) -> some View {
+        NavigationStack {
+            ReaderScreen(
+                store: readerStore,
+                session: readerSession,
+                isReaderFocused: isFocused
+            ) { store.send(.readerFocusButtonTapped) }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(palette.bg)
+    }
+    #endif
 }
