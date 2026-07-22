@@ -9,6 +9,10 @@ struct StowerApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView(store: store)
+                .onOpenURL { incomingURL in
+                    guard case let .save(url) = BrowserExtensionLink(incomingURL) else { return }
+                    store.send(.browserExtensionURLReceived(url))
+                }
         }
         #if os(macOS)
         .commands {

@@ -8,6 +8,35 @@ import Testing
 @Suite
 struct LibraryFeatureTests {
     @Test
+    func browserExtensionSaveDoesNotOpenReader() async throws {
+        let url = try #require(URL(string: "https://example.com/reference"))
+        let item = SavedItem(
+            title: "Reference",
+            content: "Saved for later",
+            sourceURL: url.absoluteString
+        )
+        let result = ArticleSaveResult(item: item, state: .ready, warnings: [])
+        let store = TestStore(initialState: LibraryFeature.State()) {
+            LibraryFeature()
+        } withDependencies: {
+            $0.articleSaveClient.save = { receivedURL in
+                #expect(receivedURL == url)
+                return result
+            }
+        }
+
+        await store.send(.saveExternalURL(url)) {
+            $0.isSaving = true
+            $0.saveState = .extracting
+        }
+        await store.receive(.articleSaveFinished(result)) {
+            $0.isSaving = false
+            $0.saveState = .ready
+            $0.items = [item]
+        }
+    }
+
+    @Test
     func defaultsToInboxWithCompactNewestFirstLayout() {
         let state = LibraryFeature.State()
         #expect(state.filter == .unread)
