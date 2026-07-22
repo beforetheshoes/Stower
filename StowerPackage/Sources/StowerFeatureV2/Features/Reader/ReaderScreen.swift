@@ -12,7 +12,7 @@ import WebKit
 /// failed to scale on large documents.
 public struct ReaderScreen: View {
     @Bindable var store: StoreOf<ReaderFeature>
-    @State private var session: ReaderWebSession
+    @Bindable private var session: ReaderWebSession
     @ScaledMetric(relativeTo: .body)
     private var dynamicBodySize: CGFloat = 19
     private let isReaderFocused: Bool
@@ -31,7 +31,7 @@ public struct ReaderScreen: View {
         onToggleReaderFocus: (() -> Void)? = nil
     ) {
         self.store = store
-        self._session = State(initialValue: session)
+        self.session = session
         self.isReaderFocused = isReaderFocused
         self.onToggleReaderFocus = onToggleReaderFocus
     }
@@ -399,7 +399,6 @@ public struct ReaderScreen: View {
                     contentVersion: contentReloadToken(for: item),
                     appearance: store.appearance,
                     fontScale: readerFontScale,
-                    session: session,
                     viewportWidth: store.viewportWidth,
                     isWebViewFormat: store.effectiveRenderFormat == .webView,
                     usesNativeCapture: item.captureVersion > 0,
