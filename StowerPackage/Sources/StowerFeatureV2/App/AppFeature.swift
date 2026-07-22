@@ -94,6 +94,7 @@ public struct AppFeature {
     public enum Action: Equatable {
         case onAppear
         case sceneDidBecomeActive
+        case browserExtensionURLReceived(URL)
         case startupFinished
         case startupFailed(String)
         case failedImportsLoaded(Int)
@@ -320,6 +321,9 @@ public struct AppFeature {
                     await send(.library(.reload))
                     await send(.sidebar(.reload))
                 }
+
+            case .browserExtensionURLReceived(let url):
+                return .send(.library(.saveExternalURL(url)))
 
             case .readerAppearanceLoaded(let appearance):
                 state.cachedAppearance = appearance

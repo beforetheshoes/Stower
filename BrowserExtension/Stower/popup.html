@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Save to Stower</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <main>
+      <header>
+        <img src="icons/icon128.png" alt="" width="42" height="42">
+        <div>
+          <p class="eyebrow">STOWER</p>
+          <h1>Keep this for later</h1>
+        </div>
+      </header>
+
+      <section class="page" aria-label="Current page">
+        <p id="page-title">Reading current page…</p>
+        <p id="page-host"></p>
+      </section>
+
+      <button id="save-button" type="button" disabled>
+        <span class="button-label">Save to Stower</span>
+        <span class="button-progress" aria-hidden="true"></span>
+      </button>
+      <p id="status" role="status" aria-live="polite"></p>
+    </main>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

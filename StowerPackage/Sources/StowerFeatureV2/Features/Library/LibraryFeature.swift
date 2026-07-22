@@ -122,6 +122,7 @@ public struct LibraryFeature {
         case reprocessFinished(SavedItem)
         case sourceURLChanged(String)
         case saveURLTapped
+        case saveExternalURL(URL)
         case cancelURLSaveTapped
         case articleSaveFinished(ArticleSaveResult)
         case saveURLFinished(SavedItem)
@@ -457,6 +458,29 @@ public struct LibraryFeature {
                         let saved = try await articleSaveClient.save(url)
                         await send(.articleSaveFinished(saved))
                         await send(.openItem(saved.item))
+                    } catch is CancellationError {
+                        return
+                    } catch {
+                        await send(.saveURLFailed(error.localizedDescription))
+                    }
+                }
+                .cancellable(id: CancelID.articleSave, cancelInFlight: true)
+
+            case .saveExternalURL(let url):
+                guard ["http", "https"].contains(url.scheme?.lowercased() ?? "") else {
+                    state.errorMessage = "The browser shared an invalid URL."
+                    state.saveState = .failed
+                    return .none
+                }
+
+                state.errorMessage = nil
+                state.isSaving = true
+                state.saveState = .extracting
+                let articleSaveClient = self.articleSaveClient
+                return .run { send in
+                    do {
+                        let saved = try await articleSaveClient.save(url)
+                        await send(.articleSaveFinished(saved))
                     } catch is CancellationError {
                         return
                     } catch {
