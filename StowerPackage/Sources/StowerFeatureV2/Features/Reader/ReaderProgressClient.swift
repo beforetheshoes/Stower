@@ -36,6 +36,14 @@ public final class ReaderProgressCoordinator {
         self.currentPage = page
     }
 
+    /// Clears a page only if it is still the active registration. During a
+    /// SwiftUI transition an outgoing reader can disappear after the incoming
+    /// reader has registered, and must not clear the newer reader's page.
+    public func unregister(_ page: WebPage?) {
+        guard let page, currentPage === page else { return }
+        currentPage = nil
+    }
+
     public func topBlockIndex() async -> Int? {
         guard let currentPage else { return nil }
         return await ReaderWebPageFactory.fetchTopBlockIndex(on: currentPage)

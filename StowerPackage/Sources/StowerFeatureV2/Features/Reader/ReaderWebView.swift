@@ -1,6 +1,43 @@
 import SwiftUI
 import WebKit
 
+/// Owns the native web resources for exactly one `ReaderWebView` identity.
+///
+/// WebKit traps if one `WebPage` is bound to two native `WebView` instances.
+/// Keeping this session private and view-owned prevents navigation and split-view
+/// transitions from sharing a page while SwiftUI dismantles the previous view.
+@MainActor
+@Observable
+private final class ReaderWebViewSession {
+    struct LoadKey: Hashable {
+        let contentVersion: Int
+        let itemID: UUID
+    }
+
+    var archiveServer: LocalArchiveServer?
+    var hasRestoredPosition = false
+    var loadKey: LoadKey?
+    var page: WebPage?
+
+    func beginLoading(_ key: LoadKey) {
+        ReaderProgressCoordinator.shared.unregister(page)
+        archiveServer?.stop()
+        archiveServer = nil
+        hasRestoredPosition = false
+        loadKey = key
+        page = nil
+    }
+
+    func reset() {
+        ReaderProgressCoordinator.shared.unregister(page)
+        archiveServer?.stop()
+        archiveServer = nil
+        hasRestoredPosition = false
+        loadKey = nil
+        page = nil
+    }
+}
+
 /// Renders articles in a WKWebView — the single rendering path for the reader.
 ///
 /// Two content sources are supported:
@@ -30,7 +67,7 @@ public struct ReaderWebView: View {
     let onOpenInlineEmbed: ((String) -> Void)?
     let onContentTap: (() -> Void)?
 
-    @State private var session: ReaderWebSession
+    @State private var session = ReaderWebViewSession()
     @Environment(\.openURL)
     private var openURL
 
@@ -41,7 +78,6 @@ public struct ReaderWebView: View {
         contentVersion: Int,
         appearance: ReaderAppearanceSettings,
         fontScale: Double = 1,
-        session: ReaderWebSession = ReaderWebSession(),
         viewportWidth: Double? = nil,
         isWebViewFormat: Bool = false,
         usesNativeCapture: Bool = false,
@@ -56,7 +92,6 @@ public struct ReaderWebView: View {
         self.contentVersion = contentVersion
         self.appearance = appearance
         self.fontScale = fontScale
-        self._session = State(initialValue: session)
         self.viewportWidth = viewportWidth
         self.isWebViewFormat = isWebViewFormat
         self.usesNativeCapture = usesNativeCapture
@@ -85,8 +120,8 @@ public struct ReaderWebView: View {
         // Keyed on item identity plus content version, not on the rendered
         // HTML bytes. Appearance changes update CSS live; they must not tear
         // down and recreate the whole WKWebView while the user drags a slider.
-        .task(id: ReaderWebSession.LoadKey(contentVersion: contentVersion, itemID: itemID)) {
-            loadContent()
+        .task(id: ReaderWebViewSession.LoadKey(contentVersion: contentVersion, itemID: itemID)) {
+            await loadContent()
         }
         .onChange(of: appearance) { _, newAppearance in
             updateCSS(newAppearance)
@@ -123,15 +158,15 @@ public struct ReaderWebView: View {
             runHighlight(newValue)
         }
         .onDisappear {
-            ReaderProgressCoordinator.shared.register(nil)
+            session.reset()
         }
     }
 
     // MARK: - Loading
 
     @MainActor
-    private func loadContent() {
-        let loadKey = ReaderWebSession.LoadKey(contentVersion: contentVersion, itemID: itemID)
+    private func loadContent() async {
+        let loadKey = ReaderWebViewSession.LoadKey(contentVersion: contentVersion, itemID: itemID)
         guard session.loadKey != loadKey || session.page == nil else {
             ReaderProgressCoordinator.shared.register(session.page)
             return
@@ -151,31 +186,66 @@ public struct ReaderWebView: View {
         let openEmbed = onOpenInlineEmbed ?? { _ in }
         let toggleChrome = onContentTap ?? {}
 
-        Task {
-            if let nativeArchiveURL,
-               let archiveData = try? Data(contentsOf: nativeArchiveURL, options: .mappedIfSafe) {
-                let newPage = ReaderWebPageFactory.makePage(
-                    openExternalURL: { [openURL] url in openURL(url) },
-                    openInlineEmbed: { openEmbed($0) },
-                    toggleChrome: { toggleChrome() }
-                )
-                let baseURL = currentSourceURL.flatMap(URL.init(string:)) ?? URL(string: "about:blank")!
-                _ = newPage.load(
-                    archiveData,
-                    mimeType: "application/x-webarchive",
-                    characterEncoding: .utf8,
-                    baseURL: baseURL
-                )
-                session.page = newPage
-            } else if isArchive {
-                let (loadURL, server) = await Self.prepareArchive(
-                    html: currentHTML,
-                    sourceURL: currentSourceURL,
-                    itemID: currentItemID,
-                    appearance: currentAppearance
-                )
-                guard let loadURL, let server else { return }
+        if let nativeArchiveURL,
+           let archiveData = try? Data(contentsOf: nativeArchiveURL, options: .mappedIfSafe) {
+            let newPage = ReaderWebPageFactory.makePage(
+                openExternalURL: { [openURL] url in openURL(url) },
+                openInlineEmbed: { openEmbed($0) },
+                toggleChrome: { toggleChrome() }
+            )
+            let baseURL = currentSourceURL.flatMap(URL.init(string:)) ?? URL(string: "about:blank")!
+            _ = newPage.load(
+                archiveData,
+                mimeType: "application/x-webarchive",
+                characterEncoding: .utf8,
+                baseURL: baseURL
+            )
+            guard Task.isCancelled == false, session.loadKey == loadKey else { return }
+            session.page = newPage
+        } else if isArchive {
+            let (loadURL, server) = await Self.prepareArchive(
+                html: currentHTML,
+                sourceURL: currentSourceURL,
+                itemID: currentItemID,
+                appearance: currentAppearance
+            )
+            guard let loadURL, let server else { return }
+            guard Task.isCancelled == false, session.loadKey == loadKey else {
+                server.stop()
+                return
+            }
 
+            let newPage = ReaderWebPageFactory.makePage(
+                openExternalURL: { [openURL] url in openURL(url) },
+                openInlineEmbed: { openEmbed($0) },
+                toggleChrome: { toggleChrome() }
+            )
+            session.archiveServer = server
+            _ = newPage.load(URLRequest(url: loadURL))
+            session.page = newPage
+        } else {
+            // Structured / HTML-fallback path.
+            //
+            // YouTube-card documents contain an iframe that loads
+            // youtube-nocookie.com/embed/…. If we hand WKWebView the HTML
+            // via `load(html:baseURL:)` with the item's sourceURL as the
+            // base, the document's origin becomes youtube.com — and
+            // YouTube's embed player rejects what then looks like a
+            // youtube.com page embedding its own videos (error 152-4).
+            // Serving the HTML through the same `LocalArchiveServer` used
+            // for archived pages gives the document a legitimate
+            // `http://localhost:PORT` origin, and the embed player
+            // accepts it. Non-YouTube structured articles go through the
+            // same path too for consistency — the server startup cost is
+            // ~10ms, well below perceivable latency.
+            if let (loadURL, server) = await Self.prepareStructuredServer(
+                html: currentHTML,
+                itemID: currentItemID
+            ) {
+                guard Task.isCancelled == false, session.loadKey == loadKey else {
+                    server.stop()
+                    return
+                }
                 let newPage = ReaderWebPageFactory.makePage(
                     openExternalURL: { [openURL] url in openURL(url) },
                     openInlineEmbed: { openEmbed($0) },
@@ -185,46 +255,19 @@ public struct ReaderWebView: View {
                 _ = newPage.load(URLRequest(url: loadURL))
                 session.page = newPage
             } else {
-                // Structured / HTML-fallback path.
-                //
-                // YouTube-card documents contain an iframe that loads
-                // youtube-nocookie.com/embed/…. If we hand WKWebView the HTML
-                // via `load(html:baseURL:)` with the item's sourceURL as the
-                // base, the document's origin becomes youtube.com — and
-                // YouTube's embed player rejects what then looks like a
-                // youtube.com page embedding its own videos (error 152-4).
-                // Serving the HTML through the same `LocalArchiveServer` used
-                // for archived pages gives the document a legitimate
-                // `http://localhost:PORT` origin, and the embed player
-                // accepts it. Non-YouTube structured articles go through the
-                // same path too for consistency — the server startup cost is
-                // ~10ms, well below perceivable latency.
-                if let (loadURL, server) = await Self.prepareStructuredServer(
-                    html: currentHTML,
-                    itemID: currentItemID
-                ) {
-                    let newPage = ReaderWebPageFactory.makePage(
-                        openExternalURL: { [openURL] url in openURL(url) },
-                        openInlineEmbed: { openEmbed($0) },
-                        toggleChrome: { toggleChrome() }
-                    )
-                    session.archiveServer = server
-                    _ = newPage.load(URLRequest(url: loadURL))
-                    session.page = newPage
-                } else {
-                    // Fallback: if the scratch dir write or server start fails,
-                    // fall back to the original in-memory load so the reader
-                    // still shows content (the only thing we lose is YouTube
-                    // embed playback on that particular open).
-                    let base = currentSourceURL.flatMap(URL.init(string:)) ?? URL(string: "about:blank")!
-                    let newPage = ReaderWebPageFactory.makePage(
-                        openExternalURL: { [openURL] url in openURL(url) },
-                        openInlineEmbed: { openEmbed($0) },
-                        toggleChrome: { toggleChrome() }
-                    )
-                    _ = newPage.load(html: currentHTML, baseURL: base)
-                    session.page = newPage
-                }
+                guard Task.isCancelled == false, session.loadKey == loadKey else { return }
+                // Fallback: if the scratch dir write or server start fails,
+                // fall back to the original in-memory load so the reader
+                // still shows content (the only thing we lose is YouTube
+                // embed playback on that particular open).
+                let base = currentSourceURL.flatMap(URL.init(string:)) ?? URL(string: "about:blank")!
+                let newPage = ReaderWebPageFactory.makePage(
+                    openExternalURL: { [openURL] url in openURL(url) },
+                    openInlineEmbed: { openEmbed($0) },
+                    toggleChrome: { toggleChrome() }
+                )
+                _ = newPage.load(html: currentHTML, baseURL: base)
+                session.page = newPage
             }
         }
     }
