@@ -1,10 +1,11 @@
 {
   "manifest_version": 3,
   "name": "Save to Stower",
-  "version": "0.1.0",
+  "version": "0.4.2",
   "description": "Save the current article or website to Stower for later.",
   "permissions": [
-    "activeTab"
+    "activeTab",
+    "nativeMessaging"
   ],
   "action": {
     "default_title": "Save to Stower",

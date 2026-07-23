@@ -7,6 +7,7 @@ included:
   - StowerPackage/Sources
   - StowerPackage/Tests
   - StowerShare
+  - StowerSafari
 
 excluded:
   - .build
