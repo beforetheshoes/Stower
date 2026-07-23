@@ -1,4 +1,5 @@
-import { displayHost, isSaveablePage, makeStowerLink } from "./link.js";
+import { displayHost, isSaveablePage } from "./link.js";
+import { savePage } from "./save.js";
 
 const pageTitle = document.querySelector("#page-title");
 const pageHost = document.querySelector("#page-host");
@@ -6,6 +7,7 @@ const saveButton = document.querySelector("#save-button");
 const status = document.querySelector("#status");
 
 let activeTab;
+const extensionAPI = globalThis.browser ?? globalThis.chrome;
 
 function showStatus(message, kind = "neutral") {
   status.textContent = message;
@@ -14,7 +16,7 @@ function showStatus(message, kind = "neutral") {
 
 async function loadActivePage() {
   try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const [tab] = await extensionAPI.tabs.query({ active: true, currentWindow: true });
     activeTab = tab;
 
     const canSave = Boolean(tab?.id && isSaveablePage(tab.url));
@@ -39,16 +41,16 @@ saveButton.addEventListener("click", async () => {
 
   saveButton.disabled = true;
   saveButton.dataset.saving = "true";
-  showStatus("Opening Stower…");
+  showStatus("Saving to Stower…");
 
   try {
-    await chrome.tabs.update(activeTab.id, { url: makeStowerLink(activeTab.url) });
-    showStatus("Sent to Stower", "success");
+    await savePage(extensionAPI, activeTab);
+    showStatus("Saved to Stower", "success");
     window.setTimeout(() => window.close(), 450);
-  } catch {
+  } catch (error) {
     saveButton.disabled = false;
     delete saveButton.dataset.saving;
-    showStatus("Could not open Stower. Make sure the app is installed.", "error");
+    showStatus(error?.message || "Stower could not save this page.", "error");
   }
 });
 

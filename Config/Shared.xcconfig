@@ -12,6 +12,7 @@ PRODUCT_BUNDLE_IDENTIFIER = com.ryanleewilliams.stower
 MARKETING_VERSION = 0.4.2
 CURRENT_PROJECT_VERSION = 10
 STOWER_URL_SCHEME = stower
+STOWER_APP_GROUP = group.com.Stower
 
 // ==========================================
 // Platform Configuration

@@ -9,6 +9,26 @@
 /* Begin PBXBuildFile section */
 		5740E60C2E700000DEADBEEF /* StowerData in Frameworks */ = {isa = PBXBuildFile; productRef = 5740E60B2E700000DEADBEEF /* StowerData */; };
 		5740E60E2E700000DEADBEEF /* StowerShare.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 5740E6012E700000DEADBEEF /* StowerShare.appex */; platformFilter = ios; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		A57AFA010000000000000001 /* StowerData in Frameworks */ = {isa = PBXBuildFile; productRef = A57AFA010000000000000036 /* StowerData */; };
+		A57AFA010000000000000002 /* StowerData in Frameworks */ = {isa = PBXBuildFile; productRef = A57AFA010000000000000037 /* StowerData */; };
+		A57AFA010000000000000003 /* StowerSafari-iOS.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = A57AFA010000000000000017 /* StowerSafari-iOS.appex */; platformFilter = ios; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		A57AFA010000000000000004 /* StowerSafari-macOS.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = A57AFA010000000000000018 /* StowerSafari-macOS.appex */; platformFilters = (macos, ); settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		A57AFA010000000000000005 /* SafariWebExtensionHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = A57AFA010000000000000019 /* SafariWebExtensionHandler.swift */; };
+		A57AFA010000000000000006 /* SafariWebExtensionHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = A57AFA010000000000000019 /* SafariWebExtensionHandler.swift */; };
+		A57AFA010000000000000007 /* link.js in Resources */ = {isa = PBXBuildFile; fileRef = A57AFA01000000000000001D /* link.js */; };
+		A57AFA010000000000000008 /* save.js in Resources */ = {isa = PBXBuildFile; fileRef = A57AFA01000000000000001E /* save.js */; };
+		A57AFA010000000000000009 /* popup.js in Resources */ = {isa = PBXBuildFile; fileRef = A57AFA01000000000000001F /* popup.js */; };
+		A57AFA01000000000000000A /* popup.html in Resources */ = {isa = PBXBuildFile; fileRef = A57AFA010000000000000020 /* popup.html */; };
+		A57AFA01000000000000000B /* popup.css in Resources */ = {isa = PBXBuildFile; fileRef = A57AFA010000000000000021 /* popup.css */; };
+		A57AFA01000000000000000C /* manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = A57AFA010000000000000022 /* manifest.json */; };
+		A57AFA01000000000000000D /* icons in Resources */ = {isa = PBXBuildFile; fileRef = A57AFA010000000000000023 /* icons */; };
+		A57AFA01000000000000000E /* link.js in Resources */ = {isa = PBXBuildFile; fileRef = A57AFA01000000000000001D /* link.js */; };
+		A57AFA01000000000000000F /* save.js in Resources */ = {isa = PBXBuildFile; fileRef = A57AFA01000000000000001E /* save.js */; };
+		A57AFA010000000000000010 /* popup.js in Resources */ = {isa = PBXBuildFile; fileRef = A57AFA01000000000000001F /* popup.js */; };
+		A57AFA010000000000000011 /* popup.html in Resources */ = {isa = PBXBuildFile; fileRef = A57AFA010000000000000020 /* popup.html */; };
+		A57AFA010000000000000012 /* popup.css in Resources */ = {isa = PBXBuildFile; fileRef = A57AFA010000000000000021 /* popup.css */; };
+		A57AFA010000000000000013 /* manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = A57AFA010000000000000022 /* manifest.json */; };
+		A57AFA010000000000000014 /* icons in Resources */ = {isa = PBXBuildFile; fileRef = A57AFA010000000000000023 /* icons */; };
 		8B41F6832DEDD23B001A66F9 /* StowerFeature in Frameworks */ = {isa = PBXBuildFile; productRef = 8B41F6822DEDD23B001A66F9 /* StowerFeature */; };
 		8B41F6852DEDD25C001A66F9 /* StowerFeature in Frameworks */ = {isa = PBXBuildFile; productRef = 8B41F6842DEDD25C001A66F9 /* StowerFeature */; };
 /* End PBXBuildFile section */
@@ -20,6 +40,20 @@
 			proxyType = 1;
 			remoteGlobalIDString = 5740E60A2E700000DEADBEEF;
 			remoteInfo = StowerShare;
+		};
+		A57AFA010000000000000015 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 8B41F63D2DEDD0D5001A66F9 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A57AFA010000000000000028;
+			remoteInfo = "StowerSafari (iOS)";
+		};
+		A57AFA010000000000000016 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 8B41F63D2DEDD0D5001A66F9 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A57AFA010000000000000029;
+			remoteInfo = "StowerSafari (macOS)";
 		};
 		8B41F65D2DEDD0D6001A66F9 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -38,6 +72,8 @@
 			dstSubfolderSpec = 13;
 			files = (
 				5740E60E2E700000DEADBEEF /* StowerShare.appex in Embed Foundation Extensions */,
+				A57AFA010000000000000003 /* StowerSafari-iOS.appex in Embed Foundation Extensions */,
+				A57AFA010000000000000004 /* StowerSafari-macOS.appex in Embed Foundation Extensions */,
 			);
 			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -46,6 +82,19 @@
 
 /* Begin PBXFileReference section */
 		5740E6012E700000DEADBEEF /* StowerShare.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = StowerShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		A57AFA010000000000000017 /* StowerSafari-iOS.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = "StowerSafari-iOS.appex"; sourceTree = BUILT_PRODUCTS_DIR; };
+		A57AFA010000000000000018 /* StowerSafari-macOS.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = "StowerSafari-macOS.appex"; sourceTree = BUILT_PRODUCTS_DIR; };
+		A57AFA010000000000000019 /* SafariWebExtensionHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafariWebExtensionHandler.swift; sourceTree = "<group>"; };
+		A57AFA01000000000000001A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A57AFA01000000000000001B /* StowerSafari.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = StowerSafari.entitlements; sourceTree = "<group>"; };
+		A57AFA01000000000000001C /* StowerSafari-macOS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "StowerSafari-macOS.entitlements"; sourceTree = "<group>"; };
+		A57AFA01000000000000001D /* link.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = link.js; path = BrowserExtension/Stower/link.js; sourceTree = SOURCE_ROOT; };
+		A57AFA01000000000000001E /* save.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = save.js; path = BrowserExtension/Stower/save.js; sourceTree = SOURCE_ROOT; };
+		A57AFA01000000000000001F /* popup.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = popup.js; path = BrowserExtension/Stower/popup.js; sourceTree = SOURCE_ROOT; };
+		A57AFA010000000000000020 /* popup.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; name = popup.html; path = BrowserExtension/Stower/popup.html; sourceTree = SOURCE_ROOT; };
+		A57AFA010000000000000021 /* popup.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; name = popup.css; path = BrowserExtension/Stower/popup.css; sourceTree = SOURCE_ROOT; };
+		A57AFA010000000000000022 /* manifest.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = manifest.json; path = BrowserExtension/Stower/manifest.json; sourceTree = SOURCE_ROOT; };
+		A57AFA010000000000000023 /* icons */ = {isa = PBXFileReference; lastKnownFileType = folder; name = icons; path = BrowserExtension/Stower/icons; sourceTree = SOURCE_ROOT; };
 		8B41F6452DEDD0D5001A66F9 /* Stower.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Stower.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		8B41F65C2DEDD0D6001A66F9 /* StowerUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = StowerUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -120,6 +169,22 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A57AFA010000000000000026 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A57AFA010000000000000001 /* StowerData in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A57AFA010000000000000027 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A57AFA010000000000000002 /* StowerData in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		8B41F6422DEDD0D5001A66F9 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -145,6 +210,7 @@
 				8BD71C052DEE41D800CEDD92 /* Config */,
 				8B41F6472DEDD0D5001A66F9 /* Stower */,
 				5740E6022E700000DEADBEEF /* StowerShare */,
+				A57AFA010000000000000024 /* StowerSafari */,
 				8B41F65F2DEDD0D6001A66F9 /* StowerUITests */,
 				8B41F6812DEDD23B001A66F9 /* Frameworks */,
 				8B41F6462DEDD0D5001A66F9 /* Products */,
@@ -157,6 +223,8 @@
 				8B41F6452DEDD0D5001A66F9 /* Stower.app */,
 				8B41F65C2DEDD0D6001A66F9 /* StowerUITests.xctest */,
 				5740E6012E700000DEADBEEF /* StowerShare.appex */,
+				A57AFA010000000000000017 /* StowerSafari-iOS.appex */,
+				A57AFA010000000000000018 /* StowerSafari-macOS.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -166,6 +234,32 @@
 			children = (
 			);
 			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		A57AFA010000000000000024 /* StowerSafari */ = {
+			isa = PBXGroup;
+			children = (
+				A57AFA010000000000000019 /* SafariWebExtensionHandler.swift */,
+				A57AFA01000000000000001A /* Info.plist */,
+				A57AFA01000000000000001B /* StowerSafari.entitlements */,
+				A57AFA01000000000000001C /* StowerSafari-macOS.entitlements */,
+				A57AFA010000000000000025 /* Resources */,
+			);
+			path = StowerSafari;
+			sourceTree = "<group>";
+		};
+		A57AFA010000000000000025 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				A57AFA01000000000000001D /* link.js */,
+				A57AFA01000000000000001E /* save.js */,
+				A57AFA01000000000000001F /* popup.js */,
+				A57AFA010000000000000020 /* popup.html */,
+				A57AFA010000000000000021 /* popup.css */,
+				A57AFA010000000000000022 /* manifest.json */,
+				A57AFA010000000000000023 /* icons */,
+			);
+			name = Resources;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -194,6 +288,46 @@
 			productReference = 5740E6012E700000DEADBEEF /* StowerShare.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
+		A57AFA010000000000000028 /* StowerSafari (iOS) */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A57AFA010000000000000034 /* Build configuration list for PBXNativeTarget "StowerSafari (iOS)" */;
+			buildPhases = (
+				A57AFA01000000000000002C /* Sources */,
+				A57AFA010000000000000026 /* Frameworks */,
+				A57AFA01000000000000002A /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "StowerSafari (iOS)";
+			packageProductDependencies = (
+				A57AFA010000000000000036 /* StowerData */,
+			);
+			productName = StowerSafari;
+			productReference = A57AFA010000000000000017 /* StowerSafari-iOS.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		A57AFA010000000000000029 /* StowerSafari (macOS) */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A57AFA010000000000000035 /* Build configuration list for PBXNativeTarget "StowerSafari (macOS)" */;
+			buildPhases = (
+				A57AFA01000000000000002D /* Sources */,
+				A57AFA010000000000000027 /* Frameworks */,
+				A57AFA01000000000000002B /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "StowerSafari (macOS)";
+			packageProductDependencies = (
+				A57AFA010000000000000037 /* StowerData */,
+			);
+			productName = StowerSafari;
+			productReference = A57AFA010000000000000018 /* StowerSafari-macOS.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 		8B41F6442DEDD0D5001A66F9 /* Stower */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 8B41F6662DEDD0D6001A66F9 /* Build configuration list for PBXNativeTarget "Stower" */;
@@ -207,6 +341,8 @@
 			);
 			dependencies = (
 				5740E6102E700000DEADBEEF /* PBXTargetDependency */,
+				A57AFA01000000000000002E /* PBXTargetDependency */,
+				A57AFA01000000000000002F /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				8B41F6472DEDD0D5001A66F9 /* Stower */,
@@ -257,6 +393,12 @@
 					5740E60A2E700000DEADBEEF = {
 						CreatedOnToolsVersion = 16.3;
 					};
+					A57AFA010000000000000028 = {
+						CreatedOnToolsVersion = 27.0;
+					};
+					A57AFA010000000000000029 = {
+						CreatedOnToolsVersion = 27.0;
+					};
 					8B41F6442DEDD0D5001A66F9 = {
 						CreatedOnToolsVersion = 16.3;
 					};
@@ -282,6 +424,8 @@
 			targets = (
 				8B41F6442DEDD0D5001A66F9 /* Stower */,
 				5740E60A2E700000DEADBEEF /* StowerShare */,
+				A57AFA010000000000000028 /* StowerSafari (iOS) */,
+				A57AFA010000000000000029 /* StowerSafari (macOS) */,
 				8B41F65B2DEDD0D6001A66F9 /* StowerUITests */,
 			);
 		};
@@ -292,6 +436,34 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A57AFA01000000000000002A /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A57AFA010000000000000007 /* link.js in Resources */,
+				A57AFA010000000000000008 /* save.js in Resources */,
+				A57AFA010000000000000009 /* popup.js in Resources */,
+				A57AFA01000000000000000A /* popup.html in Resources */,
+				A57AFA01000000000000000B /* popup.css in Resources */,
+				A57AFA01000000000000000C /* manifest.json in Resources */,
+				A57AFA01000000000000000D /* icons in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A57AFA01000000000000002B /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A57AFA01000000000000000E /* link.js in Resources */,
+				A57AFA01000000000000000F /* save.js in Resources */,
+				A57AFA010000000000000010 /* popup.js in Resources */,
+				A57AFA010000000000000011 /* popup.html in Resources */,
+				A57AFA010000000000000012 /* popup.css in Resources */,
+				A57AFA010000000000000013 /* manifest.json in Resources */,
+				A57AFA010000000000000014 /* icons in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -319,6 +491,22 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A57AFA01000000000000002C /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A57AFA010000000000000005 /* SafariWebExtensionHandler.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A57AFA01000000000000002D /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A57AFA010000000000000006 /* SafariWebExtensionHandler.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		8B41F6412DEDD0D5001A66F9 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -341,6 +529,20 @@
 			platformFilter = ios;
 			target = 5740E60A2E700000DEADBEEF /* StowerShare */;
 			targetProxy = 5740E60F2E700000DEADBEEF /* PBXContainerItemProxy */;
+		};
+		A57AFA01000000000000002E /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			platformFilter = ios;
+			target = A57AFA010000000000000028 /* StowerSafari (iOS) */;
+			targetProxy = A57AFA010000000000000015 /* PBXContainerItemProxy */;
+		};
+		A57AFA01000000000000002F /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			platformFilters = (
+				macos,
+			);
+			target = A57AFA010000000000000029 /* StowerSafari (macOS) */;
+			targetProxy = A57AFA010000000000000016 /* PBXContainerItemProxy */;
 		};
 		8B41F65E2DEDD0D6001A66F9 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
@@ -401,6 +603,154 @@
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		A57AFA010000000000000030 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReferenceAnchor = 8BD71C052DEE41D800CEDD92 /* Config */;
+			baseConfigurationReferenceRelativePath = Debug.xcconfig;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = StowerSafari/StowerSafari.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 777XX46HDU;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = StowerSafari/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Save to Stower";
+				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-framework",
+					SafariServices,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.ryanleewilliams.stower.dev.safari;
+				PRODUCT_NAME = "StowerSafari-iOS";
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		A57AFA010000000000000031 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReferenceAnchor = 8BD71C052DEE41D800CEDD92 /* Config */;
+			baseConfigurationReferenceRelativePath = Release.xcconfig;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = StowerSafari/StowerSafari.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 777XX46HDU;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = StowerSafari/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Save to Stower";
+				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-framework",
+					SafariServices,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.ryanleewilliams.stower.safari;
+				PRODUCT_NAME = "StowerSafari-iOS";
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		A57AFA010000000000000032 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReferenceAnchor = 8BD71C052DEE41D800CEDD92 /* Config */;
+			baseConfigurationReferenceRelativePath = Debug.xcconfig;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = "StowerSafari/StowerSafari-macOS.entitlements";
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 777XX46HDU;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = StowerSafari/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Save to Stower";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 27.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-framework",
+					SafariServices,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.ryanleewilliams.stower.dev.safari;
+				PRODUCT_NAME = "StowerSafari-macOS";
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		A57AFA010000000000000033 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReferenceAnchor = 8BD71C052DEE41D800CEDD92 /* Config */;
+			baseConfigurationReferenceRelativePath = Release.xcconfig;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = "StowerSafari/StowerSafari-macOS.entitlements";
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 777XX46HDU;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = StowerSafari/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Save to Stower";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 27.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-framework",
+					SafariServices,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.ryanleewilliams.stower.safari;
+				PRODUCT_NAME = "StowerSafari-macOS";
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				VALIDATE_PRODUCT = YES;
 			};
 			name = Release;
 		};
@@ -683,6 +1033,24 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
+		A57AFA010000000000000034 /* Build configuration list for PBXNativeTarget "StowerSafari (iOS)" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A57AFA010000000000000030 /* Debug */,
+				A57AFA010000000000000031 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A57AFA010000000000000035 /* Build configuration list for PBXNativeTarget "StowerSafari (macOS)" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A57AFA010000000000000032 /* Debug */,
+				A57AFA010000000000000033 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		8B41F6402DEDD0D5001A66F9 /* Build configuration list for PBXProject "Stower" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -714,6 +1082,14 @@
 
 /* Begin XCSwiftPackageProductDependency section */
 		5740E60B2E700000DEADBEEF /* StowerData */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = StowerData;
+		};
+		A57AFA010000000000000036 /* StowerData */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = StowerData;
+		};
+		A57AFA010000000000000037 /* StowerData */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = StowerData;
 		};

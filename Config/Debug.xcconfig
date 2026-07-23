@@ -18,6 +18,7 @@ STRIP_SWIFT_SYMBOLS = NO
 PRODUCT_BUNDLE_IDENTIFIER = com.ryanleewilliams.stower.dev
 INFOPLIST_KEY_CFBundleDisplayName = Stower Dev
 STOWER_URL_SCHEME = stower-dev
+STOWER_APP_GROUP = group.com.Stower.dev
 
 // `$(inherited)` preserves Xcode's default `DEBUG` flag (used by existing
 // `#if DEBUG` blocks in Bootstrap.swift) while adding our new
