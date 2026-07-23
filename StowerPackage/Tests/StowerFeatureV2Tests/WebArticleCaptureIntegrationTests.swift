@@ -7,6 +7,38 @@ import WebKit
 struct WebArticleCaptureIntegrationTests {
     @Test
     @MainActor
+    func recognizesArticleContentHiddenDuringClientSideHydration() async throws {
+        let page = WebPage()
+        let html = """
+            <!doctype html><html><head></head><body>
+            <article style="display: none;">
+              <h1>Delivered before hydration finishes</h1>
+              <p>This article is already present in the document even though client-side JavaScript has not made it visible yet.</p>
+            </article>
+            </body></html>
+            """
+        for try await event in page.load(
+            Data(html.utf8),
+            mimeType: "text/html",
+            characterEncoding: .utf8,
+            baseURL: URL(string: "https://example.com/article")!
+        ) where event == .finished {
+            break
+        }
+
+        let visibleText = try await page.callJavaScript(
+            "return document.body ? document.body.innerText : '';"
+        ) as? String
+        let deliveredText = try await page.callJavaScript(
+            "return \(WebCaptureDOMProbe.deliveredTextJavaScript);"
+        ) as? String
+
+        #expect(!WebCaptureDOMProbe.containsUsableText(visibleText))
+        #expect(WebCaptureDOMProbe.containsUsableText(deliveredText))
+    }
+
+    @Test
+    @MainActor
     func capturesJavaScriptRenderedPageAndReplaysOffline() async throws {
         let fixture = FileManager.default.temporaryDirectory
             .appendingPathComponent("web-capture-fixture-\(UUID())", isDirectory: true)
