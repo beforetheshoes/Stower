@@ -509,10 +509,55 @@ enum RenderedArticleExtractor {
         }
     }
 
+    /// Block-level elements that correspond one-to-one with `ReaderBlock`
+    /// cases produced by the block parser.
+    ///
+    /// `li` is deliberately absent and `ul`/`ol` present: the parser emits a
+    /// single `.list` block per list, so indexing each item made every index
+    /// after a list disagree with the document by the item count. `svg`,
+    /// `details` and `math` are absent because the parser emits nothing for
+    /// them, which shifted things the other way.
+    private static let blockIndexSelector = [
+        "h1", "h2", "h3", "h4", "h5", "h6", "p", "ul", "ol", "dl",
+        "blockquote", "pre", "figure", "table", "video", "audio",
+        ".stower-embed-launcher",
+    ].joined(separator: ",")
+
+    /// Numbers the article's blocks so the reader can highlight and scroll to
+    /// them by index.
+    ///
+    /// This index space has to agree with the order of `ReaderDocument.blocks`,
+    /// because listening highlights by document block position while the page
+    /// on screen is this HTML. Two rules keep them in step:
+    ///
+    ///   * Only the outermost element of a nested run is numbered. A
+    ///     `<blockquote>` containing `<p>` is one block, not two, and a `<ul>`
+    ///     is one block, not one per `<li>`.
+    ///   * Elements with neither text nor media are skipped, matching the
+    ///     parser dropping empty blocks.
     private static func addBlockIndices(_ root: Element) throws {
-        let blocks = try root.select("h1,h2,h3,h4,h5,h6,p,li,blockquote,pre,figure,table,dl,details,math,svg,video,audio,.stower-embed-launcher")
-        for (index, element) in blocks.array().enumerated() {
+        let candidates = try root.select(blockIndexSelector).array()
+        let candidateIDs = Set(candidates.map(ObjectIdentifier.init))
+
+        var index = 0
+        for element in candidates {
+            var ancestor = element.parent()
+            var isNested = false
+            while let current = ancestor, current !== root {
+                if candidateIDs.contains(ObjectIdentifier(current)) {
+                    isNested = true
+                    break
+                }
+                ancestor = current.parent()
+            }
+            if isNested { continue }
+
+            let hasText = !(((try? element.text()) ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            let hasMedia = !((try? element.select("img,picture,video,audio,iframe").isEmpty()) ?? true)
+            guard hasText || hasMedia else { continue }
+
             try element.attr("data-block-index", String(index))
+            index += 1
         }
     }
 
@@ -582,7 +627,13 @@ enum RenderedArticleExtractor {
         let meta = [byline, date].filter { !$0.isEmpty }.joined(separator: " &middot; ")
         let metaHTML = meta.isEmpty ? "" : "<p class=\"stower-meta\">\(meta)</p>"
 
-        return "<header class=\"stower-header\">\(site)<h1 data-block-index=\"0\">\(escapeHTML(title))</h1>\(deckHTML)\(metaHTML)</header>"
+        // `-1`, not `0`: the body's first block is also index 0, and
+        // `querySelector` returns the first match in document order — so
+        // highlighting or restoring to block 0 landed on the title instead of
+        // the opening paragraph. The reader runtime already treats negative
+        // indices as "not a body block", and the structured builder uses the
+        // same convention for its header.
+        return "<header class=\"stower-header\">\(site)<h1 data-block-index=\"-1\">\(escapeHTML(title))</h1>\(deckHTML)\(metaHTML)</header>"
     }
 
     private static func meta(_ document: Document, _ selector: String) -> String? {
