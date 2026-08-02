@@ -303,4 +303,75 @@ struct ArticleWidgetAndGalleryTests {
         ]
         #expect(removeLeadingTitleRepeat(blocks, title: "T", siteName: "How-To Geek").count == 2)
     }
+
+    // MARK: - The HTML the reader actually renders
+    //
+    // Captured articles are displayed from `readerHTML` (archived as
+    // reader.webarchive), NOT from the ReaderDocument. Gallery and duplicate
+    // handling therefore has to exist in the extractor as well as the block
+    // parser — fixing only the parser left the reader still showing galleries
+    // as bulleted lists.
+
+    @Test
+    func readerHTMLUnwrapsGalleryListsIntoFigures() throws {
+        let html = page("""
+            <article>
+              \(filler)
+              <ul class="splide__list">
+                <li class="splide__slide"><figure><img src="https://cdn.example.com/one.jpg">
+                  <small>Credit: Someone</small></figure></li>
+                <li class="splide__slide"><figure><img src="https://cdn.example.com/two.jpg">
+                  <small>Credit: Someone</small></figure></li>
+              </ul>
+            </article>
+            """)
+        let readerHTML = try extract(html).readerHTML
+        #expect(!readerHTML.contains("<li"))
+        #expect(readerHTML.contains("one.jpg"))
+        #expect(readerHTML.contains("two.jpg"))
+    }
+
+    @Test
+    func readerHTMLKeepsAGenuineProseList() throws {
+        let html = page("""
+            <article>\(filler)
+              <ul><li>Open the Shortcuts app and switch to the Automations tab at the bottom.</li>
+                  <li>Scroll down until you find the CarPlay option, underneath NFC.</li></ul>
+            </article>
+            """)
+        let readerHTML = try extract(html).readerHTML
+        #expect(readerHTML.contains("<li"))
+        #expect(readerHTML.contains("Automations tab"))
+    }
+
+    @Test
+    func readerHTMLDropsRepeatedImages() throws {
+        let html = page("""
+            <article>
+              \(filler)
+              <figure><img src="https://cdn.example.com/wp/shot.jpeg?w=1736&h=1157"></figure>
+              <figure><img src="https://cdn.example.com/wp/shot.jpeg?w=750&h=422"></figure>
+            </article>
+            """)
+        let readerHTML = try extract(html).readerHTML
+        #expect(readerHTML.components(separatedBy: "shot.jpeg").count - 1 == 1)
+    }
+
+    @Test
+    func readerHTMLDropsTheRelatedArticlesRail() throws {
+        let html = page("""
+            <article>
+              \(filler)
+              <div class="sidebar-el-content">
+                <div class="display-card"><img src="https://cdn.example.com/other.jpg?w=120&h=80">
+                  <span>Some unrelated post</span></div>
+              </div>
+              <div class="article-tags"><span>CarPlay</span></div>
+            </article>
+            """)
+        let readerHTML = try extract(html).readerHTML
+        #expect(!readerHTML.contains("other.jpg"))
+        #expect(!readerHTML.contains("Some unrelated post"))
+        #expect(readerHTML.contains("Setting this up looks harder"))
+    }
 }

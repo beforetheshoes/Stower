@@ -63,7 +63,14 @@ public struct ExtractionPipelineClient: Sendable {
         // Detect interactive content BEFORE stripping SVGs/scripts.
         let hasInteractiveContent = detectInteractiveContent(document: document)
 
-        let root = try chooseRoot(document: document)
+        // When the input is our own reader HTML the root is already known, and
+        // re-deriving it is actively harmful: `chooseRoot` requires 300+
+        // characters before it will accept an `<article>`, so a short piece
+        // fell back to `<main>` and swallowed the reader's own header — the
+        // site name and headline then appeared as body blocks, and every block
+        // index shifted out of step with the rendered page.
+        let root = try document.select("#stower-reader-article").first()
+            ?? chooseRoot(document: document)
         let parsed = try parseBlocks(root: root, baseURL: sourceURL)
         let cleanedBlocks = sanitizeBlocks(parsed.blocks)
         let siteNameHint = nonEmpty(try? document.select("meta[property=og:site_name]").first()?.attr("content"))
