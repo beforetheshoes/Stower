@@ -5,6 +5,9 @@ import SQLiteData
 
 public struct StowerRepository: Sendable {
     public var fetchLibrary: @Sendable (LibraryFilter) async throws -> [SavedItem]
+    /// Every non-trashed item that can be re-extracted from its source URL,
+    /// oldest first. Backs the bulk "re-extract library" maintenance action.
+    public var fetchReextractableItems: @Sendable () async throws -> [SavedItem]
     public var loadItem: @Sendable (UUID) async throws -> SavedItem?
     public var createItemFromIngestion: @Sendable (IngestionResult) async throws -> SavedItem
     public var updateItemFromIngestion: @Sendable (UUID, IngestionResult) async throws -> SavedItem?
@@ -132,6 +135,7 @@ extension StowerRepository {
     static let failing: StowerRepository = {
         StowerRepository(
             fetchLibrary: { _ in [] },
+            fetchReextractableItems: { [] },
             loadItem: { _ in nil },
             createItemFromIngestion: { _ in throw RepositoryError.notBootstrapped },
             updateItemFromIngestion: { _, _ in nil },
@@ -262,6 +266,7 @@ extension StowerRepository {
 
         return Self(
             fetchLibrary: _fetchLibraryFiltered(database: database),
+            fetchReextractableItems: _fetchReextractableItems(database: database),
             loadItem: _loadItem(database: database),
             createItemFromIngestion: cachedCreateFromIngestion,
             updateItemFromIngestion: cachedUpdateFromIngestion,

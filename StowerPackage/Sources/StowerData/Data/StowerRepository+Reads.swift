@@ -6,6 +6,50 @@ extension StowerRepository {
     // StowerRepository+Filters.swift — every caller now routes through a
     // `LibraryFilter` so the repository can push the filter into SQL.
 
+    /// Non-trashed items that carry an http(s) source URL, oldest first.
+    ///
+    /// Backs the bulk re-extract action: only URL-backed items can be rebuilt,
+    /// because re-extraction re-fetches the page and runs it back through the
+    /// capture pipeline. PDFs, imported website zips and hand-written text
+    /// items have no upstream to re-read, so they are excluded.
+    ///
+    /// Oldest first so the progress counter advances through the library in a
+    /// stable order — a user who cancels and resumes covers new ground rather
+    /// than redoing the most recent saves.
+    static func _fetchReextractableItems(
+        database: any DatabaseWriter
+    ) -> @Sendable () async throws -> [SavedItem] {
+        {
+            try await database.read { db -> [SavedItem] in
+                let synced: [SavedItemSyncTable] = try SavedItemSyncTable
+                    .where { $0.deletedAt.is(nil) }
+                    .where { $0.sourceURL.isNot(nil) }
+                    .order { $0.createdAt }
+                    .fetchAll(db)
+
+                let candidates = synced.filter { row in
+                    guard let raw = row.sourceURL,
+                          let url = URL(string: raw),
+                          let scheme = url.scheme?.lowercased()
+                    else { return false }
+                    return scheme == "http" || scheme == "https"
+                }
+
+                let ids: [UUID] = candidates.map(\.id)
+                let locals: [SavedItemContentLocalTable] = ids.isEmpty
+                    ? []
+                    : try SavedItemContentLocalTable
+                        .where { $0.itemID.in(ids) }
+                        .fetchAll(db)
+                let localByID: [UUID: SavedItemContentLocalTable] = Dictionary(
+                    uniqueKeysWithValues: locals.map { ($0.itemID, $0) }
+                )
+
+                return candidates.map { toDomain(sync: $0, local: localByID[$0.id]) }
+            }
+        }
+    }
+
     static func _loadItem(database: any DatabaseWriter) -> @Sendable (UUID) async throws -> SavedItem? {
         { (id: UUID) async throws -> SavedItem? in
             try await database.read { db -> SavedItem? in
