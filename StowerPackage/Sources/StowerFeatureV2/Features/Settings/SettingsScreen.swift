@@ -19,10 +19,7 @@ public struct SettingsScreen: View {
                 }
 
                 if let detail = syncDetail(store.cloudSyncStatus) {
-                    Text(detail)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    CopyableText(text: detail, font: .caption)
                 }
             }
 
@@ -70,6 +67,16 @@ public struct SettingsScreen: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
+
+                    // One button producing a full pasteable dump, rather than a
+                    // copy control on every row. The rows stay elided; the
+                    // report carries the untruncated URLs.
+                    CopyButton(
+                        text: SyncDiagnosticsReport.text(
+                            diagnostics: diagnostics,
+                            status: store.cloudSyncStatus
+                        )
+                    )
                 }
             }
 #endif
@@ -103,9 +110,7 @@ public struct SettingsScreen: View {
             }
 
             if let error = store.errorMessage {
-                Text(error)
-                    .foregroundStyle(palette.error)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                CopyableText(text: error, font: .body, textColor: palette.error)
             }
         }
         .formStyle(.grouped)

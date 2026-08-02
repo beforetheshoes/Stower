@@ -48,15 +48,12 @@ public struct LibraryScreen: View {
                 urlComposer
                     .listRowBackground(Color.clear)
                 if store.saveState == .failed, let error = store.errorMessage {
-                    Text(error)
-                        .font(.caption)
-                        .foregroundStyle(palette.error)
+                    CopyableText(text: error, textColor: palette.error)
                         .listRowBackground(Color.clear)
                 }
             }
             if let error = store.errorMessage, store.saveState != .failed {
-                Text(error)
-                    .foregroundStyle(palette.error)
+                CopyableText(text: error, font: .body, textColor: palette.error)
                     .listRowBackground(Color.clear)
             }
             #endif
@@ -132,7 +129,7 @@ public struct LibraryScreen: View {
                             openURL(sourceURL)
                         }
                         Button("Copy Original URL") {
-                            copyToClipboard(sourceURLString)
+                            ClipboardSupport.copy(sourceURLString)
                         }
                     }
                     if store.filter == .recentlyDeleted {
@@ -319,17 +316,6 @@ public struct LibraryScreen: View {
         .task {
             store.send(.onAppear)
         }
-    }
-
-    /// Writes a plain-text string to the system clipboard. Cross-platform
-    /// wrapper around `UIPasteboard` (iOS) and `NSPasteboard` (macOS).
-    private func copyToClipboard(_ value: String) {
-        #if canImport(UIKit)
-        UIPasteboard.general.string = value
-        #elseif canImport(AppKit)
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(value, forType: .string)
-        #endif
     }
 
     private func presentAddURLSheet() {
@@ -594,14 +580,17 @@ public struct LibraryScreen: View {
                     .keyboardType(.URL)
                     .submitLabel(.go)
                     .onSubmit { store.send(.saveURLTapped) }
+                    if store.saveState == .failed, let error = store.errorMessage {
+                        // Deliberately a row, not the section footer: a footer
+                        // renders interactive controls at footnote size outside
+                        // the grouped inset, so the copy button would be almost
+                        // untappable and read as decoration.
+                        CopyableText(text: error, textColor: palette.error)
+                    }
                 } header: {
                     Text("URL")
                 } footer: {
-                    if store.saveState == .failed, let error = store.errorMessage {
-                        Text(error).foregroundStyle(palette.error)
-                    } else {
-                        Text("Paste any article URL. Stower will fetch and archive it for offline reading.")
-                    }
+                    Text("Paste any article URL. Stower will fetch and archive it for offline reading.")
                 }
             }
             .navigationTitle("Add URL")

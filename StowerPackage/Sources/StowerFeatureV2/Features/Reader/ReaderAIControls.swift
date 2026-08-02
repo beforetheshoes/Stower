@@ -107,10 +107,7 @@ struct ReaderAIControls: View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title)
                 .font(.headline)
-            Text(message)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            CopyableText(text: message, font: .subheadline)
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -136,6 +133,7 @@ struct ReaderAIControls: View {
                 HStack {
                     summaryFootnote
                     Spacer()
+                    CopyButton(text: store.summaryText, style: .compact)
                     Button {
                         store.send(.summarizeRequested(document: document, plainText: plainText))
                     } label: {
@@ -172,10 +170,7 @@ struct ReaderAIControls: View {
             }
 
             if let error = store.summaryError {
-                Text(error)
-                    .font(.caption)
-                    .foregroundStyle(palette.error)
-                    .fixedSize(horizontal: false, vertical: true)
+                CopyableText(text: error, textColor: palette.error)
             }
         }
     }
@@ -237,10 +232,7 @@ struct ReaderAIControls: View {
             }
 
             if let error = store.askError {
-                Text(error)
-                    .font(.caption)
-                    .foregroundStyle(palette.error)
-                    .fixedSize(horizontal: false, vertical: true)
+                CopyableText(text: error, textColor: palette.error)
             }
 
             HStack(spacing: 8) {
@@ -298,6 +290,14 @@ struct ReaderAIControls: View {
                     .textSelection(.enabled)
                     .foregroundStyle(.primary)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    // A context menu rather than a visible button: a Copy
+                    // control on every bubble is noise in a scrolling
+                    // transcript, and selection already works here.
+                    .contextMenu {
+                        Button("Copy") {
+                            ClipboardSupport.copy(answer)
+                        }
+                    }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

@@ -14,11 +14,18 @@ public struct FailedImport: Equatable, Identifiable, Sendable {
     public let label: String
     /// Why it gave up, taken from the job's last recorded error.
     public let reason: String?
+    /// The job's payload exactly as recorded — the full URL or path.
+    ///
+    /// `label` is elided for the banner (`displayURL` inserts a literal "…"
+    /// and discards the rest), so it cannot be used to reconstruct what was
+    /// actually being imported. Copying has to reach for this instead.
+    public let rawPayload: String
 
-    public init(id: UUID, label: String, reason: String?) {
+    public init(id: UUID, label: String, reason: String?, rawPayload: String = "") {
         self.id = id
         self.label = label
         self.reason = reason
+        self.rawPayload = rawPayload
     }
 
     public static func list(from jobs: [IngestionJob]) -> [FailedImport] {
@@ -28,8 +35,27 @@ public struct FailedImport: Equatable, Identifiable, Sendable {
     public init(job: IngestionJob) {
         self.id = job.id
         self.label = Self.label(for: job)
+        self.rawPayload = job.payload
         let trimmed = job.lastError?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.reason = (trimmed?.isEmpty ?? true) ? nil : trimmed
+    }
+
+    /// Every failed import as pasteable text.
+    ///
+    /// The banner only ever shows the first failure, truncated to two lines,
+    /// and says "and N more" — so what is on screen is never enough to act on.
+    /// Copying yields all of them, with untruncated payloads.
+    public static func diagnosticReport(from imports: [FailedImport]) -> String {
+        guard !imports.isEmpty else { return "" }
+        let header = imports.count == 1
+            ? "1 Stower import failed"
+            : "\(imports.count) Stower imports failed"
+        let entries = imports.map { entry -> String in
+            let target = entry.rawPayload.isEmpty ? entry.label : entry.rawPayload
+            let reason = entry.reason ?? "No reason recorded."
+            return "• \(target)\n  \(reason)"
+        }
+        return ([header, ""] + entries).joined(separator: "\n")
     }
 
     private static func label(for job: IngestionJob) -> String {

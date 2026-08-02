@@ -112,6 +112,9 @@ public struct AppView: View {
                     if !store.failedImports.isEmpty {
                         importFailureNotice(imports: store.failedImports, palette: palette)
                     }
+                    if let message = store.startupErrorMessage {
+                        startupFailureNotice(message: message, palette: palette)
+                    }
                 }
             }
             .onChange(of: store.reader?.itemID) { _, itemID in
@@ -183,11 +186,55 @@ public struct AppView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             Spacer(minLength: 8)
+            // The banner stays deliberately bounded — one failure, truncated.
+            // Copy is the escape hatch that yields all of them in full.
+            CopyButton(
+                text: FailedImport.diagnosticReport(from: imports),
+                style: .compact
+            )
             Button("Dismiss") {
                 store.send(.dismissFailedImportsTapped)
             }
             Button("Retry") {
                 store.send(.retryFailedImportsTapped)
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(.regularMaterial)
+        .overlay(alignment: .top) { Divider() }
+    }
+
+    /// Startup failures were previously invisible: `startupErrorMessage` was
+    /// set on `.startupFailed` and read by no view, while `startupFinished`
+    /// was also set — so a failed bootstrap presented a fully navigable app
+    /// with a silently empty library and no indication anything was wrong.
+    private func startupFailureNotice(
+        message: String,
+        palette: FlexokiPalette
+    ) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(palette.error)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Stower didn't finish starting up.")
+                    .font(.callout.weight(.medium))
+                Text(message)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .lineLimit(3)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Spacer(minLength: 8)
+            CopyButton(text: message, style: .compact)
+            Button("Dismiss") {
+                store.send(.dismissStartupErrorTapped)
+            }
+            Button("Retry") {
+                store.send(.onAppear)
             }
             .buttonStyle(.borderedProminent)
         }
