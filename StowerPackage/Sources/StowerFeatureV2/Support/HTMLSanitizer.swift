@@ -32,25 +32,42 @@ func sanitizeBlocks(_ input: [ReaderBlock]) -> [ReaderBlock] {
 ///
 /// Only the *first* heading is considered, and only when it matches the title —
 /// a later section heading that happens to echo the title is left alone.
-func removeLeadingTitleRepeat(_ blocks: [ReaderBlock], title: String) -> [ReaderBlock] {
-    let normalizedTitle = comparableHeadingText(title)
-    guard !normalizedTitle.isEmpty else { return blocks }
-
-    guard let index = blocks.firstIndex(where: { block in
-        switch block {
-        case .heading, .paragraph:
-            return !blockText(block).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        default:
-            // Skip over a hero figure sitting above the headline.
-            return false
-        }
-    }) else { return blocks }
-
-    guard case .heading(_, let inlines) = blocks[index] else { return blocks }
-    guard comparableHeadingText(inlineText(inlines)) == normalizedTitle else { return blocks }
+func removeLeadingTitleRepeat(
+    _ blocks: [ReaderBlock],
+    title: String,
+    siteName: String? = nil,
+    author: String? = nil
+) -> [ReaderBlock] {
+    // Everything the reader already prints in its own header. A leading block
+    // that only restates one of these is furniture the page leaked, not prose:
+    // the site name next to a logo, a bare byline, the headline again.
+    let echoes = Set(
+        ([title, siteName, author].compactMap { $0 })
+            .map(comparableHeadingText)
+            .filter { !$0.isEmpty }
+    )
+    guard !echoes.isEmpty else { return blocks }
 
     var output = blocks
-    output.remove(at: index)
+    var index = 0
+    // Only the run at the very top is considered, and only short blocks — a
+    // real paragraph that happens to open with the site's name is kept.
+    while index < output.count {
+        switch output[index] {
+        case .figure, .video:
+            // A hero image may sit above the headline.
+            index += 1
+            continue
+        case .heading(_, let inlines), .paragraph(let inlines):
+            let text = inlineText(inlines)
+            guard text.count <= 120, echoes.contains(comparableHeadingText(text)) else {
+                return output
+            }
+            output.remove(at: index)
+        default:
+            return output
+        }
+    }
     return output
 }
 
@@ -177,7 +194,14 @@ func dedupeBlocks(_ input: [ReaderBlock]) -> [ReaderBlock] {
     for block in input {
         let fingerprint = String(describing: block)
         switch block {
-        case .figure, .video, .embed:
+        case .figure(let media), .video(let media):
+            // Keyed on image identity rather than the whole block, so the same
+            // photo at two CDN sizes (main carousel + thumbnail rail) collapses
+            // to one figure instead of appearing large and then small.
+            let key = mediaIdentity(media.sourceURL)
+            if seenMedia.contains(key) { continue }
+            seenMedia.insert(key)
+        case .embed:
             if seenMedia.contains(fingerprint) { continue }
             seenMedia.insert(fingerprint)
         default:
@@ -191,12 +215,28 @@ func dedupeBlocks(_ input: [ReaderBlock]) -> [ReaderBlock] {
 func dedupeMedia(_ input: [MediaDescriptor]) -> [MediaDescriptor] {
     var seen: Set<String> = []
     return input.filter {
-        if seen.contains($0.sourceURL) {
+        let key = mediaIdentity($0.sourceURL)
+        if seen.contains(key) {
             return false
         }
-        seen.insert($0.sourceURL)
+        seen.insert(key)
         return true
     }
+}
+
+/// Identity of an image for duplicate detection, ignoring the resize/format
+/// parameters image CDNs carry in the query string.
+///
+/// Galleries routinely emit the same photo twice — once in the main carousel
+/// and once in the thumbnail rail — differing only by `?w=750` versus
+/// `?w=1736`. Keying on the full URL treated those as two photos, so every
+/// gallery appeared twice: once large, once small.
+func mediaIdentity(_ sourceURL: String) -> String {
+    guard let components = URLComponents(string: sourceURL) else { return sourceURL }
+    guard let host = components.host, !components.path.isEmpty else { return sourceURL }
+    // Some CDNs (Substack, Cloudinary) encode the original URL *inside* the
+    // path, so the path alone still identifies the image uniquely.
+    return host.lowercased() + components.path
 }
 
 func dedupeEmbeds(_ input: [EmbedDescriptor]) -> [EmbedDescriptor] {

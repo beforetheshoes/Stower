@@ -55,12 +55,17 @@ enum RenderedArticleExtractor {
         // renders its own header from the extracted metadata, so leaving this
         // in printed the title twice, followed by a stray byline and date.
         //
-        // Deliberately matched on *container* names only. Broader patterns
-        // like `[class*=headline]` or `[class*=paywall]` are not safe here:
-        // substring class matching would also hit body wrappers such as
-        // `story-headline-and-body` or `paywall-content` and delete the
+        // Substrings are used, but only of *header/meta container* names,
+        // which read unambiguously as furniture. Publishers split the block
+        // across several wrappers (`article-header-bg`, `article-header-data`,
+        // `article-meta`), so exact class matching missed most of them and
+        // left "Published" and the site name stranded above the first
+        // paragraph. Broader words are still avoided here: `[class*=headline]`
+        // and `[class*=paywall]` would also hit body wrappers such as
+        // `story-headline-and-body` and `paywall-content`, deleting the
         // article itself.
-        ".post-header", ".entry-header", ".article-header", "[aria-label='Post header']",
+        "[class*=post-header]", "[class*=entry-header]", "[class*=article-header]",
+        "[class*=article-meta]", "[aria-label='Post header']",
 
         // Engagement / call-to-action furniture that sits inside the article
         // element on newsletter platforms: like + restack bars with their
@@ -75,6 +80,33 @@ enum RenderedArticleExtractor {
         "[class*=post-ufi]", "[class*=facepile]", "[class*=like-button]",
         "[class*=restack-button]", "[class*=button-wrapper]",
         "[class*=audio-player]", "[class*=support-widget]",
+
+        // Elements the page renders but does not show. `annotateHiddenContent`
+        // resolves this in the capture WebView, where computed styles exist.
+        "[data-stower-hidden]",
+
+        // Publishers mark non-article furniture with `data-nosnippet` so search
+        // engines skip it — the same signal works here. It reliably covers
+        // author bios, subscription pitches and "related" rails.
+        "[data-nosnippet]",
+
+        // Author bio blocks. The reader already shows the byline in its own
+        // header, so a paragraph-length biography ahead of the first sentence
+        // is pure obstruction.
+        "[class*=author-bio]", "[class*=author-box]", "[class*=author-card]",
+        "[class*=contributor-bio]", "[class*=about-the-author]",
+
+        // Carousel thumbnail rails, which restate every image in the gallery at
+        // postage-stamp size directly below the gallery itself.
+        "[class*=thumbnail]", "[class*=thumbs-]", "[class*=-thumbs]",
+        "[class*=splide__pagination]", "[class*=splide__arrows]",
+
+        // Interactive UI landmarks: menus, tab bars, toolbars and search.
+        // `label` belongs with the already-removed form controls — CSS-only
+        // widgets drive themselves with labels rather than buttons.
+        "label", "[role=menu]", "[role=menuitem]", "[role=menubar]",
+        "[role=tablist]", "[role=tab]", "[role=toolbar]", "[role=search]",
+        "[role=alert]", "[role=status]", "[role=progressbar]",
     ].joined(separator: ",")
 
     static func extract(
@@ -301,6 +333,7 @@ enum RenderedArticleExtractor {
     }
 
     private static func sanitize(_ root: Element, sourceURL: URL) throws {
+        try removeFormDrivenWidgets(root)
         try root.select(removalSelector).remove()
         try root.select("script,style,link,meta,base,object,embed,canvas,noscript,template").remove()
         try root.select("svg script,svg foreignObject,svg animate,svg set").remove()
@@ -342,6 +375,54 @@ enum RenderedArticleExtractor {
             }
         }
         try root.select("img[width=1],img[height=1]").remove()
+    }
+
+    /// Removes quiz / poll / survey widgets whole, rather than leaving their
+    /// contents stranded once the form controls are stripped.
+    ///
+    /// These are commonly built as pure CSS: a bank of `<input type="radio">`
+    /// plus one `display:none` panel per state, revealed with `:checked`
+    /// sibling selectors. Removing just the inputs (as the generic form
+    /// cleanup does) stranded every panel — on one How-To Geek article that
+    /// meant all eight questions, each followed by *both* its "Correct!" and
+    /// its "Not quite" explanation, dumped into the middle of the piece.
+    ///
+    /// A radio/checkbox group is a reliable marker because article prose does
+    /// not contain one. The widget root is the lowest ancestor holding the
+    /// whole group, and it is only removed when it is a minority of the
+    /// article — so a page that legitimately *is* a form is left intact rather
+    /// than emptied.
+    private static func removeFormDrivenWidgets(_ root: Element) throws {
+        let controls = try root.select("input[type=radio], input[type=checkbox]").array()
+        guard controls.count >= 4 else { return }
+
+        let rootTextLength = ((try? root.text().count) ?? 0)
+        var removed = Set<String>()
+
+        for control in controls {
+            var node = control.parent()
+            var widget: Element?
+            while let current = node, current !== root {
+                let count = ((try? current.select("input[type=radio], input[type=checkbox]").count) ?? 0)
+                if count >= 4 {
+                    widget = current
+                    break
+                }
+                node = current.parent()
+            }
+            guard let widget else { continue }
+
+            let identifier = ObjectIdentifier(widget).debugDescription
+            guard !removed.contains(identifier) else { continue }
+
+            // Never let this eat the article itself.
+            let widgetTextLength = ((try? widget.text().count) ?? 0)
+            guard rootTextLength == 0 || Double(widgetTextLength) < Double(rootTextLength) * 0.6 else {
+                continue
+            }
+            removed.insert(identifier)
+            try widget.remove()
+        }
     }
 
     private static func addBlockIndices(_ root: Element) throws {
