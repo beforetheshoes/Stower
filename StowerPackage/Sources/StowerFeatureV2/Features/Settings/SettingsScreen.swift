@@ -85,6 +85,23 @@ public struct SettingsScreen: View {
                 )
             }
 
+            Section {
+                reextractionRows
+            } header: {
+                Text("Reader")
+            } footer: {
+                Text(
+                    """
+                    Rebuilds saved articles from their source URLs using the \
+                    current reader. Use this if older articles show broken \
+                    tables, run-together code, or missing lists. Needs a \
+                    network connection, re-downloads every article, and can \
+                    take a while — you can stop at any point and pick it up \
+                    again later.
+                    """
+                )
+            }
+
             if let error = store.errorMessage {
                 Text(error)
                     .foregroundStyle(palette.error)
@@ -104,6 +121,87 @@ public struct SettingsScreen: View {
         .task {
             store.send(.load)
         }
+    }
+
+    @ViewBuilder private var reextractionRows: some View {
+        switch store.reextraction {
+        case .idle:
+            Button("Re-extract All Articles") {
+                store.send(.reextractLibraryTapped)
+            }
+
+        case .running(let progress):
+            VStack(alignment: .leading, spacing: 8) {
+                if progress.total > 0 {
+                    ProgressView(value: progress.fraction) {
+                        Text("Re-extracting \(progress.completed) of \(progress.total)")
+                            .font(.callout)
+                    }
+                } else {
+                    ProgressView {
+                        Text("Preparing…")
+                            .font(.callout)
+                    }
+                }
+
+                if let title = progress.currentTitle {
+                    Text(title)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+
+                if progress.failed > 0 {
+                    Text(
+                        progress.failed == 1
+                            ? "1 couldn't be rebuilt and was left as it was."
+                            : "\(progress.failed) couldn't be rebuilt and were left as they were."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(palette.warning)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Button("Stop", role: .cancel) {
+                store.send(.reextractCancelTapped)
+            }
+
+        case .finished(let summary):
+            VStack(alignment: .leading, spacing: 4) {
+                Text(finishedHeadline(summary))
+                    .font(.callout)
+                if summary.failed > 0 {
+                    Text(
+                        summary.failed == 1
+                            ? "1 article kept its previous version."
+                            : "\(summary.failed) articles kept their previous version."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Button("Done") {
+                store.send(.reextractDismissed)
+            }
+        }
+    }
+
+    private func finishedHeadline(_ summary: LibraryReextractionState.Summary) -> String {
+        if summary.wasCancelled {
+            return summary.succeeded == 1
+                ? "Stopped after rebuilding 1 article."
+                : "Stopped after rebuilding \(summary.succeeded) articles."
+        }
+        if summary.succeeded == 0 && summary.failed == 0 {
+            return "No articles to rebuild."
+        }
+        return summary.succeeded == 1
+            ? "Rebuilt 1 article."
+            : "Rebuilt \(summary.succeeded) articles."
     }
 
     private func syncSummary(_ status: CloudSyncStatus) -> String {

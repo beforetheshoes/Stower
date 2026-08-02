@@ -50,6 +50,31 @@ enum RenderedArticleExtractor {
         "[class*=recommend]", "[id*=recommend]", "[class*=related]", "[id*=related]",
         "[class*=comment]", "[id*=comment]", "[class*=share]", "[id*=share]",
         "[class*=social]", "[id*=social]", "[class*=cookie]", "[id*=cookie]",
+
+        // The article's own title/subtitle/byline/date block. The reader
+        // renders its own header from the extracted metadata, so leaving this
+        // in printed the title twice, followed by a stray byline and date.
+        //
+        // Deliberately matched on *container* names only. Broader patterns
+        // like `[class*=headline]` or `[class*=paywall]` are not safe here:
+        // substring class matching would also hit body wrappers such as
+        // `story-headline-and-body` or `paywall-content` and delete the
+        // article itself.
+        ".post-header", ".entry-header", ".article-header", "[aria-label='Post header']",
+
+        // Engagement / call-to-action furniture that sits inside the article
+        // element on newsletter platforms: like + restack bars with their
+        // reader-avatar facepiles, "Listen to this post" players, and
+        // standalone CTA buttons. These produced the trailing run of tiny
+        // avatar images and orphan links ("Share", "965 Likes", "64
+        // Restacks") at the end of every Substack article.
+        // NB: `[class*=restack]` is deliberately NOT used here. Substack marks
+        // every body image `<a class="image-link image2 is-viewable-img
+        // can-restack">`, so that pattern silently deleted all of an
+        // article's images. Match the control, not the affordance.
+        "[class*=post-ufi]", "[class*=facepile]", "[class*=like-button]",
+        "[class*=restack-button]", "[class*=button-wrapper]",
+        "[class*=audio-player]", "[class*=support-widget]",
     ].joined(separator: ",")
 
     static func extract(
@@ -326,27 +351,73 @@ enum RenderedArticleExtractor {
         }
     }
 
+    /// Whether the page contains content the structured reader genuinely
+    /// cannot represent, in which case the article is stored as `.webView` and
+    /// opens as the raw archived page.
+    ///
+    /// This is a heavy call: `.webView` articles get no reader typography, no
+    /// theme, and are laid out at the width they were captured at — so on a
+    /// phone they arrive as a shrunken desktop page with all the site's own
+    /// chrome. It must therefore be reserved for pages that would be
+    /// *destroyed* by structured rendering, not merely pages that contain some
+    /// embedded media.
+    ///
+    /// `iframe`, `video` and `audio` used to force `.webView`, which was much
+    /// too broad — an ordinary essay with two embedded videos is still an
+    /// ordinary essay, and practically every modern article carries an iframe
+    /// somewhere. The structured reader already renders `.video` and `.embed`
+    /// blocks natively, so those are representable and no longer count.
     private static func detectMeaningfulInteractivity(_ document: Document) throws -> Bool {
-        if !(try document.select("canvas,model-viewer,iframe[src],video[src],audio[src]").isEmpty()) {
+        // Canvas and model-viewer have no structured equivalent at all.
+        if !(try document.select("canvas,model-viewer").isEmpty()) {
             return true
         }
-        if !(try document.select("svg [onclick],svg animate,svg animateTransform,svg[role=application]").isEmpty()) {
+        // Scripted or animated SVG — an interactive chart or simulation, as
+        // opposed to the icon SVGs every site ships.
+        if !(try document.select(animatedSVGSelector).isEmpty()) {
             return true
         }
+        // Data-visualisation toolkits. Restricted to charting libraries;
+        // `addEventListener('pointer` used to be a trigger here and matched
+        // the bundled JS of essentially every site with a carousel.
         let scripts = try document.select("script").array()
         return scripts.contains { script in
             let source = ((try? script.attr("src")) ?? "") + script.data()
-            return ["d3.", "three.", "chart.js", "webgl", "addEventListener(\"pointer", "addEventListener('pointer"]
-                .contains { source.localizedCaseInsensitiveContains($0) }
+            return visualizationLibraryHints.contains { source.localizedCaseInsensitiveContains($0) }
         }
     }
+
+    private static let animatedSVGSelector = [
+        "svg [onclick]", "svg script", "svg animate", "svg animateTransform",
+        "svg animateMotion", "svg set", "svg[role=application]",
+    ].joined(separator: ",")
+
+    private static let visualizationLibraryHints = [
+        "d3.js", "d3.min.js", "/d3/", "three.js", "three.min.js", "chart.js",
+        "chartjs", "highcharts", "plotly", "vega", "observablehq", "webgl",
+    ]
 
     private static func makeHeader(title: String, deck: String?, author: String?, published: String?, siteName: String?) -> String {
         let site = siteName.map { "<p class=\"stower-site\">\(escapeHTML($0))</p>" } ?? ""
         let deckHTML = deck.map { "<p class=\"stower-deck\">\(escapeHTML($0))</p>" } ?? ""
         let byline = author.map { "<span class=\"stower-byline\">\(escapeHTML($0))</span>" } ?? ""
-        let date = published.map { "<time>\(escapeHTML($0))</time>" } ?? ""
-        return "<header class=\"stower-header\">\(site)<h1 data-block-index=\"0\">\(escapeHTML(title))</h1>\(deckHTML)<p class=\"stower-meta\">\(byline) \(date)</p></header>"
+
+        // `published` is the raw metadata string, which is normally an ISO
+        // timestamp. Printing it verbatim put "2026-07-23T14:05:24-04:00" under
+        // the headline of every captured article. Keep the machine-readable
+        // value in the `datetime` attribute and show a human date.
+        let date: String = published.map { raw in
+            let display = parseDate(raw).map {
+                $0.formatted(date: .abbreviated, time: .omitted)
+            } ?? raw
+            return "<time datetime=\"\(escapeAttribute(raw))\">\(escapeHTML(display))</time>"
+        } ?? ""
+
+        // Separate byline and date so they don't run together as one string.
+        let meta = [byline, date].filter { !$0.isEmpty }.joined(separator: " &middot; ")
+        let metaHTML = meta.isEmpty ? "" : "<p class=\"stower-meta\">\(meta)</p>"
+
+        return "<header class=\"stower-header\">\(site)<h1 data-block-index=\"0\">\(escapeHTML(title))</h1>\(deckHTML)\(metaHTML)</header>"
     }
 
     private static func meta(_ document: Document, _ selector: String) -> String? {

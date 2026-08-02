@@ -10,11 +10,20 @@ extension StowerRepository {
             @Dependency(\.uuid)
             var uuid
             try await database.write { db in
-                if kind.isHydrationJob {
+                if kind.isDeduplicated {
+                    // Only jobs that are still going to run count as
+                    // duplicates. A job that already gave up (`failed`) must
+                    // NOT suppress a re-enqueue — re-saving is exactly how the
+                    // user retries a failed import, and swallowing it would
+                    // make the second attempt do nothing at all.
                     let existing = try IngestionJobLocalTable
                         .where { $0.kind.eq(kind.rawValue) }
                         .where { $0.payload.eq(payload) }
                         .where { $0.processedAt.is(nil) }
+                        .where {
+                            $0.status.eq(IngestionJob.Status.queued.rawValue)
+                                || $0.status.eq(IngestionJob.Status.processing.rawValue)
+                        }
                         .fetchCount(db)
                     guard existing == 0 else { return }
                 }
@@ -541,11 +550,23 @@ extension StowerRepository {
 }
 
 private extension IngestionJob.Kind {
-    var isHydrationJob: Bool {
+    /// Kinds whose payload identifies the work, so re-enqueuing the same
+    /// payload while an earlier job is still unprocessed is a no-op.
+    ///
+    /// `.url` is included: when a share appears not to have worked, people
+    /// share the same link again (and again). Each attempt used to queue
+    /// another job, so one link became N captures of the same page — N × up to
+    /// 3 attempts of a 30s WebKit capture, all of them head-of-line blocking
+    /// every other pending import.
+    ///
+    /// `.pdf`/`.website` payloads are unique staging paths and `.text`/
+    /// `.markdown` payloads are user content that can legitimately repeat, so
+    /// those still enqueue unconditionally.
+    var isDeduplicated: Bool {
         switch self {
-        case .hydrate, .hydrateText, .hydrateWebsite:
+        case .hydrate, .hydrateText, .hydrateWebsite, .url:
             true
-        case .url, .pdf, .website, .text, .markdown:
+        case .pdf, .website, .text, .markdown:
             false
         }
     }

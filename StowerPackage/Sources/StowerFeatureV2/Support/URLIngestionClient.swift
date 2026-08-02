@@ -66,7 +66,8 @@ public struct ExtractionPipelineClient: Sendable {
         let root = try chooseRoot(document: document)
         let parsed = try parseBlocks(root: root, baseURL: sourceURL)
         let cleanedBlocks = sanitizeBlocks(parsed.blocks)
-        let finalBlocks = cleanedBlocks.isEmpty ? parsed.blocks : cleanedBlocks
+        let deduped = removeLeadingTitleRepeat(cleanedBlocks, title: title)
+        let finalBlocks = deduped.isEmpty ? parsed.blocks : deduped
 
         let plainText = plainTextFromBlocks(finalBlocks)
         let excerpt = plainText.isEmpty ? nil : String(plainText.prefix(220))

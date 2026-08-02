@@ -14,9 +14,24 @@ func parseBlocks(root: Element, baseURL: URL) throws -> ParsedBlocks {
     }
 
     let toRemove = try body.select(
-        "script, style, svg, canvas, template, nav, footer, header, aside, form, button, [aria-hidden=true], [hidden], .sr-only, .visually-hidden, .screen-reader-text, .sidebar, .related, .share, .comments"
+        "script, style, svg, canvas, template, nav, footer, form, button, [aria-hidden=true], [hidden], .sr-only, .visually-hidden, .screen-reader-text, .sidebar, .related, .share, .comments"
     )
     try toRemove.remove()
+
+    // `header` and `aside` used to be removed outright. That also deleted the
+    // article's own headline block (many sites wrap the h1 + standfirst in a
+    // `<header>` inside `<article>`) and every pull quote, sidenote and
+    // callout. Only drop the ones that are actually site chrome.
+    let chrome = try body.select(
+        """
+        header[role=banner], aside[role=navigation], aside[role=complementary], \
+        header[class*=site], header[class*=global], header[class*=masthead], \
+        header[class*=nav], aside[class*=nav], aside[class*=sidebar], \
+        aside[class*=related], aside[class*=promo], aside[class*=newsletter], \
+        aside[class*=subscribe], aside[class*=advert]
+        """
+    )
+    try chrome.remove()
 
     // Remove permalink/headerlink anchors commonly added next to headings by
     // static site generators (MkDocs, Sphinx, Hugo, Jekyll, Docusaurus, etc.).
@@ -67,32 +82,64 @@ func parseBlock(_ element: Element) throws -> ParsedBlocks {
         return ParsedBlocks(blocks: inlines.isEmpty ? [] : [.heading(level: level, inlines: inlines)], media: [], embeds: [])
 
     case "p":
-        let inlines = try parseInlines(element)
-        var blocks: [ReaderBlock] = inlines.isEmpty ? [] : [.paragraph(inlines)]
         var media = [MediaDescriptor]()
         var embeds = [EmbedDescriptor]()
+        var mediaBlocks = [ReaderBlock]()
 
         let mediaNodes = try element.select("img,picture,video,iframe,figure").array()
         for mediaNode in mediaNodes {
             let parsed = try parseBlock(mediaNode)
-            blocks.append(contentsOf: parsed.blocks)
+            mediaBlocks.append(contentsOf: parsed.blocks)
             media.append(contentsOf: parsed.media)
             embeds.append(contentsOf: parsed.embeds)
         }
 
+        // Parse the prose from a copy with the media subtrees removed. Parsing
+        // the original would pull each `<figcaption>` into the paragraph text
+        // *and* emit it again as the figure's caption, so every captioned
+        // image inside a paragraph printed its caption twice.
+        let inlines: [ReaderInline]
+        if mediaNodes.isEmpty {
+            inlines = try parseInlines(element)
+        } else {
+            let prose = element.copy() as! Element
+            try prose.select("img,picture,video,iframe,figure").remove()
+            inlines = try parseInlines(prose)
+        }
+
+        var blocks: [ReaderBlock] = inlines.isEmpty ? [] : [.paragraph(inlines)]
+        blocks.append(contentsOf: mediaBlocks)
+
         return ParsedBlocks(blocks: dedupeBlocks(blocks), media: dedupeMedia(media), embeds: dedupeEmbeds(embeds))
 
     case "ul", "ol":
-        let listItems = try element.select("> li").array().map { try parseInlines($0) }.filter { !$0.isEmpty }
+        let listItems = try parseListItems(element)
         return ParsedBlocks(blocks: listItems.isEmpty ? [] : [.list(ordered: tag == "ol", items: listItems)], media: [], embeds: [])
+
+    case "dl":
+        // Description lists render as a list of "term — definition" items.
+        // Without this case they fall through to `default`, which emits one
+        // paragraph per <dt>/<dd> and loses the pairing entirely.
+        let items = try parseDescriptionList(element)
+        return ParsedBlocks(blocks: items.isEmpty ? [] : [.list(ordered: false, items: items)], media: [], embeds: [])
+
+    case "table":
+        guard let markdown = try markdownTable(from: element) else {
+            return ParsedBlocks(blocks: [], media: [], embeds: [])
+        }
+        return ParsedBlocks(blocks: [.table(markdown: markdown)], media: [], embeds: [])
 
     case "blockquote":
         let inlines = try parseInlines(element)
         return ParsedBlocks(blocks: inlines.isEmpty ? [] : [.blockquote(inlines)], media: [], embeds: [])
 
     case "pre":
-        let language = nonEmpty(try? element.select("code").first()?.attr("class"))
-        let code = cleanText((try? element.text()) ?? "")
+        // Code must keep its line breaks and indentation. `cleanText` (and
+        // SwiftSoup's default `text()`) collapse every run of whitespace to a
+        // single space, which turned every code block in the reader into one
+        // unreadable line that had to be scrolled horizontally.
+        let language = codeLanguage(from: element)
+        let code = preformattedText(element)
         if code.isEmpty {
             return ParsedBlocks(blocks: [], media: [], embeds: [])
         }
@@ -253,7 +300,11 @@ func parseInlinesRaw(_ element: Element) throws -> [ReaderInline] {
             }
 
         case "br":
-            inlines.append(.text("\n"))
+            // `.text("\n")` renders as a literal newline in the generated
+            // HTML, which the browser collapses to a space — poetry, verse,
+            // addresses and lyrics all ran together. `.lineBreak` is rendered
+            // as a real `<br>` by `ReaderDocumentHTMLBuilder`.
+            inlines.append(.lineBreak)
 
         default:
             // Recurse through the *raw* worker so we don't strip the
@@ -355,12 +406,230 @@ func trimInlineEdges(_ inlines: [ReaderInline]) -> [ReaderInline] {
     return result
 }
 
+// MARK: - Lists
+
+func isListTag(_ tag: String) -> Bool {
+    let lowered = tag.lowercased()
+    return lowered == "ul" || lowered == "ol"
+}
+
+/// Parses the direct `<li>` children of a `<ul>`/`<ol>`.
+///
+/// Two things the naive `select("> li").map(parseInlines)` got wrong:
+///
+///  * A nested `<ul>`/`<ol>` inside an `<li>` was flattened into the parent
+///    item's inline run with no separator at all, so "Fruit / Apple / Pear"
+///    came out as the single item "FruitApplePear". Nested items are now
+///    lifted into the same list as their own entries, prefixed so the
+///    hierarchy is still legible.
+///  * An `<li>` containing several block children (`<p>`, `<div>`) had them
+///    concatenated with no space, fusing the last word of one paragraph to
+///    the first word of the next.
+func parseListItems(_ element: Element) throws -> [[ReaderInline]] {
+    var items = [[ReaderInline]]()
+
+    for item in try element.select("> li").array() {
+        // Nested lists are extracted first so the parent's own text can be
+        // parsed without them.
+        let nestedLists = item.children().array().filter { isListTag($0.tagName()) }
+
+        let own = item.copy() as! Element
+        for nested in own.children().array() where isListTag(nested.tagName()) {
+            try nested.remove()
+        }
+        let ownInlines = try trimInlineEdges(parseBlockishInlines(own))
+        if !ownInlines.isEmpty {
+            items.append(ownInlines)
+        }
+
+        for nested in nestedLists {
+            for nestedItem in try parseListItems(nested) {
+                items.append([.text("— ")] + nestedItem)
+            }
+        }
+    }
+
+    return items
+}
+
+/// Parses `<dl>` into "term — definition" rows. Each `<dt>` starts a new row;
+/// the `<dd>`s that follow are appended to it.
+func parseDescriptionList(_ element: Element) throws -> [[ReaderInline]] {
+    var items = [[ReaderInline]]()
+    var current: [ReaderInline]?
+
+    for child in element.getChildNodes() {
+        guard let child = child as? Element else { continue }
+        switch child.tagName().lowercased() {
+        case "dt":
+            if let current, !current.isEmpty { items.append(current) }
+            let term = try trimInlineEdges(parseBlockishInlines(child))
+            current = term.isEmpty ? nil : [.strong(inlineText(term))]
+        case "dd":
+            let definition = try trimInlineEdges(parseBlockishInlines(child))
+            guard !definition.isEmpty else { continue }
+            if current == nil {
+                current = definition
+            } else {
+                current?.append(.text(" — "))
+                current?.append(contentsOf: definition)
+            }
+        default:
+            continue
+        }
+    }
+
+    if let current, !current.isEmpty { items.append(current) }
+    return items
+}
+
+/// Parses an element whose children may mix inline content with block-level
+/// children (`<li>`, `<dd>`, `<blockquote>`, table cells). Block children are
+/// joined with a space so their text doesn't fuse together.
+func parseBlockishInlines(_ element: Element) throws -> [ReaderInline] {
+    let blockTags: Set<String> = ["p", "div", "section", "blockquote"]
+    let hasBlockChildren = element.children().array().contains { blockTags.contains($0.tagName().lowercased()) }
+    guard hasBlockChildren else {
+        return try parseInlinesRaw(element)
+    }
+
+    var inlines = [ReaderInline]()
+    for node in element.getChildNodes() {
+        if let textNode = node as? TextNode {
+            let text = cleanInlineText(textNode.text())
+            if !text.isEmpty { inlines.append(.text(text)) }
+            continue
+        }
+        guard let child = node as? Element else { continue }
+        let parsed = try parseInlinesRaw(child)
+        guard !parsed.isEmpty else { continue }
+        if !inlines.isEmpty { inlines.append(.text(" ")) }
+        inlines.append(contentsOf: parsed)
+    }
+    return mergeTextInlines(inlines)
+}
+
+// MARK: - Tables
+
+/// Converts a `<table>` into the GFM pipe-table string that
+/// `ReaderDocumentHTMLBuilder.renderMarkdownTable` already knows how to render
+/// as a real `<table>`.
+///
+/// Without this, `<table>` fell through to `parseBlock`'s `default` case,
+/// which recursed into `<tr>`/`<td>` and emitted **one paragraph per cell** —
+/// any article containing a comparison table became an unreadable column of
+/// orphaned fragments.
+func markdownTable(from element: Element) throws -> String? {
+    let rowElements = try element.select("tr").array()
+    guard !rowElements.isEmpty else { return nil }
+
+    var rows = [[String]]()
+    for rowElement in rowElements {
+        let cells = rowElement.children().array().filter {
+            let tag = $0.tagName().lowercased()
+            return tag == "th" || tag == "td"
+        }
+        guard !cells.isEmpty else { continue }
+        rows.append(cells.map { cell in
+            // Pipes would break the row encoding, and newlines would split a
+            // single cell across rows.
+            cleanText((try? cell.text()) ?? "")
+                .replacingOccurrences(of: "|", with: "\\|")
+        })
+    }
+
+    guard !rows.isEmpty else { return nil }
+    guard rows.contains(where: { $0.contains { !$0.isEmpty } }) else { return nil }
+
+    // Layout tables (a single row, or a single column) read better as prose
+    // than as a one-cell grid, so leave them to the default block handling.
+    let columnCount = rows.map(\.count).max() ?? 0
+    guard columnCount >= 2, rows.count >= 2 else { return nil }
+
+    func line(_ cells: [String]) -> String {
+        var padded = cells
+        while padded.count < columnCount { padded.append("") }
+        return "| " + padded.joined(separator: " | ") + " |"
+    }
+
+    let header = rows.removeFirst()
+    var markdown = line(header)
+    markdown += "\n| " + Array(repeating: "---", count: columnCount).joined(separator: " | ") + " |"
+    for row in rows {
+        markdown += "\n" + line(row)
+    }
+    return markdown
+}
+
+// MARK: - Code
+
+/// Text content of a `<pre>` with line breaks and indentation intact, and the
+/// common leading indentation stripped so the reader isn't scrolled sideways
+/// by the source document's nesting.
+func preformattedText(_ element: Element) -> String {
+    let raw = (try? element.text(trimAndNormaliseWhitespace: false)) ?? ""
+    let unescaped = (try? Entities.unescape(raw)) ?? raw
+    let normalized = unescaped
+        .replacingOccurrences(of: "\r\n", with: "\n")
+        .replacingOccurrences(of: "\r", with: "\n")
+        .replacingOccurrences(of: "\u{00A0}", with: " ")
+        .replacingOccurrences(of: "\u{200B}", with: "")
+        .replacingOccurrences(of: "\u{FEFF}", with: "")
+
+    var lines = normalized.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+    while let first = lines.first, first.trimmingCharacters(in: .whitespaces).isEmpty {
+        lines.removeFirst()
+    }
+    while let last = lines.last, last.trimmingCharacters(in: .whitespaces).isEmpty {
+        lines.removeLast()
+    }
+    guard !lines.isEmpty else { return "" }
+
+    let indents = lines
+        .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        .map { $0.prefix { $0 == " " || $0 == "\t" }.count }
+    let commonIndent = indents.min() ?? 0
+    if commonIndent > 0 {
+        lines = lines.map { String($0.dropFirst(min(commonIndent, $0.count))) }
+    }
+
+    return lines
+        .joined(separator: "\n")
+        .replacingOccurrences(of: "[ \t]+$", with: "", options: .regularExpression)
+}
+
+/// Extracts a bare language name from a highlighter's class list, e.g.
+/// `"language-swift hljs"` → `"swift"`. Passing the raw class through
+/// produced `class="language-language-swift hljs"` in the rendered HTML.
+func codeLanguage(from element: Element) -> String? {
+    let classes = ((try? element.select("code").first()?.className()) ?? "")
+        .split(whereSeparator: \.isWhitespace)
+        .map(String.init)
+    for name in classes {
+        for prefix in ["language-", "lang-", "highlight-"] where name.hasPrefix(prefix) {
+            return nonEmpty(String(name.dropFirst(prefix.count)))
+        }
+    }
+    // A single non-decorative class is very likely the language itself.
+    let decorative: Set<String> = ["hljs", "highlight", "code", "prettyprint", "sourcecode"]
+    let candidates = classes.filter { !decorative.contains($0.lowercased()) }
+    return candidates.count == 1 ? nonEmpty(candidates[0]) : nil
+}
+
 func parseFallbackDescendants(_ body: Element) throws -> ParsedBlocks {
     var blocks = [ReaderBlock]()
     var media = [MediaDescriptor]()
     var embeds = [EmbedDescriptor]()
 
-    let candidates = try body.select("h1,h2,h3,h4,h5,h6,p,blockquote,pre,ul,ol,img,video,iframe,figure").array()
+    let candidates = try body
+        .select("h1,h2,h3,h4,h5,h6,p,blockquote,pre,ul,ol,dl,table,img,video,iframe,figure")
+        .array()
+        // A nested list/table is already emitted as part of its ancestor, and
+        // media inside a <figure> is emitted with the figure's caption. Taking
+        // them again here would duplicate the content.
+        .filter { element in
+            !element.hasAncestor(matching: ["li", "figure", "table", "pre", "blockquote"])
+        }
     for element in candidates {
         let parsed = try parseBlock(element)
         blocks.append(contentsOf: parsed.blocks)
@@ -373,6 +642,20 @@ func parseFallbackDescendants(_ body: Element) throws -> ParsedBlocks {
         media: dedupeMedia(media),
         embeds: dedupeEmbeds(embeds)
     )
+}
+
+extension Element {
+    /// True when any ancestor of this element has one of `tagNames`.
+    func hasAncestor(matching tagNames: [String]) -> Bool {
+        var node = parent()
+        while let current = node {
+            if tagNames.contains(current.tagName().lowercased()) {
+                return true
+            }
+            node = current.parent()
+        }
+        return false
+    }
 }
 
 func splitLongParagraph(_ text: String) -> [String] {

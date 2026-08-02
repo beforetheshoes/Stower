@@ -17,10 +17,12 @@ public struct AppFeature {
         @Presents public var reader: ReaderFeature.State?
         public var startupFinished = false
         public var startupErrorMessage: String?
-        public var failedImportCount = 0
+        public var failedImports = [FailedImport]()
         public var recentlyCompletedItem: SavedItem?
         public var cloudSyncStatus: CloudSyncStatus = .starting
         @Presents public var resetAlert: AlertState<Action.ResetAlert>?
+
+        public var failedImportCount: Int { failedImports.count }
 
         public var palette: FlexokiPalette { cachedAppearance.palette }
 
@@ -97,7 +99,7 @@ public struct AppFeature {
         case browserExtensionURLReceived(URL)
         case startupFinished
         case startupFailed(String)
-        case failedImportsLoaded(Int)
+        case failedImportsLoaded([FailedImport])
         case retryFailedImportsTapped
         case dismissFailedImportsTapped
         case readerAppearanceLoaded(ReaderAppearanceSettings)
@@ -232,7 +234,7 @@ public struct AppFeature {
                                 ) { date.now }
                             }
                             await send(.failedImportsLoaded(
-                                try await repository.fetchFailedIngestionJobs().count
+                                FailedImport.list(from: try await repository.fetchFailedIngestionJobs())
                             ))
                             try await cloudSyncClient.sendChanges()
                             await send(.startupFinished)
@@ -255,8 +257,8 @@ public struct AppFeature {
                 state.startupErrorMessage = message
                 return .none
 
-            case .failedImportsLoaded(let count):
-                state.failedImportCount = count
+            case .failedImportsLoaded(let imports):
+                state.failedImports = imports
                 return .none
 
             case .retryFailedImportsTapped:
@@ -266,7 +268,7 @@ public struct AppFeature {
                 let textIngestionClient = self.textIngestionClient
                 let date = self.date
                 let ingestionCoordinator = self.ingestionCoordinator
-                state.failedImportCount = 0
+                state.failedImports = []
                 return .run { send in
                     try? await repository.retryFailedIngestionJobs()
                     try? await ingestionCoordinator.run {
@@ -277,15 +279,15 @@ public struct AppFeature {
                             textIngestionClient: textIngestionClient
                         ) { date.now }
                     }
-                    let count = (try? await repository.fetchFailedIngestionJobs().count) ?? 0
-                    await send(.failedImportsLoaded(count))
+                    let jobs = (try? await repository.fetchFailedIngestionJobs()) ?? []
+                    await send(.failedImportsLoaded(FailedImport.list(from: jobs)))
                     await send(.library(.reload))
                 }
 
             case .dismissFailedImportsTapped:
                 let repository = self.repository
                 let now = date.now
-                state.failedImportCount = 0
+                state.failedImports = []
                 return .run { _ in
                     try? await repository.dismissFailedIngestionJobs(now)
                 }
@@ -297,10 +299,16 @@ public struct AppFeature {
                 // drain the queue and reload the library so newly-saved items
                 // show up immediately without requiring a cold launch.
                 //
-                // Startup already drains the queue once, so this is a no-op on
+                // Startup also drains the queue, so this is usually a no-op on
                 // the very first activation — `processIngestionJobs` marks
                 // jobs as processed and skips them on subsequent calls.
-                guard state.startupFinished else { return .none }
+                //
+                // This deliberately does NOT wait for startup to finish. When
+                // the user launches Stower straight from the share sheet, the
+                // activation can land while startup is still running; skipping
+                // the drain then left the just-shared URL sitting in the queue
+                // until some later launch. `ingestionCoordinator` serializes
+                // the two drains, so overlapping is safe.
                 let repository = self.repository
                 let ingestionClient = self.ingestionClient
                 let pdfIngestionClient = self.pdfIngestionClient
@@ -316,8 +324,8 @@ public struct AppFeature {
                             textIngestionClient: textIngestionClient
                         ) { date.now }
                     }
-                    let count = (try? await repository.fetchFailedIngestionJobs().count) ?? 0
-                    await send(.failedImportsLoaded(count))
+                    let jobs = (try? await repository.fetchFailedIngestionJobs()) ?? []
+                    await send(.failedImportsLoaded(FailedImport.list(from: jobs)))
                     await send(.library(.reload))
                     await send(.sidebar(.reload))
                 }
@@ -418,8 +426,8 @@ public struct AppFeature {
                                 textIngestionClient: textIngestionClient
                             ) { date.now }
                         }
-                        let count = (try? await repository.fetchFailedIngestionJobs().count) ?? 0
-                        await send(.failedImportsLoaded(count))
+                        let jobs = (try? await repository.fetchFailedIngestionJobs()) ?? []
+                        await send(.failedImportsLoaded(FailedImport.list(from: jobs)))
                         await send(.library(.reload))
                         await send(.sidebar(.reload))
                     }
@@ -584,7 +592,10 @@ private func processIngestionJobs(
             try? await repository.failIngestionJob(job.id, "Import cancelled.", now())
             throw CancellationError()
         } catch {
-            try await repository.failIngestionJob(job.id, error.localizedDescription, now())
+            // `try?`, not `try`: if recording the failure itself fails, the
+            // remaining queued imports must still be drained. Rethrowing here
+            // stranded every job that the failing one was ahead of.
+            try? await repository.failIngestionJob(job.id, error.localizedDescription, now())
         }
     }
 }

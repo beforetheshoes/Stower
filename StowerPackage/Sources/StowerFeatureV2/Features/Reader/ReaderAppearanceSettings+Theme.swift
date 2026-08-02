@@ -193,12 +193,36 @@ extension ReaderAppearanceSettings {
           padding: 20px 20px 60px 20px !important;
           box-sizing: border-box !important;
         }
-        .stower-article {
+        /* Two container shapes reach this stylesheet: `.stower-article` from
+           ReaderDocumentHTMLBuilder, and `#stower-reader-document` from a
+           native web capture. This CSS replaces whatever the page shipped
+           with, so a rule that names only one of them leaves the other with
+           no measure at all — captured articles ran the full width of the
+           window, which is unreadable on iPad and Mac and stretched every
+           image to match. */
+        .stower-article, #stower-reader-document {
           width: 100% !important;
           max-width: \(columnWidth)px !important;
           margin: 0 auto !important;
           overflow-x: clip !important;
+          box-sizing: border-box !important;
         }
+        /* Baseline media/figure treatment. The structured path layers its own
+           richer rules on top via the separate runtime stylesheet; captured
+           articles have only this. */
+        figure { margin: 1.6em 0 !important; }
+        figure img, figure video, figure picture { display: block; margin: 0 auto; }
+        figcaption {
+          font-size: 0.85em;
+          opacity: 0.72;
+          text-align: center;
+          margin-top: 0.5em;
+        }
+        video, picture { max-width: 100% !important; height: auto !important; }
+        /* Wide tables and long code lines scroll inside their own box rather
+           than forcing the whole document sideways. */
+        table { display: block; overflow-x: auto; }
+        pre { white-space: pre; }
         a { color: var(--stower-primary) !important; text-decoration-color: color-mix(in srgb, var(--stower-primary) 45%, transparent); }
         a:hover { color: var(--stower-primary-muted) !important; }
         pre, code { background: var(--stower-bg2) !important; color: var(--stower-tx) !important; border-radius: 6px; }

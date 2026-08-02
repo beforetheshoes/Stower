@@ -109,8 +109,8 @@ public struct AppView: View {
                     if let completedItem = store.recentlyCompletedItem {
                         completedItemNotice(completedItem, palette: palette)
                     }
-                    if store.failedImportCount > 0 {
-                        importFailureNotice(count: store.failedImportCount, palette: palette)
+                    if !store.failedImports.isEmpty {
+                        importFailureNotice(imports: store.failedImports, palette: palette)
                     }
                 }
             }
@@ -141,15 +141,47 @@ public struct AppView: View {
     }
 
     private func importFailureNotice(
-        count: Int,
+        imports: [FailedImport],
         palette: FlexokiPalette
     ) -> some View {
-        HStack(spacing: 12) {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
             Image(systemName: "exclamationmark.arrow.trianglehead.2.clockwise.rotate.90")
                 .foregroundStyle(palette.warning)
                 .accessibilityHidden(true)
-            Text(count == 1 ? "1 import needs attention." : "\(count) imports need attention.")
+            VStack(alignment: .leading, spacing: 2) {
+                Text(
+                    imports.count == 1
+                        ? "1 import needs attention."
+                        : "\(imports.count) imports need attention."
+                )
                 .font(.callout.weight(.medium))
+
+                // Name the first failure outright. Knowing which link failed
+                // and why is what makes Retry a decision instead of a guess.
+                if let first = imports.first {
+                    Text(first.label)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    if let reason = first.reason {
+                        Text(reason)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
+                    if imports.count > 1 {
+                        Text(
+                            imports.count == 2
+                                ? "and 1 more"
+                                : "and \(imports.count - 1) more"
+                        )
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
             Spacer(minLength: 8)
             Button("Dismiss") {
                 store.send(.dismissFailedImportsTapped)
