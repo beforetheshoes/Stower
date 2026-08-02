@@ -11,6 +11,7 @@ import AppKit
 /// selectable, sometimes truncated, and impossible to get out of the app except
 /// by retyping it from a screenshot. These tests pin the part of that fix that
 /// is mechanically checkable: what actually reaches the clipboard.
+@MainActor
 @Suite
 struct CopyableDiagnosticsTests {
     // MARK: - Clipboard

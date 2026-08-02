@@ -118,6 +118,20 @@ public enum StowerDatabase {
     public static func makeDatabase() throws -> any DatabaseWriter {
         var configuration = Configuration()
         configuration.foreignKeysEnabled = true
+
+        // The database lives in an App Group container shared with the share
+        // extension. iOS kills a process with `0xDEAD10CC` ("dead lock") if it
+        // still holds a lock on a file in a shared container when it is
+        // suspended — which is exactly what happened in production: a periodic
+        // CloudKit sync kicked off a write transaction in the background and
+        // the app was suspended while it was still open.
+        //
+        // With this flag, the connection observes `Database.suspendNotification`
+        // and stops acquiring new locks, so a pending write fails with
+        // SQLITE_INTERRUPT / SQLITE_ABORT instead of getting the process
+        // killed. `DatabaseSuspensionObserver` posts the notifications, and
+        // `DatabaseError.isSuspended` identifies the resulting errors.
+        configuration.observesSuspensionNotifications = true
         configuration.prepareDatabase { db in
             do {
                 try db.attachMetadatabase(containerIdentifier: cloudKitContainerID)
