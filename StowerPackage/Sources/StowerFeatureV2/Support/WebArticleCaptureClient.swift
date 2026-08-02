@@ -52,6 +52,23 @@ private final class WebArticleCaptureSession {
     private let webView: WKWebView
     private let navigator = CaptureNavigationDelegate()
 
+    /// Viewport the capture WebView lays out at.
+    ///
+    /// This is load-bearing for image quality, not cosmetic. Responsive images
+    /// pick their source from `srcset` + `sizes`, and `sizes` is usually
+    /// viewport-relative (`100vw` on Substack, most CMSs, and most news
+    /// sites). Capturing at `.zero` made `100vw` resolve to 0, so the browser
+    /// selected the *smallest* candidate every time — Substack's 424w variant
+    /// out of 424/848/1272/1456 — and `normalizeRenderedResources` then
+    /// stripped `srcset`, baking that thumbnail in permanently. Every archived
+    /// article ended up with images too small and too soft to fill a phone
+    /// column, let alone a 3x one.
+    ///
+    /// 1024pt wide selects a candidate around 1272w on typical `srcset`
+    /// ladders — enough for a 3x phone and a Mac window, without pulling the
+    /// largest variant of every image into the offline archive.
+    private static let captureViewport = CGRect(x: 0, y: 0, width: 1024, height: 1366)
+
     private init() {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
@@ -59,7 +76,7 @@ private final class WebArticleCaptureSession {
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
         configuration.mediaTypesRequiringUserActionForPlayback = .all
         configuration.allowsAirPlayForMediaPlayback = false
-        self.webView = WKWebView(frame: .zero, configuration: configuration)
+        self.webView = WKWebView(frame: Self.captureViewport, configuration: configuration)
         self.webView.customUserAgent = "Mozilla/5.0 (Macintosh; Apple Silicon Mac OS X 14_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Stower/1"
         self.webView.navigationDelegate = navigator
     }
@@ -238,10 +255,28 @@ private final class WebArticleCaptureSession {
     }
 }
 
-private enum CaptureNavigationError: Error {
+/// Failures while loading a page for capture.
+///
+/// These reach the user directly — the add-URL sheet and the failed-import
+/// banner both show `localizedDescription`. Without `LocalizedError` the
+/// default description is raw Swift internals ("The operation couldn't be
+/// completed. (StowerFeature.(unknown context at $10686a9c4)
+/// .CaptureNavigationError error 1.)"), which tells nobody anything.
+private enum CaptureNavigationError: Error, LocalizedError {
     case timeout
     case navigationFailed(Error)
     case loadRejected
+
+    var errorDescription: String? {
+        switch self {
+        case .timeout:
+            return "The page took too long to load. It may be very large, very slow, or blocking automated readers."
+        case .navigationFailed(let underlying):
+            return "The page couldn't be loaded: \(underlying.localizedDescription)"
+        case .loadRejected:
+            return "The page refused to load. It may require a login or block automated readers."
+        }
+    }
 }
 
 @MainActor
