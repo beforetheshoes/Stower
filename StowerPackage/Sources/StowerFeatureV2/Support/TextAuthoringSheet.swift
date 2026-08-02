@@ -203,10 +203,7 @@ public struct TextAuthoringSheet: View {
 
     @ViewBuilder private var footer: some View {
         if let errorMessage {
-            Text(errorMessage)
-                .font(.caption)
-                .foregroundStyle(palette.error)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            CopyableText(text: errorMessage, textColor: palette.error)
         } else if previewKind == .markdown {
             Text("Write in markdown, then switch to Preview to inspect the rendered formatting without losing the source.")
                 .font(.caption)

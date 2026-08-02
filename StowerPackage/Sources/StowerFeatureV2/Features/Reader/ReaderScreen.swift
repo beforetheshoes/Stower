@@ -418,7 +418,8 @@ public struct ReaderScreen: View {
             ProgressView()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if let error = store.errorMessage {
-            Text(error).foregroundStyle(store.appearance.palette.error)
+            CopyableText(text: error, font: .body, textColor: store.appearance.palette.error)
+                .padding()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             Text("Item not found")
@@ -463,7 +464,9 @@ public struct ReaderScreen: View {
             Text(partialCaptureWarning(for: item))
                 .font(.footnote)
                 .foregroundStyle(store.appearance.secondaryTextColor)
+                .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
+            CopyButton(text: partialCaptureWarning(for: item), style: .compact)
             Button("Refresh") {
                 store.send(.retryExtractionTapped)
             }
@@ -606,10 +609,11 @@ public struct ReaderScreen: View {
             }
 
             if let error = store.errorMessage {
-                Text(error)
-                    .font(.footnote)
-                    .foregroundStyle(store.appearance.palette.error)
-                    .fixedSize(horizontal: false, vertical: true)
+                CopyableText(
+                    text: error,
+                    font: .footnote,
+                    textColor: store.appearance.palette.error
+                )
             }
         }
         .padding(20)

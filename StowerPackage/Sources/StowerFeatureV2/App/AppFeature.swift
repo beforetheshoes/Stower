@@ -102,6 +102,7 @@ public struct AppFeature {
         case failedImportsLoaded([FailedImport])
         case retryFailedImportsTapped
         case dismissFailedImportsTapped
+        case dismissStartupErrorTapped
         case readerAppearanceLoaded(ReaderAppearanceSettings)
         case readerAppearanceFailed(String)
         case readerFocusButtonTapped
@@ -259,6 +260,10 @@ public struct AppFeature {
 
             case .failedImportsLoaded(let imports):
                 state.failedImports = imports
+                return .none
+
+            case .dismissStartupErrorTapped:
+                state.startupErrorMessage = nil
                 return .none
 
             case .retryFailedImportsTapped:

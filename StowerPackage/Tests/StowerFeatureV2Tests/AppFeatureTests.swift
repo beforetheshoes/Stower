@@ -348,6 +348,39 @@ struct AppFeatureTests {
         #expect(createdItems.value == 0)
         #expect(failures.value == ["Queued URL capture failed."])
     }
+
+    @Test
+    func startupFailureIsVisibleAndDismissible() async {
+        // `startupErrorMessage` used to be set and read by nothing, so a failed
+        // bootstrap presented a navigable app with a silently empty library.
+        let store = TestStore(initialState: AppFeature.State()) {
+            AppFeature()
+        }
+        store.exhaustivity = .off(showSkippedAssertions: false)
+
+        await store.send(.startupFailed("App Group container unavailable.")) {
+            $0.startupFinished = true
+            $0.startupErrorMessage = "App Group container unavailable."
+        }
+        await store.send(.dismissStartupErrorTapped) {
+            $0.startupErrorMessage = nil
+        }
+    }
+
+    @Test
+    func aSuccessfulStartupClearsAnEarlierFailure() async {
+        var state = AppFeature.State()
+        state.startupErrorMessage = "Previous failure."
+        let store = TestStore(initialState: state) {
+            AppFeature()
+        }
+        store.exhaustivity = .off(showSkippedAssertions: false)
+
+        await store.send(.startupFinished) {
+            $0.startupFinished = true
+            $0.startupErrorMessage = nil
+        }
+    }
 }
 
 private enum QueuedURLCaptureError: Error, LocalizedError {

@@ -258,9 +258,7 @@ struct ReaderListenControls: View {
 
     @ViewBuilder private var footerMessages: some View {
         if let error = speech.errorMessage {
-            Text(error)
-                .font(.caption)
-                .foregroundStyle(palette.error)
+            CopyableText(text: error, textColor: palette.error)
         } else if speechBlocks.isEmpty {
             Text("No readable text found.")
                 .font(.caption)
