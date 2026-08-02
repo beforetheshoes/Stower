@@ -101,6 +101,13 @@ enum RenderedArticleExtractor {
         "[class*=thumbnail]", "[class*=thumbs-]", "[class*=-thumbs]",
         "[class*=splide__pagination]", "[class*=splide__arrows]",
 
+        // Sidebars and end-of-article rails. On CMSs that wrap the whole page
+        // in a single `<article>` these sit inside the extraction root, so a
+        // How-To Geek piece ended with a tabbed "more reading" panel and six
+        // thumbnails of unrelated posts.
+        "[class*=sidebar]", "[class*=pinned-listing]", "[class*=display-card]",
+        "[class*=article-tags]", "[class*=article-footer]", "[class*=article-credit]",
+
         // Interactive UI landmarks: menus, tab bars, toolbars and search.
         // `label` belongs with the already-removed form controls — CSS-only
         // widgets drive themselves with labels rather than buttons.
@@ -375,6 +382,83 @@ enum RenderedArticleExtractor {
             }
         }
         try root.select("img[width=1],img[height=1]").remove()
+        try unwrapMediaOnlyLists(root)
+        try removeDuplicateImages(root)
+    }
+
+    /// Replaces `<ul>`/`<ol>` galleries with their media, in place.
+    ///
+    /// This mirrors `mediaGalleryBlocks` in the block parser, and has to exist
+    /// separately because the two feed different things: the parser builds the
+    /// `ReaderDocument` used for listening, search and AI, while *this* HTML is
+    /// what the reader actually renders for a captured article. Fixing only the
+    /// parser left galleries still displaying as bulleted lists of photo
+    /// credits, which is what the reader shows on screen.
+    private static func unwrapMediaOnlyLists(_ root: Element) throws {
+        for list in try root.select("ul, ol").array() {
+            let items = try list.select("> li").array()
+            guard !items.isEmpty else { continue }
+
+            var mediaNodes = [Element]()
+            var isGallery = true
+            for item in items {
+                let media = try item.select("figure, picture, img, video").array()
+                let prose = item.copy() as! Element
+                try prose.select("figure, picture, img, video, figcaption, small, cite").remove()
+                let proseText = cleanText((try? prose.text()) ?? "")
+
+                if media.isEmpty {
+                    if !proseText.isEmpty {
+                        isGallery = false
+                        break
+                    }
+                    continue
+                }
+                if proseText.count > 40 {
+                    isGallery = false
+                    break
+                }
+                for node in media where !node.hasAncestor(matching: ["figure", "picture"]) {
+                    mediaNodes.append(node)
+                }
+            }
+
+            guard isGallery, !mediaNodes.isEmpty else { continue }
+            for node in mediaNodes {
+                try list.before(try node.outerHtml())
+            }
+            try list.remove()
+        }
+    }
+
+    /// Drops repeats of an image already present earlier in the article.
+    ///
+    /// Galleries emit each photo twice — once in the carousel and once in the
+    /// thumbnail rail — differing only by the resize parameters in the query
+    /// string, so the reader showed every gallery twice: full size, then
+    /// postage-stamp size.
+    private static func removeDuplicateImages(_ root: Element) throws {
+        var seen = Set<String>()
+        for image in try root.select("img").array() {
+            let absolute = (try? image.attr("abs:src")) ?? ""
+            let source = absolute.isEmpty ? ((try? image.attr("src")) ?? "") : absolute
+            guard !source.isEmpty else { continue }
+
+            let key = mediaIdentity(source)
+            if seen.contains(key) {
+                // Take the enclosing figure/picture with it so no empty
+                // wrapper (or orphaned caption) is left on the page.
+                var target: Element = image
+                var ancestor = image.parent()
+                while let current = ancestor, ["figure", "picture"].contains(current.tagName().lowercased()) {
+                    target = current
+                    ancestor = current.parent()
+                }
+                try target.remove()
+            } else {
+                seen.insert(key)
+            }
+        }
     }
 
     /// Removes quiz / poll / survey widgets whole, rather than leaving their
