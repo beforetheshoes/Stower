@@ -66,7 +66,15 @@ public struct ExtractionPipelineClient: Sendable {
         let root = try chooseRoot(document: document)
         let parsed = try parseBlocks(root: root, baseURL: sourceURL)
         let cleanedBlocks = sanitizeBlocks(parsed.blocks)
-        let deduped = removeLeadingTitleRepeat(cleanedBlocks, title: title)
+        let siteNameHint = nonEmpty(try? document.select("meta[property=og:site_name]").first()?.attr("content"))
+            ?? sourceURL.host
+        let authorHint = nonEmpty(try? document.select("meta[name=author]").first()?.attr("content"))
+        let deduped = removeLeadingTitleRepeat(
+            cleanedBlocks,
+            title: title,
+            siteName: siteNameHint,
+            author: authorHint
+        )
         let finalBlocks = deduped.isEmpty ? parsed.blocks : deduped
 
         let plainText = plainTextFromBlocks(finalBlocks)

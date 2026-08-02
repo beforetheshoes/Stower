@@ -113,6 +113,13 @@ func parseBlock(_ element: Element) throws -> ParsedBlocks {
         return ParsedBlocks(blocks: dedupeBlocks(blocks), media: dedupeMedia(media), embeds: dedupeEmbeds(embeds))
 
     case "ul", "ol":
+        // Image carousels and galleries are marked up as a list of slides
+        // (Splide, Swiper, Flickity and friends all use `<ul><li>`), so a
+        // gallery came out as a bulleted list — one bullet per photo, with the
+        // photo credit as the bullet's text.
+        if let gallery = try mediaGalleryBlocks(element) {
+            return gallery
+        }
         let listItems = try parseListItems(element)
         return ParsedBlocks(blocks: listItems.isEmpty ? [] : [.list(ordered: tag == "ol", items: listItems)], media: [], embeds: [])
 
@@ -450,6 +457,60 @@ func parseListItems(_ element: Element) throws -> [[ReaderInline]] {
     }
 
     return items
+}
+
+/// Recognises a `<ul>`/`<ol>` that is really an image gallery and returns its
+/// media as figure/video blocks instead of list items.
+///
+/// Every mainstream carousel library (Splide, Swiper, Flickity, slick) builds
+/// its track as `<ul><li class="…slide">`, so galleries reached the reader as
+/// bulleted lists: a bullet per photo, whose text was the photo credit.
+///
+/// Returns nil — leaving normal list handling in place — unless *every*
+/// non-empty item carries media and none of them carry real prose. A list of
+/// paragraphs that happen to contain an inline icon stays a list.
+func mediaGalleryBlocks(_ element: Element) throws -> ParsedBlocks? {
+    let items = try element.select("> li").array()
+    guard items.count >= 1 else { return nil }
+
+    var mediaItems = 0
+    var combined = ParsedBlocks(blocks: [], media: [], embeds: [])
+
+    for item in items {
+        let mediaNodes = try item.select("figure, picture, img, video").array()
+        // Prose the item carries in its own right, ignoring captions and the
+        // small-print credit lines that sit alongside gallery images.
+        let prose = item.copy() as! Element
+        try prose.select("figure, picture, img, video, figcaption, small, cite").remove()
+        let proseText = cleanText((try? prose.text()) ?? "")
+
+        if mediaNodes.isEmpty {
+            // An empty spacer item is tolerated; anything with words is not.
+            guard proseText.isEmpty else { return nil }
+            continue
+        }
+        // Captions and credits are excluded above, so a genuine slide has
+        // essentially no prose left. Anything more is a list item that merely
+        // happens to carry an image — a step list with inline icons, say.
+        guard proseText.count <= 40 else { return nil }
+        mediaItems += 1
+
+        // Parse the outermost media node per item so a <figure> keeps its
+        // caption rather than being split from it.
+        for node in mediaNodes where !node.hasAncestor(matching: ["figure", "picture"]) {
+            let parsed = try parseBlock(node)
+            combined.blocks.append(contentsOf: parsed.blocks)
+            combined.media.append(contentsOf: parsed.media)
+            combined.embeds.append(contentsOf: parsed.embeds)
+        }
+    }
+
+    guard mediaItems > 0, !combined.blocks.isEmpty else { return nil }
+    return ParsedBlocks(
+        blocks: dedupeBlocks(combined.blocks),
+        media: dedupeMedia(combined.media),
+        embeds: dedupeEmbeds(combined.embeds)
+    )
 }
 
 /// Parses `<dl>` into "term — definition" rows. Each `<dt>` starts a new row;

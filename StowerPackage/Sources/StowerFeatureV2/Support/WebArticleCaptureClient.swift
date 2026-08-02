@@ -108,6 +108,7 @@ private final class WebArticleCaptureSession {
             warnings.append("The page kept changing while it was saved; late-loading media may be missing.")
         }
         try await normalizeRenderedResources()
+        try await annotateHiddenContent()
 
         let finalURL = webView.url ?? sourceURL
         let readability = try await runMozillaReadability()
@@ -178,6 +179,74 @@ private final class WebArticleCaptureSession {
               }
               for (const media of document.querySelectorAll('[poster]')) {
                 media.poster = new URL(media.poster, document.baseURI).href;
+              }
+              return true;
+            })()
+            """)
+    }
+
+    /// Marks elements the page is not actually showing, so extraction can drop
+    /// them.
+    ///
+    /// Extraction runs on the serialized DOM with SwiftSoup, which has no CSS
+    /// engine — so anything a page keeps in the DOM but hides with CSS gets
+    /// read as article text. Quiz widgets that stack every question and *both*
+    /// the "correct" and "incorrect" explanations as `display:none` panels,
+    /// inactive tabs, collapsed accordions and off-screen menus all came
+    /// through as walls of nonsense.
+    ///
+    /// The capture WebView does have a CSS engine, so the visibility question
+    /// is answered here, where it can actually be answered, and the result is
+    /// recorded as an attribute for `RenderedArticleExtractor` to act on.
+    ///
+    /// Marking (not removing) keeps the Original View archive faithful — the
+    /// elements are invisible there anyway.
+    ///
+    /// Deliberately conservative:
+    ///   * Only `display:none` / `visibility:hidden|collapse` count. Zero-size
+    ///     and off-viewport elements are left alone, because that is also what
+    ///     lazy-loaded and not-yet-scrolled-to content looks like.
+    ///   * Anything containing media is left alone. Carousels legitimately
+    ///     hide every slide but the active one, so marking on visibility alone
+    ///     deleted whole galleries — on a How-To Geek article, 20 of its 26
+    ///     images sat inside a `display:none` wrapper.
+    ///   * If marking would hide nearly all of the page's text the whole pass
+    ///     is abandoned, so a page still mid-hydration is never gutted.
+    private func annotateHiddenContent() async throws {
+        try await javascriptVoid("""
+            (() => {
+              const body = document.body;
+              if (!body) return true;
+
+              const totalText = (body.textContent || '').trim().length;
+              const MEDIA = 'img, picture, video, audio, figure, iframe, svg';
+              const candidates = [];
+              for (const el of body.querySelectorAll('*')) {
+                if (el.closest('[data-stower-hidden]')) continue;
+                const style = window.getComputedStyle(el);
+                if (style.display !== 'none'
+                    && style.visibility !== 'hidden'
+                    && style.visibility !== 'collapse') {
+                  continue;
+                }
+                // Hidden media is usually an off-screen carousel slide, which
+                // is content worth keeping. Only hidden *text* is dropped.
+                if (el.matches(MEDIA) || el.querySelector(MEDIA)) continue;
+                if (!(el.textContent || '').trim()) continue;
+                candidates.push(el);
+              }
+
+              // Bail out if what is left would be too thin to be the article.
+              let hiddenText = 0;
+              for (const el of candidates) {
+                hiddenText += (el.textContent || '').trim().length;
+              }
+              if (totalText > 0 && (totalText - hiddenText) < Math.max(400, totalText * 0.15)) {
+                return true;
+              }
+
+              for (const el of candidates) {
+                el.setAttribute('data-stower-hidden', '1');
               }
               return true;
             })()
