@@ -15,16 +15,28 @@ public struct ContentView: View {
         AppView(store: store)
             .task { store.send(.onAppear) }
             .onChange(of: scenePhase) { _, newPhase in
-                // When the user returns to Stower after sharing a URL from
-                // Safari (or any other app), the share extension has already
-                // enqueued an ingestion job to the shared App Group database,
-                // but the main app has no other way to discover it. Re-drain
-                // the queue and reload the library whenever the scene becomes
-                // active. `AppFeature` guards against running before startup
-                // has finished, so this is a safe no-op on the very first
-                // activation after launch.
-                if newPhase == .active {
+                switch newPhase {
+                case .background:
+                    // The database is in an App Group container, and iOS kills
+                    // a process with 0xDEAD10CC if it still holds a lock on a
+                    // shared file when suspended. Periodic CloudKit sync writes
+                    // in the background, so this is not hypothetical — it is
+                    // what took the shipped build down. Suspending here turns a
+                    // termination into an interrupted write we can retry.
+                    DatabaseSuspensionObserver.suspend()
+                case .active:
+                    DatabaseSuspensionObserver.resume()
+                    // When the user returns to Stower after sharing a URL from
+                    // Safari (or any other app), the share extension has
+                    // already enqueued an ingestion job to the shared App Group
+                    // database, but the main app has no other way to discover
+                    // it. Re-drain the queue and reload the library whenever
+                    // the scene becomes active.
                     store.send(.sceneDidBecomeActive)
+                case .inactive:
+                    break
+                @unknown default:
+                    break
                 }
             }
     }

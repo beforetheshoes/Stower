@@ -496,17 +496,42 @@ extension StowerRepository {
             var now
             @Dependency(\.uuid)
             var uuid
-            return try await database.write { db -> Int in
+            // Scan in a read, write only what is missing.
+            //
+            // This used to be one write transaction wrapping two full-table
+            // scans, which meant a write lock on the shared App Group database
+            // was held for as long as the scans took. Periodic CloudKit sync
+            // calls this in the background, so on a large library that lock was
+            // routinely open when iOS suspended the app — the 0xDEAD10CC
+            // termination seen in production. Holding a *read* during the scan
+            // and taking the write only when there is something to insert
+            // shrinks that window to near nothing, and skips it entirely for
+            // the common case where nothing needs hydrating.
+            let pending: [(item: SavedItemSyncTable, url: String)] = try await database.read { db in
                 let synced: [SavedItemSyncTable] = try SavedItemSyncTable
                     .where { !$0.isArchived }
                     .fetchAll(db)
                 let locals: [SavedItemContentLocalTable] = try SavedItemContentLocalTable.fetchAll(db)
                 let localIDs: Set<UUID> = Set(locals.map(\.itemID))
 
+                return synced.compactMap { item in
+                    guard !localIDs.contains(item.id) else { return nil }
+                    guard let url = item.sourceURL, !url.isEmpty else { return nil }
+                    return (item, url)
+                }
+            }
+
+            guard !pending.isEmpty else { return 0 }
+
+            return try await database.write { db -> Int in
                 var enqueued = 0
-                for item in synced {
-                    guard !localIDs.contains(item.id) else { continue }
-                    guard let url = item.sourceURL, !url.isEmpty else { continue }
+                for (item, url) in pending {
+                    // Re-check inside the write: another process (the share
+                    // extension) may have inserted content since the read.
+                    let existing = try SavedItemContentLocalTable
+                        .find(item.id)
+                        .fetchOne(db)
+                    guard existing == nil else { continue }
 
                     try SavedItemContentLocalTable
                         .insert {

@@ -241,6 +241,12 @@ public struct AppFeature {
                             await send(.startupFinished)
                             await send(.library(.reload))
                             await send(.settings(.load))
+                        } catch where error.isDatabaseSuspension {
+                            // Backgrounded mid-startup. Not a failure worth
+                            // reporting — startup re-runs on the next
+                            // activation, and showing "database is suspended"
+                            // would be alarming and useless.
+                            await send(.startupFinished)
                         } catch {
                             await send(.startupFailed(error.localizedDescription))
                         }
@@ -596,6 +602,13 @@ private func processIngestionJobs(
         } catch is CancellationError {
             try? await repository.failIngestionJob(job.id, "Import cancelled.", now())
             throw CancellationError()
+        } catch where error.isDatabaseSuspension {
+            // The app is being backgrounded and the database has stopped
+            // taking locks. Nothing is wrong with this import — stop draining
+            // and let the job be reclaimed on the next run. Recording it as a
+            // failure would blame the user's article for the app being
+            // suspended, and surface "database is suspended" as the reason.
+            return
         } catch {
             // `try?`, not `try`: if recording the failure itself fails, the
             // remaining queued imports must still be drained. Rethrowing here
