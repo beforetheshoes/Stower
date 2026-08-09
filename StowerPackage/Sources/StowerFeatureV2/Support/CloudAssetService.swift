@@ -403,6 +403,34 @@ public enum CloudAssetService {
             try await repository.enqueueIngestionJob(.uploadAsset, payload)
             enqueued += 1
         }
+        // Staged payloads still waiting on disk are uploads whose earlier
+        // attempts failed — e.g. the CloudKit schema wasn't deployed to the
+        // container yet. Failed jobs never suppress a re-enqueue, so retrying
+        // every startup is safe and cheap (upload jobs are deduplicated while
+        // queued or running).
+        let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        let archiveRoot = documents.appendingPathComponent("StowerArchive", isDirectory: true)
+        let itemDirs = (try? FileManager.default.contentsOfDirectory(
+            at: archiveRoot,
+            includingPropertiesForKeys: nil
+        )) ?? []
+        for entry in itemDirs {
+            guard let itemID = UUID(uuidString: entry.lastPathComponent) else { continue }
+            if FileManager.default.fileExists(atPath: pendingUploadCaptureURL(for: itemID).path) {
+                let payload = try AssetJobPayload(
+                    itemID: itemID,
+                    kind: .capture,
+                    originalFilename: ArticleCapturePackage.installedPackageFilename
+                ).encoded()
+                try await repository.enqueueIngestionJob(.uploadAsset, payload)
+                enqueued += 1
+            }
+            if FileManager.default.fileExists(atPath: pendingUploadZipURL(for: itemID).path) {
+                let payload = try AssetJobPayload(itemID: itemID, kind: .websiteZip).encoded()
+                try await repository.enqueueIngestionJob(.uploadAsset, payload)
+                enqueued += 1
+            }
+        }
         if now >= websiteMigrationEligibleAfter {
             for itemID in try await itemStorageClient.websiteZipItemIDsWithoutManifest() {
                 let payload = try AssetJobPayload(itemID: itemID, kind: .websiteZip).encoded()

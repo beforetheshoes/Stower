@@ -248,6 +248,50 @@ struct CaptureAssetStoreTests {
     }
 
     @Test
+    func backfill_retriesUploadsWithStagedPayloadsOnDisk() async throws {
+        let fixture = try makeFixture()
+        let (captureItem, websiteItem) = try await withFixtureDependencies(fixture) {
+            (
+                try await fixture.repository.createItemFromIngestion(.sharedText("Capture")),
+                try await fixture.repository.createItemFromIngestion(.sharedText("Website"))
+            )
+        }
+        defer {
+            AssetArchiver.deleteArchive(for: captureItem.id)
+            AssetArchiver.deleteArchive(for: websiteItem.id)
+        }
+        // A first upload attempt failed (e.g. CloudKit schema not deployed),
+        // leaving the staged payloads on disk.
+        let pendingCapture = CloudAssetService.pendingUploadCaptureURL(for: captureItem.id)
+        try FileManager.default.createDirectory(
+            at: pendingCapture.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("capture".utf8).write(to: pendingCapture)
+        let pendingZip = CloudAssetService.pendingUploadZipURL(for: websiteItem.id)
+        try FileManager.default.createDirectory(
+            at: pendingZip.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("zip".utf8).write(to: pendingZip)
+
+        let enqueued = try await withFixtureDependencies(fixture) {
+            try await CloudAssetService.enqueueBackfillJobs(repository: fixture.repository)
+        }
+
+        #expect(enqueued >= 2)
+        let uploadJobs = try await fixture.database.read { db in
+            try IngestionJobLocalTable
+                .where { $0.kind.eq(IngestionJob.Kind.uploadAsset.rawValue) }
+                .select(\.payload)
+                .fetchAll(db)
+        }
+        let payloads = try uploadJobs.map { try AssetJobPayload.decoded(from: $0) }
+        #expect(payloads.contains { $0.itemID == captureItem.id && $0.kind == .capture })
+        #expect(payloads.contains { $0.itemID == websiteItem.id && $0.kind == .websiteZip })
+    }
+
+    @Test
     func uploadCapture_fallsBackToChunkRowsWhenPendingZipMissing() async throws {
         let fixture = try makeFixture()
         let item = try await withFixtureDependencies(fixture) {
