@@ -28,6 +28,7 @@ struct StorageFeatureTests {
         await store.send(.task) {
             $0.isComputing = true
         }
+        await store.receive(.budgetLoaded(nil))
         await store.receive(.snapshotLoaded(snapshot)) {
             $0.isComputing = false
             $0.snapshot = snapshot

@@ -256,6 +256,16 @@ extension StorageMaintenanceClient {
             return count
         }
         try sweep(
+            tableName: SavedAssetManifestSyncTable.tableName,
+            currentOrphanIDs: Set(try SavedAssetManifestSyncTable.select(\.itemID).fetchAll(db))
+                .subtracting(liveItemIDs)
+        ) { ripe in
+            let count = try SavedAssetManifestSyncTable.where { $0.itemID.in(ripe) }.fetchCount(db)
+            try SavedAssetManifestSyncTable.where { $0.itemID.in(ripe) }.delete().execute(db)
+            try ItemStorageLocalTable.where { $0.itemID.in(ripe) }.delete().execute(db)
+            return count
+        }
+        try sweep(
             tableName: SavedArticleCaptureSyncTable.tableName,
             currentOrphanIDs: Set(try SavedArticleCaptureSyncTable.select(\.itemID).fetchAll(db))
                 .subtracting(liveItemIDs)

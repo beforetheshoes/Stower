@@ -276,6 +276,55 @@ nonisolated public struct IngestionJobLocalTable: Hashable, Identifiable, Sendab
     public var lastError: String?
 }
 
+/// CloudKit-synced manifest for a heavy payload stored in the app-managed
+/// asset zone (`StowerAssetZone`) rather than in a sync-table BLOB column.
+/// Only this small row replicates through the SyncEngine; the bytes live in
+/// a `StowerAsset` CKRecord the app uploads and downloads directly, which is
+/// what lets a device delete its local copy without deleting the iCloud copy.
+@Table
+nonisolated public struct SavedAssetManifestSyncTable: Hashable, Identifiable, Sendable {
+    public let id: UUID
+    public var itemID: UUID
+    /// `CloudAssetKind` raw value: `pdf` or `websiteZip`.
+    public var kind: String = ""
+    /// CKRecord name in the asset zone, derived from itemID + sha256.
+    public var recordName: String = ""
+    public var sha256: String = ""
+    public var byteCount: Int = 0
+    public var originalFilename: String = ""
+    public var createdAt: Date = .now
+    public var updatedAt: Date = .now
+}
+
+/// Local-only, per-device storage state for an item: pinning, last-open
+/// recency for LRU eviction, and upload/offload bookkeeping. Deliberately
+/// not synced — "keep this downloaded" is a per-device decision.
+@Table
+nonisolated public struct ItemStorageLocalTable: Hashable, Identifiable, Sendable {
+    @Column(primaryKey: true)
+    public let itemID: UUID
+    public var isPinned: Bool = false
+    public var lastOpenedAt: Date?
+    /// `pending` until the asset upload is confirmed in CloudKit, then
+    /// `uploaded`; `failed` marks the item ineligible for eviction.
+    public var uploadState: String = "pending"
+    public var offloadedAt: Date?
+    public var updatedAt: Date = .now
+
+    public var id: UUID { itemID }
+}
+
+/// Local-only, single-row automatic-offload policy.
+@Table
+nonisolated public struct StoragePolicyLocalTable: Hashable, Identifiable, Sendable {
+    public let id: UUID
+    /// nil disables automatic eviction.
+    public var budgetBytes: Int?
+    public var updatedAt: Date = .now
+
+    public static let singletonID = UUID(uuidString: "F05339A1-0000-0000-0000-000000000001")!
+}
+
 /// Local-only quarantine for content sync rows whose item row is missing.
 /// During initial CloudKit sync, content rows can arrive before their
 /// `SavedItemSyncTable` row, so an immediate delete would destroy the master

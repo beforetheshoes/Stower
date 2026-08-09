@@ -39,6 +39,8 @@ struct StorageSectionView: View {
 
             reclaimRows
 
+            offloadRows
+
             if let error = store.errorMessage {
                 CopyableText(text: error, font: .caption, textColor: palette.error)
             }
@@ -132,6 +134,47 @@ struct StorageSectionView: View {
             Button("Try Again") {
                 store.send(.reclaimTapped)
             }
+        }
+    }
+
+    /// Budget choices for automatic offload. `nil` disables it.
+    private static let budgetChoices: [(label: String, bytes: Int?)] = [
+        ("Off", nil),
+        ("1 GB", 1 << 30),
+        ("5 GB", 5 << 30),
+        ("10 GB", 10 << 30),
+        ("20 GB", 20 << 30),
+    ]
+
+    @ViewBuilder private var offloadRows: some View {
+        Picker("Storage Limit", selection: Binding(
+            get: { store.budgetBytes },
+            set: { store.send(.budgetChanged($0)) }
+        )) {
+            ForEach(Self.budgetChoices, id: \.bytes) { choice in
+                Text(choice.label).tag(choice.bytes)
+            }
+        }
+
+        if store.isOffloading {
+            ProgressView {
+                Text("Offloading read items…")
+                    .font(.callout)
+            }
+        } else {
+            Button("Offload Read Items") {
+                store.send(.offloadNowTapped)
+            }
+        }
+
+        if let report = store.lastOffloadReport {
+            Text(
+                report.evictedCount == 0
+                    ? "Nothing eligible to offload."
+                    : "Offloaded \(report.evictedCount) item\(report.evictedCount == 1 ? "" : "s"), freeing \(Self.format(report.freedBytes))."
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
         }
     }
 

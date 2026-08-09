@@ -25,6 +25,9 @@ public struct LibraryFeature {
         public var inlineTagCreation: InlineTagCreation?
         /// Draft for the in-app text/markdown composer.
         public var textImportDraft: TextImportDraft?
+        /// Per-item offload/pin state, refreshed alongside the item list.
+        /// Drives the download-management context menu and the cloud badge.
+        public var storageInfoByID = [UUID: ItemStorageInfo]()
 
         /// Library search matches against title, URL, site name, author,
         /// excerpt, AND full body text (`item.content`). The body-text
@@ -129,6 +132,12 @@ public struct LibraryFeature {
         case saveURLFailed(String)
         case importPDFSelected(URL)
         case importWebsiteSelected(URL)
+
+        // Download management (offload)
+        case storageInfoLoaded([UUID: ItemStorageInfo])
+        case setPinned(UUID, Bool)
+        case removeDownload(UUID)
+        case downloadNow(UUID)
         case addTextTapped
         case textImportDismissed
         case textImportTitleChanged(String)
@@ -170,6 +179,10 @@ public struct LibraryFeature {
     var pdfIngestionClient
     @Dependency(\.textIngestionClient)
     var textIngestionClient
+    @Dependency(\.itemStorageClient)
+    var itemStorageClient
+    @Dependency(\.cloudAssetClient)
+    var cloudAssetClient
 
     public var body: some ReducerOf<Self> {
         Reduce { state, action in
@@ -330,7 +343,51 @@ public struct LibraryFeature {
             case .response(let items):
                 state.isLoading = false
                 state.items = items
+                let itemStorageClient = self.itemStorageClient
+                return .run { [ids = items.map(\.id)] send in
+                    var infos = [UUID: ItemStorageInfo]()
+                    for info in (try? await itemStorageClient.storageInfosForItems(ids)) ?? [] {
+                        infos[info.itemID] = info
+                    }
+                    await send(.storageInfoLoaded(infos))
+                }
+
+            case .storageInfoLoaded(let infos):
+                state.storageInfoByID = infos
                 return .none
+
+            case let .setPinned(id, isPinned):
+                state.storageInfoByID[id]?.isPinned = isPinned
+                let itemStorageClient = self.itemStorageClient
+                return .run { _ in
+                    try? await itemStorageClient.setPinned(id, isPinned)
+                }
+
+            case .removeDownload(let id):
+                state.storageInfoByID[id]?.offloadedAt = .distantPast
+                let repository = self.repository
+                return .run { send in
+                    do {
+                        try await StorageOffloadService.offload(itemID: id, repository: repository)
+                    } catch {
+                        await send(.failed(error.localizedDescription))
+                    }
+                    await send(.reload)
+                }
+
+            case .downloadNow(let id):
+                if let index = state.items.firstIndex(where: { $0.id == id }) {
+                    state.items[index].processingState = .extracting
+                }
+                let repository = self.repository
+                return .run { send in
+                    do {
+                        try await CloudAssetService.restore(itemID: id, repository: repository)
+                    } catch {
+                        await send(.failed(error.localizedDescription))
+                    }
+                    await send(.reload)
+                }
 
             case .failed(let error):
                 state.isLoading = false
@@ -559,6 +616,13 @@ public struct LibraryFeature {
                         let result = try await pdfIngestionClient.ingest(pickedURL)
                         let item = try await repository.createItemFromIngestion(result)
                         try? PDFArchiver.archivePDF(from: pickedURL, itemID: item.id)
+                        if let payload = try? AssetJobPayload(
+                            itemID: item.id,
+                            kind: .pdf,
+                            originalFilename: pickedURL.lastPathComponent
+                        ).encoded() {
+                            try? await repository.enqueueIngestionJob(.uploadAsset, payload)
+                        }
                         await send(.saveURLFinished(item))
                         await send(.openItem(item))
                     } catch {
@@ -617,11 +681,21 @@ public struct LibraryFeature {
             case .permanentlyDelete(let id):
                 state.items.removeAll { $0.id == id }
                 let repository = self.repository
+                let itemStorageClient = self.itemStorageClient
+                let cloudAssetClient = self.cloudAssetClient
                 return .run { send in
                     do {
+                        // Capture asset record names before the delete removes
+                        // the manifest rows, then clean up the CloudKit copies
+                        // best-effort — a failure here only leaves an orphaned
+                        // record in the user's own private zone.
+                        let manifests = (try? await itemStorageClient.manifests([id])) ?? []
                         try await repository.permanentlyDelete(id)
                         AssetArchiver.deleteArchive(for: id)
                         PDFArchiver.deletePDF(for: id)
+                        for manifest in manifests {
+                            try? await cloudAssetClient.delete(manifest.recordName)
+                        }
                         await send(.deleteFinished)
                     } catch {
                         await send(.deleteFailed(error.localizedDescription))

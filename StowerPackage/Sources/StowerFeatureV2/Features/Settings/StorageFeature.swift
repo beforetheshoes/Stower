@@ -24,6 +24,10 @@ public struct StorageFeature {
         public var isComputing = false
         public var maintenance: MaintenanceState = .idle
         public var errorMessage: String?
+        /// Automatic-offload budget; nil disables the eviction pass.
+        public var budgetBytes: Int?
+        public var isOffloading = false
+        public var lastOffloadReport: StorageOffloadService.EvictionReport?
 
         public init() {}
     }
@@ -36,10 +40,19 @@ public struct StorageFeature {
         case reclaimTapped
         case maintenanceFinished(MaintenanceReport)
         case maintenanceFailed(String)
+        case budgetLoaded(Int?)
+        case budgetChanged(Int?)
+        case offloadNowTapped
+        case offloadFinished(StorageOffloadService.EvictionReport)
+        case offloadFailed(String)
     }
 
     @Dependency(\.storageUsageClient)
     var storageUsageClient
+    @Dependency(\.itemStorageClient)
+    var itemStorageClient
+    @Dependency(\.stowerRepository)
+    var repository
 
     public var body: some ReducerOf<Self> {
         Reduce { state, action in
@@ -47,7 +60,72 @@ public struct StorageFeature {
             case .task:
                 guard !state.isComputing else { return .none }
                 state.isComputing = true
-                return loadSnapshot(force: false)
+                let storageUsageClient = self.storageUsageClient
+                let itemStorageClient = self.itemStorageClient
+                return .run { send in
+                    var budget: Int?
+                    if let loaded = try? await itemStorageClient.budgetBytes() {
+                        budget = loaded
+                    }
+                    await send(.budgetLoaded(budget))
+                    do {
+                        let snapshot = try await storageUsageClient.computeSnapshot(false)
+                        await send(.snapshotLoaded(snapshot))
+                    } catch {
+                        await send(.snapshotFailed(error.localizedDescription))
+                    }
+                }
+                .cancellable(id: CancelID.snapshot, cancelInFlight: true)
+
+            case .budgetLoaded(let budget):
+                state.budgetBytes = budget
+                return .none
+
+            case .budgetChanged(let budget):
+                state.budgetBytes = budget
+                let itemStorageClient = self.itemStorageClient
+                let repository = self.repository
+                return .run { send in
+                    try? await itemStorageClient.setBudgetBytes(budget)
+                    guard budget != nil else { return }
+                    do {
+                        let report = try await StorageOffloadService.runEviction(repository: repository)
+                        if report.evictedCount > 0 {
+                            await send(.offloadFinished(report))
+                        }
+                    } catch {
+                        await send(.offloadFailed(error.localizedDescription))
+                    }
+                }
+
+            case .offloadNowTapped:
+                guard !state.isOffloading else { return .none }
+                state.isOffloading = true
+                state.errorMessage = nil
+                let repository = self.repository
+                return .run { send in
+                    do {
+                        // Budget 0 evicts every eligible read item.
+                        let report = try await StorageOffloadService.runEviction(
+                            repository: repository,
+                            budgetOverride: 0
+                        )
+                        await send(.offloadFinished(report))
+                    } catch {
+                        await send(.offloadFailed(error.localizedDescription))
+                    }
+                }
+
+            case .offloadFinished(let report):
+                state.isOffloading = false
+                state.lastOffloadReport = report
+                state.isComputing = true
+                return loadSnapshot(force: true)
+
+            case .offloadFailed(let message):
+                state.isOffloading = false
+                state.errorMessage = message
+                return .none
 
             case .refresh:
                 guard !state.isComputing else { return .none }

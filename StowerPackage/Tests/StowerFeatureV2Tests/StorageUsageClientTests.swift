@@ -55,8 +55,10 @@ struct StorageUsageClientTests {
         defer { try? FileManager.default.removeItem(at: fixture.scratch) }
         let bigItem = UUID()
         let smallItem = UUID()
-        try write(4096, to: fixture.roots.archiveRoot.appendingPathComponent("\(bigItem.uuidString)/index.html"))
-        try write(1024, to: fixture.roots.archiveRoot.appendingPathComponent("\(smallItem.uuidString)/index.html"))
+        // Sizes far enough apart that filesystem block-size rounding of
+        // allocated sizes can never make them tie.
+        try write(64 * 1024, to: fixture.roots.archiveRoot.appendingPathComponent("\(bigItem.uuidString)/index.html"))
+        try write(8 * 1024, to: fixture.roots.archiveRoot.appendingPathComponent("\(smallItem.uuidString)/index.html"))
         try write(512, to: fixture.roots.imagesRoot.appendingPathComponent("hero.jpg"))
         try write(256, to: fixture.roots.pendingRoots[0].appendingPathComponent("stranded.pdf"))
         try write(128, to: fixture.roots.legacyDatabaseURL!)

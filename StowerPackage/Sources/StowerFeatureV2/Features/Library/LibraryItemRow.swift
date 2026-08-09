@@ -5,6 +5,7 @@ struct LibraryItemRow: View {
     let query: String
     let tags: [Tag]
     let displayStyle: LibraryDisplayStyle
+    var isOffloaded = false
 
     @Environment(\.flexokiPalette)
     private var palette
@@ -30,6 +31,13 @@ struct LibraryItemRow: View {
                         Image(systemName: "star.fill")
                             .foregroundStyle(palette.warning)
                             .accessibilityLabel("Starred")
+                    }
+
+                    if isOffloaded {
+                        Image(systemName: "icloud.and.arrow.down")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .accessibilityLabel("Stored in iCloud")
                     }
 
                     processingIndicator

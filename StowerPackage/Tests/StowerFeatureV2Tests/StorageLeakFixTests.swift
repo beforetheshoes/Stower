@@ -37,15 +37,39 @@ struct StorageLeakFixTests {
                 SavedTextContentSyncTable.Draft(id: id, plainText: "text", rawSourceText: "raw")
             }
             .execute(db)
+            try SavedAssetManifestSyncTable.insert {
+                SavedAssetManifestSyncTable(
+                    id: UUID(),
+                    itemID: id,
+                    kind: "pdf",
+                    recordName: "asset-record",
+                    sha256: "abc"
+                )
+            }
+            .execute(db)
+            try ItemStorageLocalTable.insert {
+                ItemStorageLocalTable(itemID: id)
+            }
+            .execute(db)
         }
     }
 
-    private func contentRowCounts(for id: UUID, in database: any DatabaseWriter) async throws -> (website: Int, pdf: Int, text: Int) {
+    private struct RowCounts {
+        var website = 0
+        var pdf = 0
+        var text = 0
+        var manifests = 0
+        var storage = 0
+    }
+
+    private func contentRowCounts(for id: UUID, in database: any DatabaseWriter) async throws -> RowCounts {
         try await database.read { db in
-            (
+            RowCounts(
                 website: try SavedWebsiteArchiveSyncTable.where { $0.id.eq(id) }.fetchCount(db),
                 pdf: try SavedPDFContentSyncTable.where { $0.id.eq(id) }.fetchCount(db),
-                text: try SavedTextContentSyncTable.where { $0.id.eq(id) }.fetchCount(db)
+                text: try SavedTextContentSyncTable.where { $0.id.eq(id) }.fetchCount(db),
+                manifests: try SavedAssetManifestSyncTable.where { $0.itemID.eq(id) }.fetchCount(db),
+                storage: try ItemStorageLocalTable.where { $0.itemID.eq(id) }.fetchCount(db)
             )
         }
     }
@@ -63,6 +87,8 @@ struct StorageLeakFixTests {
         #expect(counts.website == 0)
         #expect(counts.pdf == 0)
         #expect(counts.text == 0)
+        #expect(counts.manifests == 0)
+        #expect(counts.storage == 0)
     }
 
     @Test
@@ -90,11 +116,15 @@ struct StorageLeakFixTests {
         #expect(expiredCounts.website == 0)
         #expect(expiredCounts.pdf == 0)
         #expect(expiredCounts.text == 0)
+        #expect(expiredCounts.manifests == 0)
+        #expect(expiredCounts.storage == 0)
 
         // The still-retained trash item keeps its content rows.
         let freshCounts = try await contentRowCounts(for: fresh.id, in: database)
         #expect(freshCounts.website == 1)
         #expect(freshCounts.pdf == 1)
         #expect(freshCounts.text == 1)
+        #expect(freshCounts.manifests == 1)
+        #expect(freshCounts.storage == 1)
     }
 }

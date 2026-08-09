@@ -589,7 +589,8 @@ private extension IngestionJob.Kind {
     /// those still enqueue unconditionally.
     var isDeduplicated: Bool {
         switch self {
-        case .hydrate, .hydrateText, .hydrateWebsite, .url:
+        case .hydrate, .hydrateText, .hydrateWebsite, .url,
+             .uploadAsset, .downloadAsset, .migrateWebsiteAsset:
             true
         case .pdf, .website, .text, .markdown:
             false

@@ -198,6 +198,8 @@ extension StowerRepository {
                 try SavedWebsiteArchiveSyncTable.find(id).delete().execute(db)
                 try SavedPDFContentSyncTable.find(id).delete().execute(db)
                 try SavedTextContentSyncTable.find(id).delete().execute(db)
+                try SavedAssetManifestSyncTable.where { $0.itemID.eq(id) }.delete().execute(db)
+                try ItemStorageLocalTable.find(id).delete().execute(db)
                 try SavedItemSyncTable.find(id).delete().execute(db)
             }
             scheduleSync()
@@ -230,6 +232,8 @@ extension StowerRepository {
                     try SavedWebsiteArchiveSyncTable.where { $0.id.in(ids) }.delete().execute(db)
                     try SavedPDFContentSyncTable.where { $0.id.in(ids) }.delete().execute(db)
                     try SavedTextContentSyncTable.where { $0.id.in(ids) }.delete().execute(db)
+                    try SavedAssetManifestSyncTable.where { $0.itemID.in(ids) }.delete().execute(db)
+                    try ItemStorageLocalTable.where { $0.itemID.in(ids) }.delete().execute(db)
                     try SavedItemSyncTable.where { $0.id.in(ids) }.delete().execute(db)
                 }
                 return ids

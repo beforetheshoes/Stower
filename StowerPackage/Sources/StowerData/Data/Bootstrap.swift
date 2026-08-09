@@ -270,6 +270,9 @@ public enum StowerDatabase {
         migrator.registerMigration("add-orphan-candidate-quarantine") { db in
             try migration_v17(db)
         }
+        migrator.registerMigration("add-cloud-asset-store") { db in
+            try migration_v18(db)
+        }
         try migrator.migrate(database)
     }
 
@@ -788,6 +791,41 @@ public enum StowerDatabase {
             """)
     }
 
+    /// Cloud asset store: synced manifests for heavy payloads that live as
+    /// app-managed CKRecords in their own zone, plus local-only per-item
+    /// storage state (pin/LRU/upload) and the single-row offload policy.
+    /// UUID primary keys and no unique indexes on the synced table, per the
+    /// SyncEngine safety rules.
+    private static func migration_v18(_ db: Database) throws {
+        try db.execute(sql: """
+            CREATE TABLE IF NOT EXISTS "savedAssetManifestSyncTables" (
+              "id" TEXT PRIMARY KEY NOT NULL, "itemID" TEXT NOT NULL,
+              "kind" TEXT NOT NULL DEFAULT '', "recordName" TEXT NOT NULL DEFAULT '',
+              "sha256" TEXT NOT NULL DEFAULT '', "byteCount" INTEGER NOT NULL DEFAULT 0,
+              "originalFilename" TEXT NOT NULL DEFAULT '', "createdAt" TEXT NOT NULL,
+              "updatedAt" TEXT NOT NULL
+            ) STRICT
+            """)
+        try db.execute(sql: #"CREATE INDEX IF NOT EXISTS "idx_savedAssetManifestSyncTables_itemID" ON "savedAssetManifestSyncTables"("itemID")"#)
+        try db.execute(sql: """
+            CREATE TABLE IF NOT EXISTS "itemStorageLocalTables" (
+              "itemID" TEXT PRIMARY KEY NOT NULL,
+              "isPinned" INTEGER NOT NULL DEFAULT 0,
+              "lastOpenedAt" TEXT,
+              "uploadState" TEXT NOT NULL DEFAULT 'pending',
+              "offloadedAt" TEXT,
+              "updatedAt" TEXT NOT NULL
+            ) STRICT
+            """)
+        try db.execute(sql: """
+            CREATE TABLE IF NOT EXISTS "storagePolicyLocalTables" (
+              "id" TEXT PRIMARY KEY NOT NULL,
+              "budgetBytes" INTEGER,
+              "updatedAt" TEXT NOT NULL
+            ) STRICT
+            """)
+    }
+
     private static func migration_v10(_ db: Database) throws {
         do {
             try db.execute(sql: #"ALTER TABLE "savedItemContentLocalTables" ADD COLUMN "rawSourceText" TEXT NOT NULL DEFAULT ''"#)
@@ -855,6 +893,12 @@ extension DependencyValues {
             load: StowerDatabase.makeDiagnosticsLoad(database: database)
         )
         storageMaintenanceClient = .live(database: database)
+        itemStorageClient = .live(database: database)
+        @Dependency(\.context)
+        var context
+        if context == .live {
+            cloudAssetClient = .live(containerIdentifier: StowerDatabase.cloudKitContainerID)
+        }
         stowerRepository = .live(database: database, cloudSyncClient: cloudSyncClient)
     }
 }
