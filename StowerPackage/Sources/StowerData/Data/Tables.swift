@@ -275,3 +275,25 @@ nonisolated public struct IngestionJobLocalTable: Hashable, Identifiable, Sendab
     public var attemptCount: Int = 0
     public var lastError: String?
 }
+
+/// Local-only quarantine for content sync rows whose item row is missing.
+/// During initial CloudKit sync, content rows can arrive before their
+/// `SavedItemSyncTable` row, so an immediate delete would destroy the master
+/// copy of a perfectly live item. Rows sit here until they have been orphaned
+/// continuously for the quarantine window, and are released the moment the
+/// matching item row appears.
+@Table
+nonisolated public struct OrphanCandidateLocalTable: Hashable, Identifiable, Sendable {
+    /// `"{tableName}:{orphanID}"` — one candidate per (table, row) pair.
+    @Column(primaryKey: true)
+    public let key: String
+    public var tableName: String = ""
+    public var orphanID: UUID
+    public var firstSeenAt: Date = .now
+
+    public var id: String { key }
+
+    public static func makeKey(tableName: String, orphanID: UUID) -> String {
+        "\(tableName):\(orphanID.uuidString)"
+    }
+}

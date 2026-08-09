@@ -30,6 +30,7 @@ enum ArticleCapturePackage {
     static let documentFilename = "document.json"
     static let plainTextFilename = "plain.txt"
     static let installedPackageFilename = "capture.zip"
+    static let captureDirectoryName = "web-capture-v1"
 
     static func stage(
         captureID: UUID,
@@ -139,10 +140,9 @@ enum ArticleCapturePackage {
         guard metadata.captureID == expectedCaptureID, metadata.version == captureVersion else {
             throw ArticleCapturePackageError.wrongCapture
         }
-        try packageData.write(
-            to: extractedDirectory.appendingPathComponent(installedPackageFilename),
-            options: .atomic
-        )
+        // The package zip is deliberately NOT copied into the installed
+        // directory: its bytes already live in the synced capture chunk rows,
+        // so an on-disk copy would store every article a third time.
 
         try fileManager.createDirectory(at: itemDirectory, withIntermediateDirectories: true)
         if fileManager.fileExists(atPath: destination.path) {
@@ -201,7 +201,7 @@ enum ArticleCapturePackage {
 
     static func captureDirectory(for itemID: UUID) -> URL {
         AssetArchiver.archiveDirectory(for: itemID)
-            .appendingPathComponent("web-capture-v1", isDirectory: true)
+            .appendingPathComponent(captureDirectoryName, isDirectory: true)
     }
 
     static func archiveURL(for itemID: UUID, original: Bool) -> URL? {

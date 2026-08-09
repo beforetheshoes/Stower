@@ -109,6 +109,10 @@ public struct SettingsScreen: View {
                 )
             }
 
+            StorageSectionView(
+                store: store.scope(state: \.storage, action: \.storage)
+            )
+
             if let error = store.errorMessage {
                 CopyableText(text: error, font: .body, textColor: palette.error)
             }

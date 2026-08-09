@@ -267,6 +267,9 @@ public enum StowerDatabase {
         migrator.registerMigration("add-versioned-web-article-captures") { db in
             try migration_v16(db)
         }
+        migrator.registerMigration("add-orphan-candidate-quarantine") { db in
+            try migration_v17(db)
+        }
         try migrator.migrate(database)
     }
 
@@ -770,6 +773,21 @@ public enum StowerDatabase {
         try db.execute(sql: #"CREATE INDEX IF NOT EXISTS "idx_savedArticleCaptureChunkSyncTables_itemID" ON "savedArticleCaptureChunkSyncTables"("itemID")"#)
     }
 
+    /// Schema-only: quarantine bookkeeping for the orphaned-sync-row sweep in
+    /// `StorageMaintenanceClient`. All destructive cleanup runs at maintenance
+    /// time, never inside a migration, so it can be gated on sync health and
+    /// re-run safely.
+    private static func migration_v17(_ db: Database) throws {
+        try db.execute(sql: """
+            CREATE TABLE IF NOT EXISTS "orphanCandidateLocalTables" (
+              "key" TEXT PRIMARY KEY NOT NULL,
+              "tableName" TEXT NOT NULL,
+              "orphanID" TEXT NOT NULL,
+              "firstSeenAt" TEXT NOT NULL
+            ) STRICT
+            """)
+    }
+
     private static func migration_v10(_ db: Database) throws {
         do {
             try db.execute(sql: #"ALTER TABLE "savedItemContentLocalTables" ADD COLUMN "rawSourceText" TEXT NOT NULL DEFAULT ''"#)
@@ -836,6 +854,7 @@ extension DependencyValues {
         syncDiagnosticsClient = SyncDiagnosticsClient(
             load: StowerDatabase.makeDiagnosticsLoad(database: database)
         )
+        storageMaintenanceClient = .live(database: database)
         stowerRepository = .live(database: database, cloudSyncClient: cloudSyncClient)
     }
 }

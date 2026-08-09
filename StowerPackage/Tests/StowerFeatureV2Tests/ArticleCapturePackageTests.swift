@@ -30,6 +30,13 @@ struct ArticleCapturePackageTests {
         #expect(try Data(contentsOf: readerURL) == Data("reader archive".utf8))
         #expect(try Data(contentsOf: originalURL) == Data("original archive".utf8))
         #expect(ArticleCapturePackage.metadata(for: itemID)?.completeness == .partial)
+
+        // The package zip must not be duplicated into the installed directory;
+        // its bytes are already retained as synced capture chunks.
+        let installedZip = readerURL
+            .deletingLastPathComponent()
+            .appendingPathComponent(ArticleCapturePackage.installedPackageFilename)
+        #expect(!FileManager.default.fileExists(atPath: installedZip.path))
     }
 
     @Test

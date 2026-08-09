@@ -149,6 +149,8 @@ public struct AppFeature {
     var date
     @Dependency(\.ingestionCoordinator)
     var ingestionCoordinator
+    @Dependency(\.storageUsageClient)
+    var storageUsageClient
     @Dependency(\.context)
     var context
 
@@ -176,6 +178,7 @@ public struct AppFeature {
                 let textIngestionClient = self.textIngestionClient
                 let date = self.date
                 let ingestionCoordinator = self.ingestionCoordinator
+                let storageUsageClient = self.storageUsageClient
                 let clock = self.clock
                 let periodicSync: EffectOf<Self> =
                     context == .live
@@ -241,6 +244,21 @@ public struct AppFeature {
                             await send(.startupFinished)
                             await send(.library(.reload))
                             await send(.settings(.load))
+                            // Storage maintenance runs last so it never delays
+                            // startup, and only every few days. Sweeps are
+                            // age-gated and the orphan sweep quarantines for a
+                            // week before deleting, so running shortly after a
+                            // fresh install is safe.
+                            let defaults = UserDefaults.standard
+                            let lastMaintenance = defaults.object(
+                                forKey: "lastStorageMaintenanceDate"
+                            ) as? Date
+                            let isDue = lastMaintenance
+                                .map { date.now.timeIntervalSince($0) >= 3 * 24 * 3600 } ?? true
+                            if isDue {
+                                _ = try? await storageUsageClient.runMaintenance(.periodic)
+                                defaults.set(date.now, forKey: "lastStorageMaintenanceDate")
+                            }
                         } catch where error.isDatabaseSuspension {
                             // Backgrounded mid-startup. Not a failure worth
                             // reporting — startup re-runs on the next
