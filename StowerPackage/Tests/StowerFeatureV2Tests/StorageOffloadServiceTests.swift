@@ -16,6 +16,7 @@ struct StorageOffloadServiceTests {
         uploadState: String = "uploaded",
         offloadedAt: Date? = nil,
         hasCaptureManifest: Bool = false,
+        hasCaptureChunks: Bool = false,
         manifestKinds: [CloudAssetKind] = []
     ) -> ItemStorageInfo {
         let itemID = UUID()
@@ -27,6 +28,7 @@ struct StorageOffloadServiceTests {
             uploadState: uploadState,
             offloadedAt: offloadedAt,
             hasCaptureManifest: hasCaptureManifest,
+            hasCaptureChunks: hasCaptureChunks,
             assetManifests: manifestKinds.map {
                 AssetManifest(
                     id: UUID(),
@@ -54,8 +56,30 @@ struct StorageOffloadServiceTests {
         #expect(StorageOffloadService.canOffload(
             makeInfo(renderFormat: "webView", manifestKinds: [.websiteZip])
         ))
-        // Interactive captures restore from local chunks — no manifest needed.
+        // Legacy interactive captures restore from local chunk rows — no
+        // asset needed.
         #expect(StorageOffloadService.canOffload(
+            makeInfo(
+                renderFormat: "webView",
+                uploadState: "pending",
+                hasCaptureManifest: true,
+                hasCaptureChunks: true
+            )
+        ))
+        // Asset-store captures need the confirmed upload.
+        #expect(StorageOffloadService.canOffload(
+            makeInfo(renderFormat: "webView", hasCaptureManifest: true, manifestKinds: [.capture])
+        ))
+        #expect(!StorageOffloadService.canOffload(
+            makeInfo(
+                renderFormat: "webView",
+                uploadState: "pending",
+                hasCaptureManifest: true,
+                manifestKinds: [.capture]
+            )
+        ))
+        // A chunkless capture whose upload never happened is stuck local.
+        #expect(!StorageOffloadService.canOffload(
             makeInfo(renderFormat: "webView", uploadState: "pending", hasCaptureManifest: true)
         ))
         // Legacy website imports with neither are NOT offloadable yet.
@@ -93,7 +117,7 @@ struct StorageOffloadServiceTests {
         var store: InMemoryCloudAssetStore
         // Shared across every dependency scope in a test so UUIDs never
         // collide between successive fixture operations.
-        var uuid: UUIDGenerator = .incrementing
+        var uuid = UUIDGenerator { UUID() }
     }
 
     private func makeFixture() throws -> Fixture {

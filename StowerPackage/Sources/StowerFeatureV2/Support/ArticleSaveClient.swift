@@ -68,7 +68,16 @@ public struct ArticleSaveClient: Sendable {
             // Exact synced bytes always win. A source refetch is reserved for
             // legacy rows with no capture manifest.
             if let synced = try await repository.loadArticleCapture(itemID) {
-                let packageData = try ArticleCapturePackage.reconstruct(synced)
+                let packageData: Data
+                if synced.manifest.chunkCount > 0 {
+                    packageData = try ArticleCapturePackage.reconstruct(synced)
+                } else {
+                    // `chunkCount == 0`: the package lives in the CloudKit
+                    // asset store. Download failures throw rather than fall
+                    // through to a live refetch — a refetch would silently
+                    // replace the exact capture with a new one.
+                    packageData = try await downloadCapturePackage(manifest: synced.manifest)
+                }
                 try ArticleCapturePackage.install(
                     packageData: packageData,
                     expectedHash: synced.manifest.sha256,
@@ -103,6 +112,35 @@ public struct ArticleSaveClient: Sendable {
         }
     )
 
+    /// Fetches an asset-store capture package and verifies it against the
+    /// synced capture manifest. The asset-manifest row usually names the
+    /// record, but the name is also derivable from the capture manifest —
+    /// so hydration works even when the asset-manifest row hasn't synced yet.
+    private static func downloadCapturePackage(manifest: WebCaptureManifest) async throws -> Data {
+        @Dependency(\.cloudAssetClient)
+        var cloudAssetClient
+        @Dependency(\.itemStorageClient)
+        var itemStorageClient
+        @Dependency(\.uuid)
+        var uuid
+
+        let recordName = (try? await itemStorageClient.manifest(manifest.itemID, .capture))?.recordName
+            ?? AssetManifest.makeRecordName(
+                kind: .capture,
+                itemID: manifest.itemID,
+                sha256: manifest.sha256
+            )
+        let scratch = FileManager.default.temporaryDirectory
+            .appendingPathComponent("StowerCaptureDownload-\(uuid().uuidString).zip")
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        try await cloudAssetClient.download(recordName, scratch)
+        let data = try Data(contentsOf: scratch, options: .mappedIfSafe)
+        guard ArticleCapturePackage.sha256(data) == manifest.sha256 else {
+            throw ArticleCapturePackageError.aggregateHashMismatch
+        }
+        return data
+    }
+
     private static func finish(
         result: IngestionResult,
         item: SavedItem,
@@ -110,11 +148,26 @@ public struct ArticleSaveClient: Sendable {
     ) async throws -> ArticleSaveResult {
         if let artifact = result.webCapture {
             defer { try? FileManager.default.removeItem(at: artifact.stagedPackageURL.deletingLastPathComponent()) }
-            let (manifest, chunks) = try ArticleCapturePackage.makeChunks(from: artifact, itemID: item.id)
+            // The package bytes go to the CloudKit asset store, not chunk
+            // rows — only the (small) capture manifest syncs through the
+            // SyncEngine. Other devices verify downloads against its sha.
+            let manifest = try ArticleCapturePackage.makeManifest(from: artifact, itemID: item.id)
             try Task.checkCancellation()
-            try await repository.saveArticleCapture(manifest, chunks)
+            try await repository.saveArticleCapture(manifest, [])
             try Task.checkCancellation()
             try ArticleCapturePackage.install(artifact, for: item.id)
+            // Stage the package beside the installed archive until the upload
+            // job confirms it reached CloudKit.
+            let pendingZip = CloudAssetService.pendingUploadCaptureURL(for: item.id)
+            try? FileManager.default.removeItem(at: pendingZip)
+            try FileManager.default.copyItem(at: artifact.stagedPackageURL, to: pendingZip)
+            if let payload = try? AssetJobPayload(
+                itemID: item.id,
+                kind: .capture,
+                originalFilename: ArticleCapturePackage.installedPackageFilename
+            ).encoded() {
+                try? await repository.enqueueIngestionJob(.uploadAsset, payload)
+            }
             try await repository.markArticleCaptureInstalled(item.id, artifact.captureID, artifact.version)
             let installedItem = try await repository.loadItem(item.id) ?? item
             return ArticleSaveResult(

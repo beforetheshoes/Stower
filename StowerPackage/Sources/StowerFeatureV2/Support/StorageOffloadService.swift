@@ -35,8 +35,15 @@ public enum StorageOffloadService {
             if info.assetManifests.contains(where: { $0.kind == .websiteZip }) {
                 return info.uploadState == "uploaded"
             }
-            // Interactive URL articles reinstall from local capture chunks.
-            return info.hasCaptureManifest
+            // Interactive URL articles restore from local chunk rows when the
+            // capture predates the asset store, or from the confirmed asset
+            // record after it.
+            guard info.hasCaptureManifest else { return false }
+            if info.hasCaptureChunks {
+                return true
+            }
+            return info.assetManifests.contains { $0.kind == .capture }
+                && info.uploadState == "uploaded"
         default:
             return false
         }

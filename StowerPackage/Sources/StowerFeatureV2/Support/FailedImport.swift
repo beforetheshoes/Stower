@@ -70,7 +70,7 @@ public struct FailedImport: Equatable, Identifiable, Sendable {
             // Payloads are JSON envelopes; the raw text is more confusing than
             // helpful, so name the kind instead.
             return job.kind == .markdown ? "Imported Markdown" : "Imported text"
-        case .uploadAsset, .migrateWebsiteAsset:
+        case .uploadAsset, .migrateWebsiteAsset, .migrateCaptureAsset:
             return "iCloud upload"
         case .downloadAsset:
             return "iCloud download"

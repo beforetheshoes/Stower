@@ -182,6 +182,23 @@ enum ArticleCapturePackage {
         )
     }
 
+    /// A `chunkCount == 0` manifest for a capture whose bytes live in the
+    /// CloudKit asset store rather than the chunk sync table.
+    static func makeManifest(from artifact: WebCaptureArtifact, itemID: UUID) throws -> WebCaptureManifest {
+        let packageData = try Data(contentsOf: artifact.stagedPackageURL, options: .mappedIfSafe)
+        guard packageData.count == artifact.byteCount, sha256(packageData) == artifact.sha256 else {
+            throw ArticleCapturePackageError.aggregateHashMismatch
+        }
+        return WebCaptureManifest(
+            itemID: itemID,
+            captureID: artifact.captureID,
+            sha256: artifact.sha256,
+            byteCount: artifact.byteCount,
+            chunkCount: 0,
+            version: artifact.version
+        )
+    }
+
     static func reconstruct(_ capture: SyncedWebCapture) throws -> Data {
         let ordered = capture.chunks.sorted { $0.sequence < $1.sequence }
         guard ordered.count == capture.manifest.chunkCount,

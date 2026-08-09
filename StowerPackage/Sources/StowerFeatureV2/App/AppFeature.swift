@@ -801,6 +801,12 @@ private func processIngestionJob(
                 itemID: payload.itemID,
                 repository: repository
             )
+        case .migrateCaptureAsset:
+            let payload = try AssetJobPayload.decoded(from: job.payload)
+            try await CloudAssetService.migrateCapture(
+                itemID: payload.itemID,
+                repository: repository
+            )
         case .hydrateWebsite:
             // Receive-side: the website archive arrived via CloudKit sync but
             // the site isn't unpacked locally yet. Pull the zip bytes out of

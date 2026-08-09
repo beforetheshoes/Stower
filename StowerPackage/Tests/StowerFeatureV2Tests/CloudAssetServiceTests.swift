@@ -109,7 +109,7 @@ struct CloudAssetServiceTests {
             $0.cloudSyncClient = .noop
             $0.stowerRepository = fixture.repository
             $0.date = .constant(Date(timeIntervalSince1970: 1_700_000_000))
-            $0.uuid = .incrementing
+            $0.uuid = UUIDGenerator { UUID() }
         } operation: {
             try await operation()
         }

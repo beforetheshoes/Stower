@@ -397,6 +397,7 @@ public struct IngestionJob: Equatable, Identifiable, Sendable {
         case uploadAsset = "uploadAsset"
         case downloadAsset = "downloadAsset"
         case migrateWebsiteAsset = "migrateWebsiteAsset"
+        case migrateCaptureAsset = "migrateCaptureAsset"
     }
 
     public let id: UUID
@@ -467,6 +468,10 @@ public enum CloudAssetKind: String, Codable, CaseIterable, Sendable {
     case pdf = "pdf"
     /// The original imported `.zip` of a user-imported website.
     case websiteZip = "websiteZip"
+    /// A web article's `capture.zip` package. Capture manifests with
+    /// `chunkCount == 0` store their bytes here instead of in the chunk
+    /// sync table.
+    case capture = "capture"
 }
 
 /// Payload for `uploadAsset` / `downloadAsset` / `migrateWebsiteAsset` jobs.

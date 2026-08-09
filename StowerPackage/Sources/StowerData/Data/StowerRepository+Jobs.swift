@@ -590,7 +590,7 @@ private extension IngestionJob.Kind {
     var isDeduplicated: Bool {
         switch self {
         case .hydrate, .hydrateText, .hydrateWebsite, .url,
-             .uploadAsset, .downloadAsset, .migrateWebsiteAsset:
+             .uploadAsset, .downloadAsset, .migrateWebsiteAsset, .migrateCaptureAsset:
             true
         case .pdf, .website, .text, .markdown:
             false

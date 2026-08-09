@@ -13,6 +13,9 @@ public struct ItemStorageInfo: Equatable, Sendable, Identifiable {
     public var uploadState: String
     public var offloadedAt: Date?
     public var hasCaptureManifest: Bool
+    /// Whether the capture's bytes still exist as legacy chunk rows in the
+    /// local database (pre-asset-store captures restore from these offline).
+    public var hasCaptureChunks = false
     public var assetManifests = [AssetManifest]()
 
     public var id: UUID { itemID }
@@ -26,6 +29,7 @@ public struct ItemStorageInfo: Equatable, Sendable, Identifiable {
         uploadState: String = "pending",
         offloadedAt: Date? = nil,
         hasCaptureManifest: Bool = false,
+        hasCaptureChunks: Bool = false,
         assetManifests: [AssetManifest] = []
     ) {
         self.itemID = itemID
@@ -36,6 +40,7 @@ public struct ItemStorageInfo: Equatable, Sendable, Identifiable {
         self.uploadState = uploadState
         self.offloadedAt = offloadedAt
         self.hasCaptureManifest = hasCaptureManifest
+        self.hasCaptureChunks = hasCaptureChunks
         self.assetManifests = assetManifests
     }
 }
@@ -67,6 +72,13 @@ public struct ItemStorageClient: Sendable {
     public var pdfItemIDsWithoutManifest: @Sendable () async throws -> [UUID]
     /// Items still carrying a legacy `zipData` sync row — migration targets.
     public var websiteZipItemIDsWithoutManifest: @Sendable () async throws -> [UUID]
+    /// Live items whose capture still stores its bytes as chunk rows —
+    /// capture-migration targets.
+    public var captureItemIDsWithChunks: @Sendable () async throws -> [UUID]
+    /// Deletes an item's chunk rows and stamps its capture manifest with
+    /// `chunkCount = 0`. Callers MUST have confirmed the asset upload first —
+    /// the chunk deletion propagates to every device.
+    public var markCaptureMigrated: @Sendable (_ itemID: UUID) async throws -> Void
 
     public static let noop = Self(
         upsertManifest: { _ in },
@@ -83,7 +95,9 @@ public struct ItemStorageClient: Sendable {
         setBudgetBytes: { _ in },
         replaceWebsiteArchiveWithManifest: { _ in },
         pdfItemIDsWithoutManifest: { [] },
-        websiteZipItemIDsWithoutManifest: { [] }
+        websiteZipItemIDsWithoutManifest: { [] },
+        captureItemIDsWithChunks: { [] },
+        markCaptureMigrated: { _ in }
     )
 
     public init(
@@ -101,7 +115,9 @@ public struct ItemStorageClient: Sendable {
         setBudgetBytes: @escaping @Sendable (Int?) async throws -> Void,
         replaceWebsiteArchiveWithManifest: @escaping @Sendable (AssetManifest) async throws -> Void,
         pdfItemIDsWithoutManifest: @escaping @Sendable () async throws -> [UUID],
-        websiteZipItemIDsWithoutManifest: @escaping @Sendable () async throws -> [UUID]
+        websiteZipItemIDsWithoutManifest: @escaping @Sendable () async throws -> [UUID],
+        captureItemIDsWithChunks: @escaping @Sendable () async throws -> [UUID],
+        markCaptureMigrated: @escaping @Sendable (UUID) async throws -> Void
     ) {
         self.upsertManifest = upsertManifest
         self.manifest = manifest
@@ -118,6 +134,8 @@ public struct ItemStorageClient: Sendable {
         self.replaceWebsiteArchiveWithManifest = replaceWebsiteArchiveWithManifest
         self.pdfItemIDsWithoutManifest = pdfItemIDsWithoutManifest
         self.websiteZipItemIDsWithoutManifest = websiteZipItemIDsWithoutManifest
+        self.captureItemIDsWithChunks = captureItemIDsWithChunks
+        self.markCaptureMigrated = markCaptureMigrated
     }
 }
 
@@ -323,6 +341,38 @@ extension ItemStorageClient {
                     )
                     return zipItemIDs.filter { liveIDs.contains($0) && !manifested.contains($0) }
                 }
+            },
+            captureItemIDsWithChunks: {
+                try await database.read { db in
+                    let chunkedItemIDs = Set(
+                        try SavedArticleCaptureChunkSyncTable
+                            .select(\.itemID)
+                            .fetchAll(db)
+                    )
+                    guard !chunkedItemIDs.isEmpty else { return [] }
+                    return try SavedItemSyncTable
+                        .where { $0.id.in(Array(chunkedItemIDs)) }
+                        .where { $0.deletedAt.is(nil) }
+                        .select(\.id)
+                        .fetchAll(db)
+                }
+            },
+            markCaptureMigrated: { itemID in
+                @Dependency(\.date.now)
+                var now
+                try await database.write { db in
+                    try SavedArticleCaptureChunkSyncTable
+                        .where { $0.itemID.eq(itemID) }
+                        .delete()
+                        .execute(db)
+                    try SavedArticleCaptureSyncTable
+                        .where { $0.itemID.eq(itemID) }
+                        .update {
+                            $0.chunkCount = 0
+                            $0.updatedAt = now
+                        }
+                        .execute(db)
+                }
             }
         )
     }
@@ -369,6 +419,12 @@ extension ItemStorageClient {
                 .select(\.itemID)
                 .fetchAll(db)
         )
+        let chunkedItemIDs = Set(
+            try SavedArticleCaptureChunkSyncTable
+                .where { $0.itemID.in(itemIDs) }
+                .select(\.itemID)
+                .fetchAll(db)
+        )
 
         let contentByID = Dictionary(uniqueKeysWithValues: contents.map { ($0.itemID, $0) })
         let storageByID = Dictionary(uniqueKeysWithValues: storageRows.map { ($0.itemID, $0) })
@@ -385,6 +441,7 @@ extension ItemStorageClient {
                 uploadState: storage?.uploadState ?? "pending",
                 offloadedAt: storage?.offloadedAt,
                 hasCaptureManifest: captureItemIDs.contains(item.id),
+                hasCaptureChunks: chunkedItemIDs.contains(item.id),
                 assetManifests: manifestsByID[item.id] ?? []
             )
         }

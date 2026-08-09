@@ -37,12 +37,86 @@ public enum CloudAssetService {
             .appendingPathComponent("pending-upload.zip")
     }
 
+    /// Where a freshly captured article package waits for its upload job.
+    static func pendingUploadCaptureURL(for itemID: UUID) -> URL {
+        AssetArchiver.archiveDirectory(for: itemID)
+            .appendingPathComponent("pending-upload-capture.zip")
+    }
+
     // MARK: Upload
 
     /// Uploads an item's heavy payload and records the synced manifest.
     /// Idempotent: record names are content-addressed and re-upserting the
     /// manifest replaces the previous row for (item, kind).
     public static func upload(payload: AssetJobPayload) async throws {
+        @Dependency(\.itemStorageClient)
+        var itemStorageClient
+        @Dependency(\.stowerRepository)
+        var repository
+        @Dependency(\.uuid)
+        var uuid
+
+        let fileURL: URL
+        var cleanupAfterUpload: URL?
+        var scratchToRemove: URL?
+        defer {
+            if let scratchToRemove {
+                try? FileManager.default.removeItem(at: scratchToRemove)
+            }
+        }
+        switch payload.kind {
+        case .pdf:
+            fileURL = PDFArchiver.pdfURL(for: payload.itemID)
+        case .websiteZip:
+            fileURL = pendingUploadZipURL(for: payload.itemID)
+            cleanupAfterUpload = fileURL
+        case .capture:
+            let pending = pendingUploadCaptureURL(for: payload.itemID)
+            if FileManager.default.fileExists(atPath: pending.path) {
+                fileURL = pending
+                cleanupAfterUpload = pending
+            } else if let synced = try await repository.loadArticleCapture(payload.itemID),
+                      synced.manifest.chunkCount > 0 {
+                // The staged copy is gone but the legacy chunk rows still
+                // hold the package — reconstruct and upload from those.
+                let packageData = try ArticleCapturePackage.reconstruct(synced)
+                let scratch = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("StowerCaptureUpload-\(uuid().uuidString).zip")
+                try packageData.write(to: scratch, options: .atomic)
+                fileURL = scratch
+                scratchToRemove = scratch
+            } else {
+                try? await itemStorageClient.setUploadState(payload.itemID, "failed")
+                throw CloudAssetServiceError.missingLocalFile
+            }
+        }
+        guard FileManager.default.fileExists(atPath: fileURL.path) else {
+            // The local source is gone (e.g. re-installed device). Mark the
+            // state so eviction stays blocked, then surface the failure.
+            try? await itemStorageClient.setUploadState(payload.itemID, "failed")
+            throw CloudAssetServiceError.missingLocalFile
+        }
+
+        try await uploadFile(
+            at: fileURL,
+            itemID: payload.itemID,
+            kind: payload.kind,
+            originalFilename: payload.originalFilename ?? fileURL.lastPathComponent
+        )
+        if let cleanupAfterUpload {
+            try? FileManager.default.removeItem(at: cleanupAfterUpload)
+        }
+    }
+
+    /// Shared upload core: content-address, upload, verify, record the
+    /// manifest, mark the item uploaded, and best-effort delete the record a
+    /// re-capture supersedes.
+    private static func uploadFile(
+        at fileURL: URL,
+        itemID: UUID,
+        kind: CloudAssetKind,
+        originalFilename: String
+    ) async throws {
         @Dependency(\.cloudAssetClient)
         var cloudAssetClient
         @Dependency(\.itemStorageClient)
@@ -52,38 +126,18 @@ public enum CloudAssetService {
         @Dependency(\.uuid)
         var uuid
 
-        let fileURL: URL
-        var cleanupAfterUpload: URL?
-        switch payload.kind {
-        case .pdf:
-            fileURL = PDFArchiver.pdfURL(for: payload.itemID)
-        case .websiteZip:
-            fileURL = pendingUploadZipURL(for: payload.itemID)
-            cleanupAfterUpload = fileURL
-        }
-        guard FileManager.default.fileExists(atPath: fileURL.path) else {
-            // The local source is gone (e.g. re-installed device). Mark the
-            // state so eviction stays blocked, then surface the failure.
-            try? await itemStorageClient.setUploadState(payload.itemID, "failed")
-            throw CloudAssetServiceError.missingLocalFile
-        }
-
         let data = try Data(contentsOf: fileURL, options: .mappedIfSafe)
         let sha256 = ArticleCapturePackage.sha256(data)
         let manifest = AssetManifest(
             id: uuid(),
-            itemID: payload.itemID,
-            kind: payload.kind,
-            recordName: AssetManifest.makeRecordName(
-                kind: payload.kind,
-                itemID: payload.itemID,
-                sha256: sha256
-            ),
+            itemID: itemID,
+            kind: kind,
+            recordName: AssetManifest.makeRecordName(kind: kind, itemID: itemID, sha256: sha256),
             sha256: sha256,
             byteCount: data.count,
-            originalFilename: payload.originalFilename
-                ?? fileURL.lastPathComponent
+            originalFilename: originalFilename
         )
+        let superseded = try? await itemStorageClient.manifest(itemID, kind)
 
         do {
             try await cloudAssetClient.upload(manifest, fileURL)
@@ -92,15 +146,15 @@ public enum CloudAssetService {
             }
         } catch {
             if case CloudAssetError.quotaExceeded = error {
-                try? await itemStorageClient.setUploadState(payload.itemID, "failed")
+                try? await itemStorageClient.setUploadState(itemID, "failed")
             }
             throw error
         }
 
         try await itemStorageClient.upsertManifest(manifest)
-        try await itemStorageClient.setUploadState(payload.itemID, "uploaded")
-        if let cleanupAfterUpload {
-            try? FileManager.default.removeItem(at: cleanupAfterUpload)
+        try await itemStorageClient.setUploadState(itemID, "uploaded")
+        if let superseded, superseded.recordName != manifest.recordName {
+            try? await cloudAssetClient.delete(superseded.recordName)
         }
         await cloudSyncClient.scheduleSendChanges()
         kAssetServiceLogger.info("Uploaded \(manifest.recordName, privacy: .public) (\(manifest.byteCount) bytes)")
@@ -157,6 +211,47 @@ public enum CloudAssetService {
         try await itemStorageClient.replaceWebsiteArchiveWithManifest(manifest)
         await cloudSyncClient.scheduleSendChanges()
         kAssetServiceLogger.info("Migrated website zip for \(itemID, privacy: .public) to asset store")
+    }
+
+    /// Moves one legacy capture out of the chunk sync table into the asset
+    /// store. Upload → verify → replace: the chunk rows are only deleted
+    /// (propagating to CloudKit) after the asset record is confirmed. The
+    /// capture manifest row survives with `chunkCount = 0`, which is how
+    /// other devices know the bytes now live in the asset zone.
+    public static func migrateCapture(itemID: UUID, repository: StowerRepository) async throws {
+        @Dependency(\.cloudAssetClient)
+        var cloudAssetClient
+        @Dependency(\.itemStorageClient)
+        var itemStorageClient
+        @Dependency(\.cloudSyncClient)
+        var cloudSyncClient
+        @Dependency(\.uuid)
+        var uuid
+
+        guard let synced = try await repository.loadArticleCapture(itemID),
+              synced.manifest.chunkCount > 0
+        else {
+            // Already migrated or never chunked. Not an error.
+            return
+        }
+
+        let packageData = try ArticleCapturePackage.reconstruct(synced)
+        let scratch = FileManager.default.temporaryDirectory
+            .appendingPathComponent("StowerCaptureMigration-\(uuid().uuidString).zip")
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        try packageData.write(to: scratch, options: .atomic)
+
+        try await uploadFile(
+            at: scratch,
+            itemID: itemID,
+            kind: .capture,
+            originalFilename: ArticleCapturePackage.installedPackageFilename
+        )
+        // uploadFile verified the record exists; only now do the chunk rows
+        // go away.
+        try await itemStorageClient.markCaptureMigrated(itemID)
+        await cloudSyncClient.scheduleSendChanges()
+        kAssetServiceLogger.info("Migrated capture for \(itemID, privacy: .public) to asset store")
     }
 
     // MARK: Download / restore
@@ -292,8 +387,8 @@ public enum CloudAssetService {
     static let websiteMigrationEligibleAfter = Date(timeIntervalSince1970: 1_790_812_800)  // 2026-10-01T00:00:00Z
 
     /// Enqueues upload jobs for PDFs that have never been uploaded and, once
-    /// the gate date passes, migration jobs for legacy website zips.
-    /// Returns the number of jobs enqueued.
+    /// the gate date passes, migration jobs for legacy website zips and
+    /// chunked captures. Returns the number of jobs enqueued.
     @discardableResult
     public static func enqueueBackfillJobs(repository: StowerRepository) async throws -> Int {
         @Dependency(\.itemStorageClient)
@@ -312,6 +407,11 @@ public enum CloudAssetService {
             for itemID in try await itemStorageClient.websiteZipItemIDsWithoutManifest() {
                 let payload = try AssetJobPayload(itemID: itemID, kind: .websiteZip).encoded()
                 try await repository.enqueueIngestionJob(.migrateWebsiteAsset, payload)
+                enqueued += 1
+            }
+            for itemID in try await itemStorageClient.captureItemIDsWithChunks() {
+                let payload = try AssetJobPayload(itemID: itemID, kind: .capture).encoded()
+                try await repository.enqueueIngestionJob(.migrateCaptureAsset, payload)
                 enqueued += 1
             }
         }
