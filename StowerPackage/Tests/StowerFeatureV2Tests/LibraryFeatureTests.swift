@@ -64,6 +64,7 @@ struct LibraryFeatureTests {
             $0.isLoading = false
             $0.items = expected
         }
+        await store.receive(LibraryFeature.Action.storageInfoLoaded([:]))
     }
 
     @Test
@@ -107,6 +108,7 @@ struct LibraryFeatureTests {
             $0.isLoading = false
             $0.items = [readItem]
         }
+        await store.receive(.storageInfoLoaded([:]))
     }
 
     @Test

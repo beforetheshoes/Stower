@@ -30,6 +30,7 @@ enum ArticleCapturePackage {
     static let documentFilename = "document.json"
     static let plainTextFilename = "plain.txt"
     static let installedPackageFilename = "capture.zip"
+    static let captureDirectoryName = "web-capture-v1"
 
     static func stage(
         captureID: UUID,
@@ -139,10 +140,9 @@ enum ArticleCapturePackage {
         guard metadata.captureID == expectedCaptureID, metadata.version == captureVersion else {
             throw ArticleCapturePackageError.wrongCapture
         }
-        try packageData.write(
-            to: extractedDirectory.appendingPathComponent(installedPackageFilename),
-            options: .atomic
-        )
+        // The package zip is deliberately NOT copied into the installed
+        // directory: its bytes already live in the synced capture chunk rows,
+        // so an on-disk copy would store every article a third time.
 
         try fileManager.createDirectory(at: itemDirectory, withIntermediateDirectories: true)
         if fileManager.fileExists(atPath: destination.path) {
@@ -182,6 +182,23 @@ enum ArticleCapturePackage {
         )
     }
 
+    /// A `chunkCount == 0` manifest for a capture whose bytes live in the
+    /// CloudKit asset store rather than the chunk sync table.
+    static func makeManifest(from artifact: WebCaptureArtifact, itemID: UUID) throws -> WebCaptureManifest {
+        let packageData = try Data(contentsOf: artifact.stagedPackageURL, options: .mappedIfSafe)
+        guard packageData.count == artifact.byteCount, sha256(packageData) == artifact.sha256 else {
+            throw ArticleCapturePackageError.aggregateHashMismatch
+        }
+        return WebCaptureManifest(
+            itemID: itemID,
+            captureID: artifact.captureID,
+            sha256: artifact.sha256,
+            byteCount: artifact.byteCount,
+            chunkCount: 0,
+            version: artifact.version
+        )
+    }
+
     static func reconstruct(_ capture: SyncedWebCapture) throws -> Data {
         let ordered = capture.chunks.sorted { $0.sequence < $1.sequence }
         guard ordered.count == capture.manifest.chunkCount,
@@ -201,7 +218,7 @@ enum ArticleCapturePackage {
 
     static func captureDirectory(for itemID: UUID) -> URL {
         AssetArchiver.archiveDirectory(for: itemID)
-            .appendingPathComponent("web-capture-v1", isDirectory: true)
+            .appendingPathComponent(captureDirectoryName, isDirectory: true)
     }
 
     static func archiveURL(for itemID: UUID, original: Bool) -> URL? {

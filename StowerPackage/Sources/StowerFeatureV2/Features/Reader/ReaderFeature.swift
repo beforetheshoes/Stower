@@ -19,6 +19,9 @@ public struct ReaderFeature {
         var ai = ReaderAIFeature.State()
         public var isLoading = false
         public var errorMessage: String?
+        /// Non-idle while an offloaded item's content is being restored from
+        /// iCloud (or reinstalled from local capture chunks).
+        public var offloadRestore: OffloadRestoreState = .idle
         @Presents public var inlineEmbedURL: InlineEmbedFeature.State?
         public var textEditor: TextEditorState?
 
@@ -116,10 +119,18 @@ public struct ReaderFeature {
         }
     }
 
+    public enum OffloadRestoreState: Equatable, Sendable {
+        case idle
+        case restoring
+        case failed(String)
+    }
+
     public enum Action: Equatable {
         case load
         case loaded(SavedItem?, ReaderDocument?, String?)
         case failed(String)
+        case restoreOffloadedContent
+        case offloadRestoreFinished(String?)
 
         case speech(ReaderSpeechFeature.Action)
         case ai(ReaderAIFeature.Action)
@@ -178,6 +189,23 @@ public struct ReaderFeature {
         case readingProgressSave
         case progressPoll
         case articleRefresh
+        case offloadRestore
+    }
+
+    /// True when the item's heavy local files were offloaded (or lost) and
+    /// must be restored before it can render properly.
+    static func needsOffloadRestore(_ item: SavedItem) -> Bool {
+        switch item.renderFormat {
+        case .pdf:
+            return !PDFArchiver.pdfExists(for: item.id)
+        case .webView:
+            if item.captureVersion > 0 {
+                return ArticleCapturePackage.archiveURL(for: item.id, original: true) == nil
+            }
+            return !AssetArchiver.archiveExists(for: item.id)
+        default:
+            return false
+        }
     }
 
     @Dependency(\.stowerRepository)
@@ -258,8 +286,37 @@ public struct ReaderFeature {
                     archiveIfNeeded(item: state.item, sourceHTML: sourceHTML),
                     startProgressPollingEffect(),
                     .send(.ai(.appeared(itemID: state.itemID))),
-                    .send(.loadDisplayPreference)
+                    .send(.loadDisplayPreference),
+                    .send(.restoreOffloadedContent)
                 )
+
+            case .restoreOffloadedContent:
+                guard let item = state.item,
+                      state.offloadRestore != .restoring,
+                      Self.needsOffloadRestore(item)
+                else { return .none }
+                state.offloadRestore = .restoring
+                let repository = self.repository
+                return .run { [itemID = item.id] send in
+                    do {
+                        try await CloudAssetService.restore(itemID: itemID, repository: repository)
+                        await send(.offloadRestoreFinished(nil))
+                    } catch {
+                        await send(.offloadRestoreFinished(error.localizedDescription))
+                    }
+                }
+                .cancellable(id: CancelID.offloadRestore, cancelInFlight: true)
+
+            case .offloadRestoreFinished(let message):
+                if let message {
+                    state.offloadRestore = .failed(message)
+                    return .none
+                }
+                state.offloadRestore = .idle
+                // Force a clean reload so the restored files are picked up.
+                state.document = nil
+                state.sourceHTML = nil
+                return .send(.load)
 
             case .failed(let error):
                 state.isLoading = false

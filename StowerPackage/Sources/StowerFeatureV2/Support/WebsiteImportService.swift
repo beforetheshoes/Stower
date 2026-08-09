@@ -57,10 +57,6 @@ enum WebsiteImportService {
             throw ImportError.sizeCapExceeded(maxCompressedBytes)
         }
 
-        let zipData = try Data(contentsOf: zipURL)
-        let digest = SHA256.hash(data: zipData)
-        let sha256 = digest.map { String(format: "%02x", $0) }.joined()
-
         let filename = zipURL.lastPathComponent
         let fallbackTitle = zipURL.deletingPathExtension().lastPathComponent
             .replacingOccurrences(of: "_", with: " ")
@@ -124,9 +120,22 @@ enum WebsiteImportService {
         )
         try FileManager.default.moveItem(at: staging, to: archiveDir)
 
-        try await repository.saveWebsiteArchive(item.id, zipData, sha256, filename)
+        // The original zip goes to the app-managed CloudKit asset store, not
+        // the SyncEngine BLOB table — asset-store payloads can be offloaded
+        // from a device without deleting the iCloud copy. The zip waits next
+        // to the unpacked archive until the upload job confirms; eviction is
+        // blocked until `uploadState == "uploaded"`.
+        let pendingZip = CloudAssetService.pendingUploadZipURL(for: item.id)
+        try? FileManager.default.removeItem(at: pendingZip)
+        try FileManager.default.copyItem(at: zipURL, to: pendingZip)
+        let uploadPayload = try AssetJobPayload(
+            itemID: item.id,
+            kind: .websiteZip,
+            originalFilename: filename
+        ).encoded()
+        try await repository.enqueueIngestionJob(.uploadAsset, uploadPayload)
         kWebsiteImportLog.info(
-            "Import complete \(item.id.uuidString, privacy: .public)"
+            "Import complete \(item.id.uuidString, privacy: .public); upload queued"
         )
         return item
     }

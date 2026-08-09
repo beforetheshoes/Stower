@@ -252,7 +252,10 @@ private func pdfIngest(url: URL) async throws -> IngestionResult {
 /// Renders a PDF page to a CGImage at `scale`x the page's point size.
 /// Uses CoreGraphics directly so the function works on both iOS and
 /// macOS with no UIKit/AppKit dependency.
-private func rasterizePage(_ page: PDFPage, scale: CGFloat) -> CGImage? {
+///
+/// Internal (not private): `CloudAssetService` re-rasterizes pages with the
+/// exact same pipeline when an offloaded PDF is downloaded again.
+func rasterizePage(_ page: PDFPage, scale: CGFloat) -> CGImage? {
     let bounds = page.bounds(for: .mediaBox)
     let width = Int(bounds.width * scale)
     let height = Int(bounds.height * scale)

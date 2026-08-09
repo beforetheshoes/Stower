@@ -7,8 +7,15 @@ extension StowerRepository {
         scheduleSync: @escaping @Sendable () -> Void
     ) -> @Sendable (WebCaptureManifest, [WebCaptureChunk]) async throws -> Void {
         { manifest, chunks in
-            guard chunks.count == manifest.chunkCount,
-                  chunks.reduce(0, { $0 + $1.data.count }) == manifest.byteCount
+            // `chunkCount == 0` marks an asset-store capture: the manifest
+            // still syncs (it carries the sha/byteCount the receiving device
+            // verifies against), but the bytes live in the CloudKit asset
+            // zone rather than chunk rows, so `byteCount` intentionally
+            // exceeds the (empty) chunk total.
+            let isAssetStoreCapture = manifest.chunkCount == 0 && chunks.isEmpty
+            guard isAssetStoreCapture
+                || (chunks.count == manifest.chunkCount
+                    && chunks.reduce(0, { $0 + $1.data.count }) == manifest.byteCount)
             else {
                 throw ArticleCaptureRepositoryError.incompleteChunkSet
             }

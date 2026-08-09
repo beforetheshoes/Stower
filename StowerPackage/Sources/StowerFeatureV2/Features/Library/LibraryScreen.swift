@@ -66,7 +66,8 @@ public struct LibraryScreen: View {
                         item: item,
                         query: store.query,
                         tags: resolvedTags(for: item),
-                        displayStyle: store.displayStyle
+                        displayStyle: store.displayStyle,
+                        isOffloaded: store.storageInfoByID[item.id]?.offloadedAt != nil
                     )
                 }
                 .buttonStyle(.plain)
@@ -147,6 +148,7 @@ public struct LibraryScreen: View {
                             store.send(.toggleRead(item.id))
                         }
                         tagsSubmenu(for: item)
+                        downloadManagementMenuItems(for: item)
                         Button("Refresh Reader View") {
                             store.send(.reprocessItem(item.id))
                         }
@@ -790,6 +792,41 @@ public struct LibraryScreen: View {
             }
         } label: {
             Label("Tags", systemImage: "tag")
+        }
+    }
+
+    // MARK: - Download Management
+
+    /// Context-menu entries for items whose heavy content can live in
+    /// iCloud: PDFs, website imports, and interactive captures. Regular
+    /// articles get no entries — their content always stays local.
+    @ViewBuilder
+    private func downloadManagementMenuItems(for item: SavedItem) -> some View {
+        if let info = store.storageInfoByID[item.id] {
+            if info.offloadedAt != nil {
+                Button {
+                    store.send(.downloadNow(item.id))
+                } label: {
+                    Label("Download Now", systemImage: "icloud.and.arrow.down")
+                }
+            } else if StorageOffloadService.canOffload(info) {
+                Button {
+                    store.send(.removeDownload(item.id))
+                } label: {
+                    Label("Remove Download", systemImage: "xmark.icloud")
+                }
+            }
+            if info.offloadedAt != nil || StorageOffloadService.canOffload(info) || info.isPinned {
+                Button {
+                    store.send(.setPinned(item.id, !info.isPinned))
+                } label: {
+                    if info.isPinned {
+                        Label("Keep Downloaded", systemImage: "checkmark")
+                    } else {
+                        Text("Keep Downloaded")
+                    }
+                }
+            }
         }
     }
 

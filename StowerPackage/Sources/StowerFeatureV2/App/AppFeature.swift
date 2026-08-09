@@ -149,6 +149,12 @@ public struct AppFeature {
     var date
     @Dependency(\.ingestionCoordinator)
     var ingestionCoordinator
+    @Dependency(\.storageUsageClient)
+    var storageUsageClient
+    @Dependency(\.itemStorageClient)
+    var itemStorageClient
+    @Dependency(\.cloudAssetClient)
+    var cloudAssetClient
     @Dependency(\.context)
     var context
 
@@ -176,6 +182,8 @@ public struct AppFeature {
                 let textIngestionClient = self.textIngestionClient
                 let date = self.date
                 let ingestionCoordinator = self.ingestionCoordinator
+                let storageUsageClient = self.storageUsageClient
+                let openReaderItemID = state.reader?.itemID
                 let clock = self.clock
                 let periodicSync: EffectOf<Self> =
                     context == .live
@@ -211,9 +219,20 @@ public struct AppFeature {
                     // Sidebar subscription: loads counts + tags and listens for changes.
                     .send(.sidebar(.onAppear)),
                     // Purge expired trash items (fire-and-forget).
-                    .run { _ in
+                    .run { [itemStorageClient, cloudAssetClient] _ in
+                        // Snapshot trash manifests first: the purge deletes the
+                        // manifest rows, and the CloudKit asset records can
+                        // only be cleaned up by record name.
+                        let trashedIDs = (try? await repository.fetchLibrary(.recentlyDeleted))?.map(\.id) ?? []
+                        let manifestsByItem = Dictionary(
+                            grouping: (try? await itemStorageClient.manifests(trashedIDs)) ?? [],
+                            by: \.itemID
+                        )
                         for itemID in (try? await repository.purgeOldTrash()) ?? [] {
                             AssetArchiver.deleteArchive(for: itemID)
+                            for manifest in manifestsByItem[itemID] ?? [] {
+                                try? await cloudAssetClient.delete(manifest.recordName)
+                            }
                         }
                     },
                     .run { send in
@@ -241,6 +260,40 @@ public struct AppFeature {
                             await send(.startupFinished)
                             await send(.library(.reload))
                             await send(.settings(.load))
+                            // Storage maintenance runs last so it never delays
+                            // startup, and only every few days. Sweeps are
+                            // age-gated and the orphan sweep quarantines for a
+                            // week before deleting, so running shortly after a
+                            // fresh install is safe.
+                            let defaults = UserDefaults.standard
+                            let lastMaintenance = defaults.object(
+                                forKey: "lastStorageMaintenanceDate"
+                            ) as? Date
+                            let isDue = lastMaintenance
+                                .map { date.now.timeIntervalSince($0) >= 3 * 24 * 3600 } ?? true
+                            if isDue {
+                                _ = try? await storageUsageClient.runMaintenance(.periodic)
+                                defaults.set(date.now, forKey: "lastStorageMaintenanceDate")
+                            }
+                            // Cloud-asset backfill: upload PDFs that predate
+                            // the asset store and (past the gate date) migrate
+                            // legacy website zips; then run the budget-based
+                            // eviction pass. All idempotent and cheap when
+                            // there is nothing to do.
+                            if (try? await CloudAssetService.enqueueBackfillJobs(repository: repository)) ?? 0 > 0 {
+                                try? await ingestionCoordinator.run {
+                                    try await processIngestionJobs(
+                                        repository: repository,
+                                        ingestionClient: ingestionClient,
+                                        pdfIngestionClient: pdfIngestionClient,
+                                        textIngestionClient: textIngestionClient
+                                    ) { date.now }
+                                }
+                            }
+                            _ = try? await StorageOffloadService.runEviction(
+                                repository: repository,
+                                excluding: Set([openReaderItemID].compactMap(\.self))
+                            )
                         } catch where error.isDatabaseSuspension {
                             // Backgrounded mid-startup. Not a failure worth
                             // reporting — startup re-runs on the next
@@ -500,7 +553,11 @@ public struct AppFeature {
                     item: item,
                     appearance: state.cachedAppearance
                 )
-                return .none
+                // Recency stamp drives least-recently-opened eviction order.
+                let itemStorageClient = self.itemStorageClient
+                return .run { _ in
+                    try? await itemStorageClient.touchOpened(item.id)
+                }
 
             case .reader(.presented(.backgroundChanged(let bg))):
                 state.cachedAppearance.background = bg
@@ -646,6 +703,13 @@ private func processIngestionJob(
                 let result = try await pdfIngestionClient.ingest(pdfURL)
                 let item = try await repository.createItemFromIngestion(result)
                 try? PDFArchiver.archivePDF(from: pdfURL, itemID: item.id)
+                if let payload = try? AssetJobPayload(
+                    itemID: item.id,
+                    kind: .pdf,
+                    originalFilename: pdfURL.lastPathComponent
+                ).encoded() {
+                    try? await repository.enqueueIngestionJob(.uploadAsset, payload)
+                }
                 try? FileManager.default.removeItem(at: scratchDir)
             } catch {
                 let fallback = pdfURL.deletingPathExtension().lastPathComponent
@@ -725,6 +789,24 @@ private func processIngestionJob(
                 )
                 try? FileManager.default.removeItem(at: scratchDir)
             }
+        case .uploadAsset:
+            let payload = try AssetJobPayload.decoded(from: job.payload)
+            try await CloudAssetService.upload(payload: payload)
+        case .downloadAsset:
+            let payload = try AssetJobPayload.decoded(from: job.payload)
+            try await CloudAssetService.restore(itemID: payload.itemID, repository: repository)
+        case .migrateWebsiteAsset:
+            let payload = try AssetJobPayload.decoded(from: job.payload)
+            try await CloudAssetService.migrateWebsiteZip(
+                itemID: payload.itemID,
+                repository: repository
+            )
+        case .migrateCaptureAsset:
+            let payload = try AssetJobPayload.decoded(from: job.payload)
+            try await CloudAssetService.migrateCapture(
+                itemID: payload.itemID,
+                repository: repository
+            )
         case .hydrateWebsite:
             // Receive-side: the website archive arrived via CloudKit sync but
             // the site isn't unpacked locally yet. Pull the zip bytes out of

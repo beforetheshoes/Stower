@@ -394,6 +394,10 @@ public struct IngestionJob: Equatable, Identifiable, Sendable {
         case pdf = "pdf"
         case website = "website"
         case hydrateWebsite = "hydrateWebsite"
+        case uploadAsset = "uploadAsset"
+        case downloadAsset = "downloadAsset"
+        case migrateWebsiteAsset = "migrateWebsiteAsset"
+        case migrateCaptureAsset = "migrateCaptureAsset"
     }
 
     public let id: UUID
@@ -455,5 +459,75 @@ public struct WebsiteHydrationPayload: Codable, Equatable, Sendable {
 
     public init(itemID: UUID) {
         self.itemID = itemID
+    }
+}
+
+/// Payload kinds stored in the app-managed CloudKit asset zone.
+public enum CloudAssetKind: String, Codable, CaseIterable, Sendable {
+    /// The original `document.pdf` bytes of a PDF item.
+    case pdf = "pdf"
+    /// The original imported `.zip` of a user-imported website.
+    case websiteZip = "websiteZip"
+    /// A web article's `capture.zip` package. Capture manifests with
+    /// `chunkCount == 0` store their bytes here instead of in the chunk
+    /// sync table.
+    case capture = "capture"
+}
+
+/// Payload for `uploadAsset` / `downloadAsset` / `migrateWebsiteAsset` jobs.
+public struct AssetJobPayload: Codable, Equatable, Sendable {
+    public var itemID: UUID
+    public var kind: CloudAssetKind
+    /// Carried through upload jobs so the manifest can preserve the name the
+    /// user's file had at import time.
+    public var originalFilename: String?
+
+    public init(itemID: UUID, kind: CloudAssetKind, originalFilename: String? = nil) {
+        self.itemID = itemID
+        self.kind = kind
+        self.originalFilename = originalFilename
+    }
+
+    public func encoded() throws -> String {
+        String(bytes: try JSONEncoder().encode(self), encoding: .utf8) ?? ""
+    }
+
+    public static func decoded(from payload: String) throws -> Self {
+        try JSONDecoder().decode(Self.self, from: Data(payload.utf8))
+    }
+}
+
+/// Domain view of a `SavedAssetManifestSyncTable` row.
+public struct AssetManifest: Equatable, Sendable, Identifiable {
+    public var id: UUID
+    public var itemID: UUID
+    public var kind: CloudAssetKind
+    public var recordName: String
+    public var sha256: String
+    public var byteCount: Int
+    public var originalFilename: String
+
+    public init(
+        id: UUID,
+        itemID: UUID,
+        kind: CloudAssetKind,
+        recordName: String,
+        sha256: String,
+        byteCount: Int,
+        originalFilename: String
+    ) {
+        self.id = id
+        self.itemID = itemID
+        self.kind = kind
+        self.recordName = recordName
+        self.sha256 = sha256
+        self.byteCount = byteCount
+        self.originalFilename = originalFilename
+    }
+
+    /// Deterministic record name: two devices holding identical content
+    /// produce the same record, making concurrent uploads conflict-free.
+    public static func makeRecordName(kind: CloudAssetKind, itemID: UUID, sha256: String) -> String {
+        "asset-\(kind.rawValue)-\(itemID.uuidString)-\(String(sha256.prefix(16)))"
     }
 }

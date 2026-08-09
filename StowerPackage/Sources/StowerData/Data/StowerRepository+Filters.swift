@@ -191,6 +191,15 @@ extension StowerRepository {
                 try ItemTagSyncTable.where { $0.itemID.eq(id) }.delete().execute(db)
                 try SavedArticleCaptureChunkSyncTable.where { $0.itemID.eq(id) }.delete().execute(db)
                 try SavedArticleCaptureSyncTable.where { $0.itemID.eq(id) }.delete().execute(db)
+                // Content sync tables key their `id` on the item's ID and have no
+                // foreign keys, so they must be deleted explicitly or their rows
+                // (including multi-hundred-MB website zips) outlive the item in
+                // both the local database and CloudKit.
+                try SavedWebsiteArchiveSyncTable.find(id).delete().execute(db)
+                try SavedPDFContentSyncTable.find(id).delete().execute(db)
+                try SavedTextContentSyncTable.find(id).delete().execute(db)
+                try SavedAssetManifestSyncTable.where { $0.itemID.eq(id) }.delete().execute(db)
+                try ItemStorageLocalTable.find(id).delete().execute(db)
                 try SavedItemSyncTable.find(id).delete().execute(db)
             }
             scheduleSync()
@@ -218,6 +227,13 @@ extension StowerRepository {
                     try ItemTagSyncTable.where { $0.itemID.in(ids) }.delete().execute(db)
                     try SavedArticleCaptureChunkSyncTable.where { $0.itemID.in(ids) }.delete().execute(db)
                     try SavedArticleCaptureSyncTable.where { $0.itemID.in(ids) }.delete().execute(db)
+                    // See _permanentlyDelete: content sync tables have no foreign
+                    // keys and must be cleared explicitly to avoid orphaned blobs.
+                    try SavedWebsiteArchiveSyncTable.where { $0.id.in(ids) }.delete().execute(db)
+                    try SavedPDFContentSyncTable.where { $0.id.in(ids) }.delete().execute(db)
+                    try SavedTextContentSyncTable.where { $0.id.in(ids) }.delete().execute(db)
+                    try SavedAssetManifestSyncTable.where { $0.itemID.in(ids) }.delete().execute(db)
+                    try ItemStorageLocalTable.where { $0.itemID.in(ids) }.delete().execute(db)
                     try SavedItemSyncTable.where { $0.id.in(ids) }.delete().execute(db)
                 }
                 return ids

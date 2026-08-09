@@ -387,7 +387,29 @@ public struct ReaderScreen: View {
     // MARK: - Content
 
     @ViewBuilder private var content: some View {
-        if let item = store.item, hasRenderableContent(for: item) {
+        if store.offloadRestore == .restoring {
+            VStack(spacing: 12) {
+                ProgressView()
+                Text("Downloading from iCloud…")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if case .failed(let message) = store.offloadRestore {
+            VStack(spacing: 12) {
+                Image(systemName: "icloud.slash")
+                    .font(.largeTitle)
+                    .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
+                CopyableText(text: message, font: .callout)
+                Button("Try Again") {
+                    store.send(.restoreOffloadedContent)
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            .padding()
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if let item = store.item, hasRenderableContent(for: item) {
             VStack(spacing: 0) {
                 if item.processingState == .partial {
                     partialCaptureBanner(for: item)

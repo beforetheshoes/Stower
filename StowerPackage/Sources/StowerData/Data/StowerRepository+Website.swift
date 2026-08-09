@@ -80,6 +80,13 @@ extension StowerRepository {
                     // Only enqueue when the item exists and the local archive is missing.
                     guard try SavedItemSyncTable.find(row.id).fetchOne(db) != nil else { continue }
                     if archiveExists(row.id) { continue }
+                    // An offloaded item's archive is missing *on purpose* —
+                    // auto-rehydrating it would undo the offload every sync.
+                    let offloaded = try ItemStorageLocalTable
+                        .find(row.id)
+                        .fetchOne(db)?
+                        .offloadedAt != nil
+                    if offloaded { continue }
 
                     let payload = try String(
                         bytes: JSONEncoder().encode(WebsiteHydrationPayload(itemID: row.id)),

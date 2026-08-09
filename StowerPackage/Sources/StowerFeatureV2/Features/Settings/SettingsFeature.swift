@@ -62,6 +62,7 @@ public struct SettingsFeature {
         public var cloudSyncStatus: CloudSyncStatus = .starting
         public var diagnostics: SyncDiagnostics?
         public var reextraction: LibraryReextractionState = .idle
+        public var storage = StorageFeature.State()
 
         public init() {}
     }
@@ -85,6 +86,8 @@ public struct SettingsFeature {
         case reextractItemFinished(title: String?, succeeded: Bool)
         case reextractCompleted(wasCancelled: Bool)
         case reextractDismissed
+
+        case storage(StorageFeature.Action)
     }
 
     @Dependency(\.stowerRepository)
@@ -97,8 +100,14 @@ public struct SettingsFeature {
     var ingestionCoordinator
 
     public var body: some ReducerOf<Self> {
+        Scope(state: \.storage, action: \.storage) {
+            StorageFeature()
+        }
         Reduce { state, action in
             switch action {
+            case .storage:
+                return .none
+
             case .load:
                 let repository = self.repository
                 return .run { send in
