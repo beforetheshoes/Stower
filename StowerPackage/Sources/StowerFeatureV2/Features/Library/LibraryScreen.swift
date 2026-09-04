@@ -29,6 +29,7 @@ public struct LibraryScreen: View {
     @State private var isTextImportPresented = false
     #if os(iOS)
     @State private var activeImportPicker: IOSImportPicker?
+    @FocusState private var isURLFieldFocused: Bool
     #endif
 
     public init(
@@ -258,13 +259,10 @@ public struct LibraryScreen: View {
         .sheet(isPresented: $isAddURLPresented) {
             addURLSheet
         }
-        // Auto-dismiss the "Add URL" sheet the moment a save succeeds.
-        // `saveURLFinished` transitions `saveState` to `.ready` and clears
-        // `sourceURL`, which is our cue that the new item is in the list.
-        .onChange(of: store.saveState) { _, newValue in
-            if isAddURLPresented, newValue == .ready, store.sourceURL.isEmpty {
-                isAddURLPresented = false
-            }
+        // Dismiss the "Add URL" sheet the moment the link is queued; the
+        // fetch continues in the background and the row arrives on its own.
+        .onChange(of: store.queuedSaveCount) { _, _ in
+            isAddURLPresented = false
         }
         #endif
         .sheet(
@@ -608,6 +606,7 @@ public struct LibraryScreen: View {
                     .textInputAutocapitalization(.never)
                     .keyboardType(.URL)
                     .submitLabel(.go)
+                    .focused($isURLFieldFocused)
                     .onSubmit { store.send(.saveURLTapped) }
                     if store.saveState == .failed, let error = store.errorMessage {
                         // Deliberately a row, not the section footer: a footer
@@ -619,11 +618,19 @@ public struct LibraryScreen: View {
                 } header: {
                     Text("URL")
                 } footer: {
-                    Text("Paste any article URL. Stower will fetch and archive it for offline reading.")
+                    Text("Paste any article URL. Stower saves it in the background and adds it to your Inbox when it is ready.")
                 }
             }
             .navigationTitle("Add URL")
             .navigationBarTitleDisplayMode(.inline)
+            // The field is the whole point of the sheet; put the cursor in it.
+            // `defaultFocus` covers the normal case; the delayed set covers
+            // sheets whose presentation finishes after focus is resolved.
+            .defaultFocus($isURLFieldFocused, true)
+            .task {
+                try? await Task.sleep(for: .milliseconds(350))
+                isURLFieldFocused = true
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {

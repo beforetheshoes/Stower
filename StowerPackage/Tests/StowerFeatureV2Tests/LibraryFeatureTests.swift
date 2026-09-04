@@ -286,98 +286,67 @@ struct LibraryFeatureTests {
     // MARK: - Saving
 
     @Test
-    func browserExtensionSaveDoesNotOpenReader() async throws {
+    func browserExtensionSaveQueuesTheLinkWithoutOpeningReader() async throws {
         let url = try #require(URL(string: "https://example.com/reference"))
-        let item = SavedItem(
-            title: "Reference",
-            content: "Saved for later",
-            sourceURL: url.absoluteString
-        )
-        let result = ArticleSaveResult(item: item, state: .ready, warnings: [])
+        let queued = LockIsolated<[(IngestionJob.Kind, String)]>([])
         let store = TestStore(initialState: LibraryFeature.State()) {
             LibraryFeature()
         } withDependencies: {
-            $0.articleSaveClient.save = { receivedURL in
-                #expect(receivedURL == url)
-                return result
+            $0.stowerRepository.enqueueIngestionJob = { kind, payload in
+                queued.withValue { $0.append((kind, payload)) }
             }
         }
 
-        await store.send(.saveExternalURL(url)) {
-            $0.isSaving = true
-            $0.saveState = .extracting
+        await store.send(.saveExternalURL(url))
+        await store.receive(.urlQueued(url)) {
+            $0.queuedSaveCount = 1
         }
-        await store.receive(.articleSaveFinished(result)) {
-            $0.isSaving = false
-            $0.saveState = .ready
-        }
+        #expect(queued.value.count == 1)
+        #expect(queued.value.first?.0 == .url)
+        #expect(queued.value.first?.1 == url.absoluteString)
     }
 
     @Test
-    func saveURLAddsHttpsWhenSchemeMissing() async {
-        let item = SavedItem(title: "Saved", content: "Body", sourceURL: "https://example.com/post")
-
+    func saveURLAddsHttpsWhenSchemeMissingAndClearsTheField() async throws {
+        let queued = LockIsolated<[String]>([])
         let store = TestStore(initialState: LibraryFeature.State()) {
             LibraryFeature()
         } withDependencies: {
-            $0.urlIngestionClient.ingest = { url in
-                #expect(url.absoluteString == "https://example.com/post")
-                return IngestionResult.sharedText("ok")
+            $0.stowerRepository.enqueueIngestionJob = { _, payload in
+                queued.withValue { $0.append(payload) }
             }
-            $0.stowerRepository.createItemFromIngestion = { _ in item }
         }
 
         await store.send(.sourceURLChanged("example.com/post")) {
             $0.sourceURL = "example.com/post"
         }
-        await store.send(.saveURLTapped) {
-            $0.isSaving = true
-            $0.saveState = .extracting
-        }
-        await store.receive(.articleSaveFinished(ArticleSaveResult(item: item, state: .ready))) {
-            $0.isSaving = false
-            $0.saveState = .ready
+        await store.send(.saveURLTapped)
+        await store.receive(.urlQueued(try #require(URL(string: "https://example.com/post")))) {
             $0.sourceURL = ""
+            $0.queuedSaveCount = 1
         }
-        await store.receive(.openItem(item))
+        #expect(queued.value == ["https://example.com/post"])
     }
 
     @Test
-    func saveURLReportsPartialCaptureAndSpecificWarning() async {
-        let warning = "The lead video was saved as a poster and online launcher."
-        let item = SavedItem(
-            title: "Partial",
-            content: "Meaningful body",
-            sourceURL: "https://example.com/partial",
-            captureVersion: 1,
-            processingState: .partial
-        )
-        let result = ArticleSaveResult(item: item, state: .partial, warnings: [warning])
-
+    func queueFailureIsReportedOnTheForm() async throws {
+        struct QueueError: Error, LocalizedError {
+            var errorDescription: String? { "Database is busy." }
+        }
         let store = TestStore(initialState: LibraryFeature.State()) {
             LibraryFeature()
         } withDependencies: {
-            $0.articleSaveClient = ArticleSaveClient(
-                save: { _ in result },
-                refresh: { _, _ in result },
-                hydrate: { _, _ in result }
-            )
+            $0.stowerRepository.enqueueIngestionJob = { _, _ in throw QueueError() }
         }
 
-        await store.send(.sourceURLChanged("https://example.com/partial")) {
-            $0.sourceURL = "https://example.com/partial"
+        await store.send(.sourceURLChanged("https://example.com/post")) {
+            $0.sourceURL = "https://example.com/post"
         }
-        await store.send(.saveURLTapped) {
-            $0.isSaving = true
-            $0.saveState = .extracting
+        await store.send(.saveURLTapped)
+        await store.receive(.saveURLFailed("Database is busy.")) {
+            $0.saveState = .failed
+            $0.errorMessage = "Database is busy."
         }
-        await store.receive(.articleSaveFinished(result)) {
-            $0.isSaving = false
-            $0.saveState = .partial
-            $0.errorMessage = warning
-            $0.sourceURL = ""
-        }
-        await store.receive(.openItem(item))
     }
 
     @Test

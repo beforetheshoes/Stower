@@ -19,6 +19,9 @@ public struct LibraryFeature {
         public var sourceURL = ""
         public var isSaving = false
         public var saveState: ProcessingState = .queued
+        /// Incremented each time a URL is handed to the ingestion queue; the
+        /// Add URL sheet dismisses when it changes.
+        public var queuedSaveCount = 0
         public var errorMessage: String?
         /// Which list is currently being viewed. Part of the observed query.
         public var filter: LibraryFilter = .unread
@@ -102,8 +105,10 @@ public struct LibraryFeature {
         case sourceURLChanged(String)
         case saveURLTapped
         case saveExternalURL(URL)
+        /// A URL was placed in the ingestion queue. The app reducer drains
+        /// the queue in response.
+        case urlQueued(URL)
         case cancelURLSaveTapped
-        case articleSaveFinished(ArticleSaveResult)
         case saveURLFinished(SavedItem)
         case saveURLFailed(String)
         case importPDFSelected(URL)
@@ -136,7 +141,6 @@ public struct LibraryFeature {
     private enum CancelID: Hashable {
         case load
         case searchDebounce
-        case articleSave
         case articleRefresh
     }
 
@@ -392,21 +396,7 @@ public struct LibraryFeature {
                 }
 
                 state.errorMessage = nil
-                state.isSaving = true
-                state.saveState = .extracting
-                let articleSaveClient = self.articleSaveClient
-                return .run { send in
-                    do {
-                        let saved = try await articleSaveClient.save(url)
-                        await send(.articleSaveFinished(saved))
-                        await send(.openItem(saved.item))
-                    } catch is CancellationError {
-                        return
-                    } catch {
-                        await send(.saveURLFailed(error.localizedDescription))
-                    }
-                }
-                .cancellable(id: CancelID.articleSave, cancelInFlight: true)
+                return enqueueURL(url)
 
             case .saveExternalURL(let url):
                 guard ["http", "https"].contains(url.scheme?.lowercased() ?? "") else {
@@ -414,37 +404,22 @@ public struct LibraryFeature {
                     state.saveState = .failed
                     return .none
                 }
-
                 state.errorMessage = nil
-                state.isSaving = true
-                state.saveState = .extracting
-                let articleSaveClient = self.articleSaveClient
-                return .run { send in
-                    do {
-                        let saved = try await articleSaveClient.save(url)
-                        await send(.articleSaveFinished(saved))
-                    } catch is CancellationError {
-                        return
-                    } catch {
-                        await send(.saveURLFailed(error.localizedDescription))
-                    }
-                }
-                .cancellable(id: CancelID.articleSave, cancelInFlight: true)
+                return enqueueURL(url)
+
+            case .urlQueued:
+                // Saving is asynchronous: the sheet closes, the field clears,
+                // and the row arrives through observation once fetched.
+                state.isSaving = false
+                state.saveState = .queued
+                state.sourceURL = ""
+                state.queuedSaveCount += 1
+                return .none
 
             case .cancelURLSaveTapped:
                 state.isSaving = false
                 state.saveState = .queued
                 state.errorMessage = nil
-                return .cancel(id: CancelID.articleSave)
-
-            case .articleSaveFinished(let result):
-                state.isSaving = false
-                state.saveState = result.state
-                state.errorMessage = result.warnings.isEmpty
-                    ? nil
-                    : result.warnings.joined(separator: "\n")
-                state.sourceURL = ""
-                state.textImportDraft = nil
                 return .none
 
             case .saveURLFinished(let item):
@@ -629,6 +604,21 @@ public struct LibraryFeature {
 
             case .reprocessFinished, .deleteFinished, .openItem:
                 return .none
+            }
+        }
+    }
+
+    /// Hands a URL to the ingestion queue. The fetch itself runs in the
+    /// background (the app reducer drains the queue), so the user is never
+    /// held in a modal while a page loads.
+    private func enqueueURL(_ url: URL) -> EffectOf<Self> {
+        let repository = self.repository
+        return .run { send in
+            do {
+                try await repository.enqueueIngestionJob(.url, url.absoluteString)
+                await send(.urlQueued(url))
+            } catch {
+                await send(.saveURLFailed(error.localizedDescription))
             }
         }
     }

@@ -75,6 +75,6 @@ struct OffloadRestoreFlowTests {
             $0.sourceHTML = nil
         }
         await store.receive(\.load)
-        await store.skipInFlightEffects()
+        await store.finish()
     }
 }

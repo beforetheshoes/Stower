@@ -71,6 +71,9 @@ public struct SidebarScreen: View {
                         .padding(.vertical, 8)
                 }
                 .buttonStyle(.borderless)
+                // A glass footer so rows scrolling beneath it read as
+                // "under a bar" rather than as an overlapping button.
+                .glassEffect(.regular, in: .capsule)
                 .padding(12)
             }
         }

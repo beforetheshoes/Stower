@@ -18,6 +18,9 @@ public struct AppFeature {
         public var startupFinished = false
         public var startupErrorMessage: String?
         public var failedImports = [FailedImport]()
+        /// Number of URL saves queued from this app that are still being
+        /// fetched. Drives the "Saving…" notice.
+        public var pendingSaveCount = 0
         public var recentlyCompletedItem: SavedItem?
         public var cloudSyncStatus: CloudSyncStatus = .starting
         /// The ordered item IDs the reader was opened from. Next/previous
@@ -105,6 +108,7 @@ public struct AppFeature {
         case startupFinished
         case startupFailed(String)
         case failedImportsLoaded([FailedImport])
+        case queuedSaveFinished
         case retryFailedImportsTapped
         case dismissFailedImportsTapped
         case dismissStartupErrorTapped
@@ -241,8 +245,20 @@ public struct AppFeature {
                         }
                     },
                     .run { send in
+                        // Sync is optional. If iCloud is unavailable the app
+                        // still drains shared imports, loads settings, and
+                        // runs maintenance; the sync status shows the problem.
                         do {
                             try await cloudSyncClient.start()
+                        } catch where error.isDatabaseSuspension {
+                            await send(.startupFinished)
+                            return
+                        } catch {
+                            await send(.cloudSyncStatusChanged(
+                                CloudSyncStatus(state: .unavailable(error.localizedDescription))
+                            ))
+                        }
+                        do {
                             _ = try await repository.reconcileOrphanedTagAssignments()
                             // Backfill the text sync table from local content
                             // for any text items missing a sync row (recovery
@@ -324,6 +340,35 @@ public struct AppFeature {
             case .failedImportsLoaded(let imports):
                 state.failedImports = imports
                 return .none
+
+            case .queuedSaveFinished:
+                state.pendingSaveCount = max(0, state.pendingSaveCount - 1)
+                return .none
+
+            case .library(.urlQueued):
+                // The link is in the ingestion queue; fetch it now rather
+                // than at the next launch, and show progress meanwhile. The
+                // row appears through observation as soon as the item exists.
+                state.pendingSaveCount += 1
+                let repository = self.repository
+                let ingestionClient = self.ingestionClient
+                let pdfIngestionClient = self.pdfIngestionClient
+                let textIngestionClient = self.textIngestionClient
+                let date = self.date
+                let ingestionCoordinator = self.ingestionCoordinator
+                return .run { send in
+                    try? await ingestionCoordinator.run {
+                        try await processIngestionJobs(
+                            repository: repository,
+                            ingestionClient: ingestionClient,
+                            pdfIngestionClient: pdfIngestionClient,
+                            textIngestionClient: textIngestionClient
+                        ) { date.now }
+                    }
+                    let jobs = (try? await repository.fetchFailedIngestionJobs()) ?? []
+                    await send(.failedImportsLoaded(FailedImport.list(from: jobs)))
+                    await send(.queuedSaveFinished)
+                }
 
             case .dismissStartupErrorTapped:
                 state.startupErrorMessage = nil

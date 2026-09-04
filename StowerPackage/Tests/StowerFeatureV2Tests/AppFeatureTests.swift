@@ -60,6 +60,7 @@ struct AppFeatureTests {
         await store.send(.readerFocusButtonTapped)
 
         await store.send(.library(.openItem(item))) {
+            $0.library.openItemID = item.id
             $0.readerQueue = [item.id]
             $0.reader = ReaderFeature.State(item: item, appearance: $0.cachedAppearance)
         }
@@ -92,6 +93,7 @@ struct AppFeatureTests {
         // The target is no longer in the observed list (for example it was
         // just marked read in Inbox), so the reader loads it by ID.
         await store.send(.nextArticleButtonTapped) {
+            $0.library.openItemID = second.id
             $0.reader = ReaderFeature.State(itemID: second.id, appearance: $0.cachedAppearance)
         }
         #expect(store.state.canNavigateToPreviousArticle)
@@ -99,6 +101,7 @@ struct AppFeatureTests {
 
         await store.send(.reader(.dismiss)) {
             $0.isReaderFocused = false
+            $0.library.openItemID = nil
             $0.reader = nil
         }
     }
@@ -356,6 +359,82 @@ struct AppFeatureTests {
 
         #expect(createdItems.value == 0)
         #expect(failures.value == ["Queued URL capture failed."])
+    }
+
+    @Test
+    func queuedURLIsFetchedImmediatelyAndProgressIsShown() async throws {
+        let url = try #require(URL(string: "https://example.com/queued"))
+        let queuedJobs = LockIsolated([IngestionJob(kind: .url, payload: url.absoluteString)])
+        let saved = LockIsolated<[URL]>([])
+
+        let store = TestStore(initialState: AppFeature.State()) {
+            AppFeature()
+        } withDependencies: {
+            $0.articleSaveClient.save = { url in
+                saved.withValue { $0.append(url) }
+                return ArticleSaveResult(item: SavedItem(title: "Queued", content: "Body"), state: .ready)
+            }
+            $0.stowerRepository.claimNextIngestionJob = { _ in
+                queuedJobs.withValue { jobs in jobs.isEmpty ? nil : jobs.removeFirst() }
+            }
+            $0.stowerRepository.completeIngestionJob = { _, _ in }
+            $0.stowerRepository.fetchFailedIngestionJobs = { [] }
+            $0.date.now = Date(timeIntervalSince1970: 1000)
+        }
+        store.exhaustivity = .off(showSkippedAssertions: false)
+
+        await store.send(.library(.urlQueued(url))) {
+            $0.pendingSaveCount = 1
+            $0.library.queuedSaveCount = 1
+        }
+        await store.receive(.failedImportsLoaded([]))
+        await store.receive(.queuedSaveFinished) {
+            $0.pendingSaveCount = 0
+        }
+        #expect(saved.value == [url])
+    }
+
+    @Test
+    func syncStartFailureDoesNotBlockStartup() async {
+        struct SyncError: Error, LocalizedError {
+            var errorDescription: String? { "Could not determine iCloud account status" }
+        }
+        let settingsLoaded = LockIsolated(false)
+        let store = TestStore(initialState: AppFeature.State()) {
+            AppFeature()
+        } withDependencies: {
+            $0.cloudSyncClient = CloudSyncClient(
+                start: { throw SyncError() },
+                sendChanges: {},
+                scheduleSendChanges: {},
+                statusStream: { AsyncStream { $0.finish() } }
+            )
+            $0.stowerRepository.claimNextIngestionJob = { _ in nil }
+            $0.stowerRepository.fetchFailedIngestionJobs = { [] }
+            $0.stowerRepository.purgeOldTrash = { [] }
+            $0.stowerRepository.enqueueHydrationJobsForMissingContent = { 0 }
+            $0.stowerRepository.loadSettings = {
+                settingsLoaded.setValue(true)
+                return ImageDownloadSettings(globalAutoDownload: true, askForNewSources: false)
+            }
+            $0.continuousClock = ImmediateClock()
+            $0.date.now = Date(timeIntervalSince1970: 1000)
+            $0.uuid = .incrementing
+            $0.syncDiagnosticsClient = .noop
+        }
+        store.exhaustivity = .off(showSkippedAssertions: false)
+
+        await store.send(.onAppear)
+        await store.receive(.cloudSyncStatusChanged(
+            CloudSyncStatus(state: .unavailable("Could not determine iCloud account status"))
+        ))
+        await store.receive(.startupFinished) {
+            $0.startupFinished = true
+            $0.startupErrorMessage = nil
+        }
+        await store.receive(.settings(.load))
+        await store.finish()
+        #expect(settingsLoaded.value)
     }
 
     @Test

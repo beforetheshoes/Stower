@@ -118,9 +118,6 @@ public struct AppView: View {
             .environment(\.flexokiPalette, palette)
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 VStack(spacing: 0) {
-                    if let completedItem = store.recentlyCompletedItem {
-                        completedItemNotice(completedItem, palette: palette)
-                    }
                     if !store.failedImports.isEmpty {
                         importFailureNotice(imports: store.failedImports, palette: palette)
                     }
@@ -128,6 +125,26 @@ public struct AppView: View {
                         startupFailureNotice(message: message, palette: palette)
                     }
                 }
+            }
+            // Transient notices float over the content instead of insetting
+            // it, so a six-second banner never shoves the list up and back.
+            .overlay(alignment: .bottom) {
+                VStack(spacing: 8) {
+                    if store.pendingSaveCount > 0 {
+                        savingNotice(count: store.pendingSaveCount, palette: palette)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                    }
+                    if let completedItem = store.recentlyCompletedItem {
+                        completedItemNotice(completedItem, palette: palette)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                    }
+                }
+                .frame(maxWidth: 480)
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 12)
+                .padding(.bottom, 8)
+                .animation(.snappy(duration: 0.3), value: store.pendingSaveCount)
+                .animation(.snappy(duration: 0.3), value: store.recentlyCompletedItem?.id)
             }
             .onChange(of: store.reader?.itemID) { _, itemID in
                 if itemID == nil {
@@ -256,6 +273,20 @@ public struct AppView: View {
         .overlay(alignment: .top) { Divider() }
     }
 
+    private func savingNotice(count: Int, palette: FlexokiPalette) -> some View {
+        HStack(spacing: 12) {
+            ProgressView()
+                .controlSize(.small)
+            Text(count == 1 ? "Saving article…" : "Saving \(count) articles…")
+                .font(.callout.weight(.medium))
+            Spacer(minLength: 8)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .glassEffect(.regular, in: .rect(cornerRadius: 14))
+        .accessibilityElement(children: .combine)
+    }
+
     private func completedItemNotice(
         _ item: SavedItem,
         palette: FlexokiPalette
@@ -279,10 +310,9 @@ public struct AppView: View {
             }
             .buttonStyle(.bordered)
         }
-        .padding(.horizontal)
+        .padding(.horizontal, 16)
         .padding(.vertical, 10)
-        .background(.regularMaterial)
-        .overlay(alignment: .top) { Divider() }
+        .glassEffect(.regular, in: .rect(cornerRadius: 14))
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Done. \(item.title) is still saved in Library.")
         .accessibilityAction(named: "Undo") {

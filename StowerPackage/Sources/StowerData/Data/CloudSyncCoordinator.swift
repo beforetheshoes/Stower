@@ -34,6 +34,10 @@ actor CloudSyncCoordinator {
         do {
             try await syncNowImpl()
             emit(CloudSyncStatus(state: .available, lastSyncAttempt: now, lastSyncSuccess: now))
+        } catch is CancellationError {
+            // A newer sync superseded this one. Nothing went wrong, so the
+            // status must not flip to an "Issue" the user would see in Settings.
+            throw CancellationError()
         } catch {
             emit(CloudSyncStatus(state: .error(error.localizedDescription), lastSyncAttempt: now, lastSyncSuccess: nil))
             throw error
