@@ -277,7 +277,10 @@ public struct AppFeature {
                             await send(.failedImportsLoaded(
                                 FailedImport.list(from: try await repository.fetchFailedIngestionJobs())
                             ))
-                            try await cloudSyncClient.sendChanges()
+                            // Best effort: the coordinator reports sync
+                            // problems through the status stream, and a
+                            // failed push is not a failed launch.
+                            try? await cloudSyncClient.sendChanges()
                             await send(.startupFinished)
                             await send(.settings(.load))
                             // Storage maintenance runs last so it never delays

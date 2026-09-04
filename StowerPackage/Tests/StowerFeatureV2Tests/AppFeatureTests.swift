@@ -405,7 +405,7 @@ struct AppFeatureTests {
         } withDependencies: {
             $0.cloudSyncClient = CloudSyncClient(
                 start: { throw SyncError() },
-                sendChanges: {},
+                sendChanges: { throw SyncError() },
                 scheduleSendChanges: {},
                 statusStream: { AsyncStream { $0.finish() } }
             )
