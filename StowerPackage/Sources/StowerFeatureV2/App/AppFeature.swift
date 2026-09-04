@@ -551,6 +551,7 @@ public struct AppFeature {
                 // never run again and the view would fall through its
                 // else-if chain to "Item not found". Leaving the existing
                 // state in place keeps the already-loaded document visible.
+                state.library.openItemID = item.id
                 if state.reader?.itemID == item.id {
                     return .none
                 }
@@ -597,6 +598,7 @@ public struct AppFeature {
                 }
                 state.reader = nil
                 state.isReaderFocused = false
+                state.library.openItemID = nil
 
                 let clock = self.clock
                 let expiration: EffectOf<Self> = wasUnread
@@ -611,6 +613,7 @@ public struct AppFeature {
 
             case .reader(.dismiss):
                 state.isReaderFocused = false
+                state.library.openItemID = nil
                 return .none
 
             case .library, .settings, .reader:
@@ -631,6 +634,7 @@ public struct AppFeature {
         state: inout State
     ) -> EffectOf<Self> {
         guard let targetID = state.readerNavigationTarget(offset: offset) else { return .none }
+        state.library.openItemID = targetID
 
         // Prefer the observed row so the header renders instantly; fall
         // back to a database load when the target has left the current list.

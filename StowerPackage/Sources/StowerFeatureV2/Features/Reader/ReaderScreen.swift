@@ -17,6 +17,9 @@ public struct ReaderScreen: View {
     private var dynamicBodySize: CGFloat = 19
     private let isReaderFocused: Bool
     private let onToggleReaderFocus: (() -> Void)?
+    /// The safe-area insets measured while chrome is visible. Held steady
+    /// while chrome is hidden so the page never reflows under the bar.
+    @State private var readerInsets: ReaderInsets = .zero
 
     /// Shorthand for the current palette tokens. Computed on the fly since
     /// `FlexokiPalette` is a cheap value type and tracking it through
@@ -40,8 +43,8 @@ public struct ReaderScreen: View {
         content
             .background(store.appearance.backgroundColor)
             .safeAreaInset(edge: .top, spacing: 0) {
-                if let progress = store.readingProgress {
-                    readerProgressHeader(progress)
+                if store.showsProgressBar {
+                    readerProgressHeader(fraction: store.progressFraction)
                 }
             }
             .onGeometryChange(for: CGFloat.self) { proxy in
@@ -49,176 +52,35 @@ public struct ReaderScreen: View {
             } action: { newWidth in
                 store.send(.viewportWidthChanged(Double(newWidth)))
             }
+            .onGeometryChange(for: ReaderInsets.self) { proxy in
+                ReaderInsets(top: proxy.safeAreaInsets.top, bottom: proxy.safeAreaInsets.bottom)
+            } action: { newInsets in
+                // Only the visible-chrome insets are kept; the collapse that
+                // comes with hiding the bar must not move the page.
+                if !store.isChromeHidden {
+                    readerInsets = newInsets
+                }
+            }
             // Enables WKWebView's built-in find UI (iOS 26+ / macOS 26+).
             // Binding lets us toggle from the toolbar button below; the
             // system also binds this to its own Find menu item and the
             // Cmd+F keyboard shortcut, so both entry points dismiss the
             // same navigator.
             .findNavigator(isPresented: $session.isFindNavigatorPresented)
-            .navigationTitle("Reader")
-#if os(macOS)
-            .toolbar(store.isChromeHidden ? .hidden : .visible, for: .windowToolbar)
-#else
+            .navigationTitle(store.item?.title ?? "Reader")
+#if os(iOS)
+            .toolbarTitleDisplayMode(.inline)
+            // The reader web view ignores the safe area and pads itself by
+            // `readerInsets`, so hiding the bar leaves the page exactly where
+            // it was.
             .toolbar(store.isChromeHidden ? .hidden : .visible, for: .navigationBar)
+#else
+            .toolbar(store.isChromeHidden ? .hidden : .visible, for: .windowToolbar)
 #endif
             .toolbar {
-                #if os(iOS)
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done", systemImage: "checkmark") {
-                        store.send(.doneTapped)
-                    }
-                    .bold()
-                    .accessibilityHint("Moves this article out of Inbox but keeps it in Library")
-                }
-
-                ToolbarItem(placement: .primaryAction) {
-                    Button("Appearance", systemImage: "textformat.size") {
-                        session.isAppearancePanelPresented.toggle()
-                    }
-                    .popover(isPresented: $session.isAppearancePanelPresented, arrowEdge: .top) {
-                        ReaderAppearanceControls(
-                            appearance: store.appearance,
-                            lineWidthPolicy: store.lineWidthPolicy,
-                            onFontSizeChanged: { store.send(.fontSizeChanged($0)) },
-                            onFontStyleChanged: { store.send(.fontStyleChanged($0)) },
-                            onLineSpacingChanged: { store.send(.lineSpacingChanged($0)) },
-                            onJustificationChanged: { store.send(.justificationChanged($0)) },
-                            onBackgroundChanged: { store.send(.backgroundChanged($0)) },
-                            onPrimaryAccentChanged: { store.send(.primaryAccentChanged($0)) },
-                            onSecondaryAccentChanged: { store.send(.secondaryAccentChanged($0)) },
-                            onLineWidthChanged: { store.send(.lineWidthChanged($0)) },
-                            onDone: { session.isAppearancePanelPresented = false }
-                        )
-                        .frame(width: 400)
-                        .padding(12)
-                        .presentationCompactAdaptation(.popover)
-                    }
-                }
-
-                ToolbarItem(placement: .primaryAction) {
-                    readerMoreMenu
-                }
-                #else
-                ToolbarItem(placement: .primaryAction) {
-                    Button("Done", systemImage: "checkmark") {
-                        store.send(.doneTapped)
-                    }
-                    .bold()
-                    .help("Move out of Inbox and keep in Library")
-                }
-                ToolbarSpacer(.fixed, placement: .automatic)
-
-                if let onToggleReaderFocus {
-                    ToolbarItem(placement: .automatic) {
-                        Button(action: onToggleReaderFocus) {
-                            Label(
-                                isReaderFocused ? "Exit Focus" : "Focus Reader",
-                                systemImage: isReaderFocused
-                                    ? "arrow.down.right.and.arrow.up.left"
-                                    : "arrow.up.left.and.arrow.down.right"
-                            )
-                        }
-                        #if os(iOS)
-                        .keyboardShortcut("f", modifiers: [.command, .shift])
-                        #endif
-                        .help(isReaderFocused ? "Exit reader focus" : "Focus on this article")
-                        .accessibilityIdentifier("reader.focus")
-                    }
-                    .visibilityPriority(.high)
-                }
-
-                // Group 1: mode switching. Available whenever the original
-                // source HTML is on hand so the user can flip to the full
-                // web view — useful for SVG-heavy pages, interactive
-                // embeds, or anything the structured parser strips.
-                if (store.item?.captureVersion ?? 0) > 0 || store.sourceHTML != nil {
-                    ToolbarItem(placement: .automatic) {
-                        switchModeButton
-                    }
-                    .visibilityPriority(.low)
-                    ToolbarSpacer(.fixed, placement: .automatic)
-                }
-
-                // Group 2: content-level actions — Find and (for PDFs) Original PDF.
-                ToolbarItem(placement: .automatic) {
-                    Button {
-                        session.isFindNavigatorPresented.toggle()
-                    } label: {
-                        Label("Find", systemImage: "magnifyingglass")
-                    }
-                    // ⌘F — standard macOS find shortcut. The system's
-                    // own Edit → Find menu item binds to the same
-                    // state via the `findNavigator` modifier above, so
-                    // either entry point toggles the find UI.
-                    .keyboardShortcut("f", modifiers: .command)
-                    .help("Find in reader")
-                }
-                .visibilityPriority(.low)
-                if store.canEditTextSource {
-                    ToolbarItem(placement: .automatic) {
-                        Button {
-                            store.send(.editTextTapped)
-                        } label: {
-                            Label("Edit", systemImage: "square.and.pencil")
-                        }
-                        .help("Edit this text or markdown item")
-                    }
-                    .visibilityPriority(.low)
-                }
-                if store.item?.renderFormat == .pdf {
-                    ToolbarItem(placement: .automatic) {
-                        Button {
-                            session.isPDFViewerPresented = true
-                        } label: {
-                            Label("Original PDF", systemImage: "doc.richtext")
-                        }
-                        .help("Show the original PDF in PDFKit")
-                    }
-                    .visibilityPriority(.low)
-                }
-
-                ToolbarSpacer(.fixed, placement: .automatic)
-
-                // Group 3: reading-assist tools — Listen + AI. These get the
-                // Liquid Glass prominent button style so they read as the
-                // reader's primary floating actions.
-                ToolbarItem(placement: .automatic) {
-                    listenToolbarButton
-                }
-                .visibilityPriority(.high)
-                ToolbarItem(placement: .automatic) {
-                    aiToolbarButton
-                }
-
-                ToolbarSpacer(.fixed, placement: .automatic)
-
-                // Group 4: presentation tweaks.
-                ToolbarItem(placement: .automatic) {
-                    Button {
-                        session.isAppearancePanelPresented.toggle()
-                    } label: {
-                        Label("Appearance", systemImage: "textformat.size")
-                    }
-                    .popover(isPresented: $session.isAppearancePanelPresented, arrowEdge: .top) {
-                        ReaderAppearanceControls(
-                            appearance: store.appearance,
-                            lineWidthPolicy: store.lineWidthPolicy,
-                            onFontSizeChanged: { store.send(.fontSizeChanged($0)) },
-                            onFontStyleChanged: { store.send(.fontStyleChanged($0)) },
-                            onLineSpacingChanged: { store.send(.lineSpacingChanged($0)) },
-                            onJustificationChanged: { store.send(.justificationChanged($0)) },
-                            onBackgroundChanged: { store.send(.backgroundChanged($0)) },
-                            onPrimaryAccentChanged: { store.send(.primaryAccentChanged($0)) },
-                            onSecondaryAccentChanged: { store.send(.secondaryAccentChanged($0)) },
-                            onLineWidthChanged: { store.send(.lineWidthChanged($0)) },
-                            onDone: { session.isAppearancePanelPresented = false }
-                        )
-                        .frame(width: 400)
-                        .padding(12)
-                        .presentationCompactAdaptation(.popover)
-                    }
-                }
-                .visibilityPriority(.low)
+                readerToolbarContent
+                #if os(macOS)
+                readerAssistToolbarContent
                 #endif
             }
             // No custom toolbar background — Liquid Glass paints the
@@ -308,6 +170,173 @@ public struct ReaderScreen: View {
             }
             #endif
     }
+
+    @ToolbarContentBuilder private var readerToolbarContent: some ToolbarContent {
+        #if os(iOS)
+        ToolbarItem(placement: .confirmationAction) {
+            Button("Done", systemImage: "checkmark") {
+                store.send(.doneTapped)
+            }
+            .bold()
+            .accessibilityHint("Moves this article out of Inbox but keeps it in Library")
+        }
+
+        ToolbarItem(placement: .primaryAction) {
+            Button("Appearance", systemImage: "textformat.size") {
+                session.isAppearancePanelPresented.toggle()
+            }
+            .popover(isPresented: $session.isAppearancePanelPresented, arrowEdge: .top) {
+                ReaderAppearanceControls(
+                    appearance: store.appearance,
+                    lineWidthPolicy: store.lineWidthPolicy,
+                    onFontSizeChanged: { store.send(.fontSizeChanged($0)) },
+                    onFontStyleChanged: { store.send(.fontStyleChanged($0)) },
+                    onLineSpacingChanged: { store.send(.lineSpacingChanged($0)) },
+                    onJustificationChanged: { store.send(.justificationChanged($0)) },
+                    onBackgroundChanged: { store.send(.backgroundChanged($0)) },
+                    onPrimaryAccentChanged: { store.send(.primaryAccentChanged($0)) },
+                    onSecondaryAccentChanged: { store.send(.secondaryAccentChanged($0)) },
+                    onLineWidthChanged: { store.send(.lineWidthChanged($0)) },
+                    onDone: { session.isAppearancePanelPresented = false }
+                )
+                .frame(width: 400)
+                .padding(12)
+                .presentationCompactAdaptation(.popover)
+            }
+        }
+
+        ToolbarItem(placement: .primaryAction) {
+            readerMoreMenu
+        }
+        #else
+        ToolbarItem(placement: .primaryAction) {
+            Button("Done", systemImage: "checkmark") {
+                store.send(.doneTapped)
+            }
+            .bold()
+            .help("Move out of Inbox and keep in Library")
+        }
+        ToolbarSpacer(.fixed, placement: .automatic)
+
+        if let onToggleReaderFocus {
+            ToolbarItem(placement: .automatic) {
+                Button(action: onToggleReaderFocus) {
+                    Label(
+                        isReaderFocused ? "Exit Focus" : "Focus Reader",
+                        systemImage: isReaderFocused
+                            ? "arrow.down.right.and.arrow.up.left"
+                            : "arrow.up.left.and.arrow.down.right"
+                    )
+                }
+                #if os(iOS)
+                .keyboardShortcut("f", modifiers: [.command, .shift])
+                #endif
+                .help(isReaderFocused ? "Exit reader focus" : "Focus on this article")
+                .accessibilityIdentifier("reader.focus")
+            }
+            .visibilityPriority(.high)
+        }
+
+        // Group 1: mode switching. Available whenever the original
+        // source HTML is on hand so the user can flip to the full
+        // web view — useful for SVG-heavy pages, interactive
+        // embeds, or anything the structured parser strips.
+        if (store.item?.captureVersion ?? 0) > 0 || store.sourceHTML != nil {
+            ToolbarItem(placement: .automatic) {
+                switchModeButton
+            }
+            .visibilityPriority(.low)
+            ToolbarSpacer(.fixed, placement: .automatic)
+        }
+
+        // Group 2: content-level actions — Find and (for PDFs) Original PDF.
+        ToolbarItem(placement: .automatic) {
+            Button {
+                session.isFindNavigatorPresented.toggle()
+            } label: {
+                Label("Find", systemImage: "magnifyingglass")
+            }
+            // ⌘F — standard macOS find shortcut. The system's
+            // own Edit → Find menu item binds to the same
+            // state via the `findNavigator` modifier above, so
+            // either entry point toggles the find UI.
+            .keyboardShortcut("f", modifiers: .command)
+            .help("Find in reader")
+        }
+        .visibilityPriority(.low)
+        if store.canEditTextSource {
+            ToolbarItem(placement: .automatic) {
+                Button {
+                    store.send(.editTextTapped)
+                } label: {
+                    Label("Edit", systemImage: "square.and.pencil")
+                }
+                .help("Edit this text or markdown item")
+            }
+            .visibilityPriority(.low)
+        }
+        if store.item?.renderFormat == .pdf {
+            ToolbarItem(placement: .automatic) {
+                Button {
+                    session.isPDFViewerPresented = true
+                } label: {
+                    Label("Original PDF", systemImage: "doc.richtext")
+                }
+                .help("Show the original PDF in PDFKit")
+            }
+            .visibilityPriority(.low)
+        }
+
+        ToolbarSpacer(.fixed, placement: .automatic)
+        #endif
+    }
+
+    #if os(macOS)
+    /// The second half of the Mac toolbar, split out because a single
+    /// toolbar builder is limited in how many top-level items it can hold.
+    @ToolbarContentBuilder private var readerAssistToolbarContent: some ToolbarContent {
+        // Group 3: reading-assist tools — Listen + AI. These get the
+        // Liquid Glass prominent button style so they read as the
+        // reader's primary floating actions.
+        ToolbarItem(placement: .automatic) {
+            listenToolbarButton
+        }
+        .visibilityPriority(.high)
+        ToolbarItem(placement: .automatic) {
+            aiToolbarButton
+        }
+
+        ToolbarSpacer(.fixed, placement: .automatic)
+
+        // Group 4: presentation tweaks.
+        ToolbarItem(placement: .automatic) {
+            Button {
+                session.isAppearancePanelPresented.toggle()
+            } label: {
+                Label("Appearance", systemImage: "textformat.size")
+            }
+            .popover(isPresented: $session.isAppearancePanelPresented, arrowEdge: .top) {
+                ReaderAppearanceControls(
+                    appearance: store.appearance,
+                    lineWidthPolicy: store.lineWidthPolicy,
+                    onFontSizeChanged: { store.send(.fontSizeChanged($0)) },
+                    onFontStyleChanged: { store.send(.fontStyleChanged($0)) },
+                    onLineSpacingChanged: { store.send(.lineSpacingChanged($0)) },
+                    onJustificationChanged: { store.send(.justificationChanged($0)) },
+                    onBackgroundChanged: { store.send(.backgroundChanged($0)) },
+                    onPrimaryAccentChanged: { store.send(.primaryAccentChanged($0)) },
+                    onSecondaryAccentChanged: { store.send(.secondaryAccentChanged($0)) },
+                    onLineWidthChanged: { store.send(.lineWidthChanged($0)) },
+                    onDone: { session.isAppearancePanelPresented = false }
+                )
+                .frame(width: 400)
+                .padding(12)
+                .presentationCompactAdaptation(.popover)
+            }
+        }
+        .visibilityPriority(.low)
+    }
+    #endif
 
     #if os(iOS)
     @ViewBuilder private var readerMoreMenu: some View {
@@ -422,6 +451,7 @@ public struct ReaderScreen: View {
                     appearance: store.appearance,
                     fontScale: readerFontScale,
                     viewportWidth: store.viewportWidth,
+                    insets: readerInsets,
                     isWebViewFormat: store.effectiveRenderFormat == .webView,
                     usesNativeCapture: item.captureVersion > 0,
                     highlightedBlockIndex: store.speech.currentBlockIndex,
@@ -434,11 +464,15 @@ public struct ReaderScreen: View {
                     }
                 )
             }
+        } else if store.isLoading {
+            // Nothing but the themed background while the document loads;
+            // a spinner only if it takes long enough to notice. Checked
+            // before the download prompt so an item whose content has not
+            // arrived yet never flashes "Download to read" mid-load.
+            DelayedProgressView()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if let item = store.item, item.content.isEmpty {
             downloadPrompt(item: item)
-        } else if store.isLoading {
-            ProgressView()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if let error = store.errorMessage {
             CopyableText(text: error, font: .body, textColor: store.appearance.palette.error)
                 .padding()
@@ -537,7 +571,9 @@ public struct ReaderScreen: View {
             document: document,
             appearance: store.appearance,
             pageWidth: CGFloat(store.viewportWidth ?? 0),
-            fontScale: readerFontScale
+            fontScale: readerFontScale,
+            restoreBlockIndex: item.lastReadBlockIndex,
+            insets: readerInsets
         )
     }
 
@@ -586,7 +622,7 @@ public struct ReaderScreen: View {
     }
 
     @ViewBuilder
-    private func readerProgressHeader(_ progress: ReadingProgressSnapshot) -> some View {
+    private func readerProgressHeader(fraction: Double) -> some View {
         GeometryReader { geometry in
             let width = max(geometry.size.width, 0)
             ZStack(alignment: .leading) {
@@ -594,12 +630,13 @@ public struct ReaderScreen: View {
                     .fill(palette.ui.opacity(0.3))
                 Rectangle()
                     .fill(palette.primary)
-                    .frame(width: width * progress.fractionComplete)
+                    .frame(width: width * fraction)
+                    .animation(.easeOut(duration: 0.2), value: fraction)
             }
         }
         .frame(height: 3)
         .accessibilityLabel("Reading progress")
-        .accessibilityValue("\(progress.percentComplete) percent")
+        .accessibilityValue("\(Int((fraction * 100).rounded())) percent")
     }
 
     // MARK: - Download prompt
@@ -777,5 +814,24 @@ private struct InlineEmbedScreen: View {
             .ignoresSafeArea()
             .navigationTitle("Embed")
             .task { _ = page.load(URLRequest(url: store.url)) }
+    }
+}
+
+// MARK: - Delayed spinner
+
+/// A spinner that only appears when loading takes long enough to notice,
+/// so quick opens show nothing but the themed background.
+private struct DelayedProgressView: View {
+    @State private var isVisible = false
+
+    var body: some View {
+        ProgressView()
+            .opacity(isVisible ? 1 : 0)
+            .task {
+                try? await Task.sleep(for: .milliseconds(600))
+                withAnimation(.easeIn(duration: 0.2)) {
+                    isVisible = true
+                }
+            }
     }
 }

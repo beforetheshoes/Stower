@@ -12,6 +12,7 @@ struct ReaderNavigationDecider: WebPage.NavigationDeciding {
     var openExternalURL: @MainActor (URL) -> Void
     var openInlineEmbed: @MainActor (String) -> Void
     var toggleChrome: @MainActor () -> Void
+    var reportProgress: @MainActor (Int) -> Void = { _ in }
 
     @MainActor
     mutating func decidePolicy(
@@ -30,9 +31,20 @@ struct ReaderNavigationDecider: WebPage.NavigationDeciding {
             return .cancel
         }
 
-        if url.scheme == "stower-reader",
-           url.host(percentEncoded: false) == "toggle-chrome" {
-            toggleChrome()
+        // In-page runtime events. The SwiftUI `WebPage` API has no script
+        // message handler, so the page navigates to a custom scheme and the
+        // decider turns that into a callback.
+        if url.scheme == "stower-reader" {
+            switch url.host(percentEncoded: false) {
+            case "toggle-chrome":
+                toggleChrome()
+            case "progress":
+                if let index = Self.progressBlockIndex(from: url) {
+                    reportProgress(index)
+                }
+            default:
+                break
+            }
             return .cancel
         }
 
@@ -49,6 +61,15 @@ struct ReaderNavigationDecider: WebPage.NavigationDeciding {
 
         return .allow
     }
+
+    /// Parses `stower-reader://progress?block=N`.
+    static func progressBlockIndex(from url: URL) -> Int? {
+        URLComponents(url: url, resolvingAgainstBaseURL: false)?
+            .queryItems?
+            .first { $0.name == "block" }?
+            .value
+            .flatMap(Int.init)
+    }
 }
 
 // MARK: - WebPage Factory
@@ -61,15 +82,83 @@ enum ReaderWebPageFactory {
     static func makePage(
         openExternalURL: @MainActor @escaping (URL) -> Void,
         openInlineEmbed: @MainActor @escaping (String) -> Void = { _ in },
-        toggleChrome: @MainActor @escaping () -> Void = {}
+        toggleChrome: @MainActor @escaping () -> Void = {},
+        reportProgress: @MainActor @escaping (Int) -> Void = { _ in }
     ) -> WebPage {
         let decider = ReaderNavigationDecider(
             openExternalURL: openExternalURL,
             openInlineEmbed: openInlineEmbed,
-            toggleChrome: toggleChrome
+            toggleChrome: toggleChrome,
+            reportProgress: reportProgress
         )
         return WebPage(navigationDecider: decider)
     }
+
+    /// Reports the topmost visible block to Swift as the user scrolls, and
+    /// re-anchors that block after a reflow (window resize, column-width
+    /// change) so the reading position survives layout changes. Requires
+    /// `stowerGetTopBlockIndex` / `stowerScrollToBlock` on `window`.
+    ///
+    /// Reports are throttled to one every 150 ms and only sent when the
+    /// index changes; each one is a cancelled custom-scheme navigation.
+    static let progressReporterScript = """
+        (function() {
+            if (window.__stowerProgressReporterInstalled) { return; }
+            window.__stowerProgressReporterInstalled = true;
+
+            var lastReported = -1;
+            var anchorIndex = -1;
+            var reportTimer = null;
+            var resizeTimer = null;
+            var lastWidth = window.innerWidth;
+
+            function currentTop() {
+                return typeof window.stowerGetTopBlockIndex === 'function'
+                    ? window.stowerGetTopBlockIndex()
+                    : -1;
+            }
+
+            function report() {
+                reportTimer = null;
+                var idx = currentTop();
+                if (idx < 0) { return; }
+                anchorIndex = idx;
+                if (idx !== lastReported) {
+                    lastReported = idx;
+                    window.location.href = 'stower-reader://progress?block=' + idx;
+                }
+            }
+
+            function schedule() {
+                if (reportTimer === null) { reportTimer = setTimeout(report, 150); }
+            }
+
+            window.addEventListener('scroll', schedule, { passive: true });
+
+            // Only a width change reflows text; height changes (toolbars,
+            // keyboards) keep the layout and must not move the reader.
+            window.addEventListener('resize', function() {
+                if (window.innerWidth === lastWidth) { return; }
+                lastWidth = window.innerWidth;
+                if (resizeTimer !== null) { clearTimeout(resizeTimer); }
+                resizeTimer = setTimeout(function() {
+                    resizeTimer = null;
+                    if (anchorIndex > 0 && typeof window.stowerScrollToBlock === 'function') {
+                        window.stowerScrollToBlock(anchorIndex);
+                    }
+                }, 60);
+            });
+
+            window.stowerSetAnchorBlock = function(index) {
+                if (typeof index === 'number' && index >= 0) {
+                    anchorIndex = index;
+                    lastReported = index;
+                }
+            };
+
+            report();
+        })();
+        """
 
     static let contentTapScript = """
         (function() {
@@ -126,6 +215,13 @@ enum ReaderWebPageFactory {
         _ = try? await page.callJavaScript(script)
     }
 
+    /// Installs scroll reporting on a page whose runtime is already present.
+    /// Safe to call more than once.
+    @MainActor
+    static func installProgressReporter(on page: WebPage) async {
+        _ = try? await page.callJavaScript(progressReporterScript)
+    }
+
     /// Highlights the block with the given index (or clears all highlights if nil).
     @MainActor
     static func runHighlight(_ index: Int?, on page: WebPage) async {
@@ -139,12 +235,17 @@ enum ReaderWebPageFactory {
     }
 
     /// Jumps to a block without animation — used to restore last-read position.
+    /// Also seeds the progress reporter's anchor so the restore is not
+    /// re-reported as a scroll and later reflows re-anchor to this block.
     @MainActor
     static func scrollToBlock(_ index: Int, on page: WebPage) async {
         guard index > 0 else { return }
         let script = """
         if (typeof window.stowerScrollToBlock === 'function') {
             window.stowerScrollToBlock(\(index));
+        }
+        if (typeof window.stowerSetAnchorBlock === 'function') {
+            window.stowerSetAnchorBlock(\(index));
         }
         """
         _ = try? await page.callJavaScript(script)

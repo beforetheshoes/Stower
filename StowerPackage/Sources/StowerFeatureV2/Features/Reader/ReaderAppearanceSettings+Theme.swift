@@ -152,12 +152,38 @@ extension ReaderAppearanceSettings {
     /// CSS string that applies the reader theme to a WebView. All colors are
     /// exposed as CSS custom properties so the shared `<style>` template
     /// reads exactly like the native palette tokens.
-    public func readerCSS(pageWidth: CGFloat, fontScale: Double = 1) -> String {
+    ///
+    /// `insets` are the platform safe-area insets the web view is drawn
+    /// under. The reader view ignores the safe area so that hiding the
+    /// toolbar never resizes the page; instead the bar height becomes body
+    /// padding, a top fade stands in for the system scroll-edge effect, and
+    /// `scroll-padding-top` keeps restored positions from landing under the
+    /// bar.
+    public func readerCSS(
+        pageWidth: CGFloat,
+        fontScale: Double = 1,
+        insets: ReaderInsets = .zero
+    ) -> String {
         let p = palette
         let font = cssFont
         let policy = ReaderLineWidthPolicy(viewportWidth: Double(pageWidth))
         let columnWidth = policy.clamped(lineWidth)
         let colorScheme = p.isDark ? "dark" : "light"
+        let topInset = Int(max(0, insets.top.rounded()))
+        let bottomInset = Int(max(0, insets.bottom.rounded()))
+        let topFade = topInset > 0
+            ? """
+            body::before {
+              content: "";
+              position: fixed;
+              top: 0; left: 0; right: 0;
+              height: \(topInset)px;
+              pointer-events: none;
+              z-index: 2147483647;
+              background: linear-gradient(to bottom, var(--stower-bg) 0%, var(--stower-bg) 55%, transparent 100%);
+            }
+            """
+            : ""
 
         return """
         :root {
@@ -189,10 +215,14 @@ extension ReaderAppearanceSettings {
           word-break: break-word;
           text-align: \(justification == .justified ? "justify" : "left") !important;
         }
+        html {
+          scroll-padding-top: \(topInset + 8)px !important;
+        }
         body {
-          padding: 20px 20px 60px 20px !important;
+          padding: \(topInset + 20)px 20px \(bottomInset + 60)px 20px !important;
           box-sizing: border-box !important;
         }
+        \(topFade)
         /* Two container shapes reach this stylesheet: `.stower-article` from
            ReaderDocumentHTMLBuilder, and `#stower-reader-document` from a
            native web capture. This CSS replaces whatever the page shipped
@@ -292,4 +322,17 @@ extension ReaderJustification {
             return "Justified"
         }
     }
+}
+
+/// Safe-area insets the reader web view is drawn beneath.
+public struct ReaderInsets: Equatable, Sendable {
+    public var top: CGFloat
+    public var bottom: CGFloat
+
+    public init(top: CGFloat, bottom: CGFloat) {
+        self.top = top
+        self.bottom = bottom
+    }
+
+    public static let zero = ReaderInsets(top: 0, bottom: 0)
 }

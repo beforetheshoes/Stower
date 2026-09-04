@@ -384,7 +384,10 @@ public struct AppView: View {
             .background(palette.bg2)
             .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 320)
         } content: {
-            LibraryScreen(store: store.scope(\.library, action: \.library))
+            LibraryScreen(
+                store: store.scope(\.library, action: \.library),
+                usesSelection: true
+            )
                 .scrollContentBackground(.hidden)
                 .background(palette.bg2)
                 .navigationSplitViewColumnWidth(min: 320, ideal: 380, max: 500)

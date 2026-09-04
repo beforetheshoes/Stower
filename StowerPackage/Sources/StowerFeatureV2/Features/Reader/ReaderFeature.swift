@@ -82,6 +82,22 @@ public struct ReaderFeature {
             )
         }
 
+        /// Whether the reader shows a progress bar for this item at all. The
+        /// bar is reserved from the first frame so it never shifts the layout
+        /// when the document finishes loading.
+        public var showsProgressBar: Bool {
+            effectiveRenderFormat != .webView
+        }
+
+        /// 0…1 fill for the progress bar; zero at the top and one when the
+        /// last block has been reached.
+        public var progressFraction: Double {
+            guard let totalProgressUnitCount, totalProgressUnitCount > 1,
+                  let currentBlockIndex, currentBlockIndex > 0
+            else { return 0 }
+            return min(1, Double(currentBlockIndex) / Double(totalProgressUnitCount - 1))
+        }
+
         /// Initialize with a full SavedItem (preferred — instant header render).
         public init(item: SavedItem, appearance: ReaderAppearanceSettings = .init()) {
             self.itemID = item.id
@@ -187,7 +203,7 @@ public struct ReaderFeature {
     private enum CancelID {
         case appearanceSave
         case readingProgressSave
-        case progressPoll
+        case progressUpdates
         case articleRefresh
         case offloadRestore
     }
@@ -284,7 +300,7 @@ public struct ReaderFeature {
                 state.currentBlockIndex = state.item?.lastReadBlockIndex ?? 0
                 return .merge(
                     archiveIfNeeded(item: state.item, sourceHTML: sourceHTML),
-                    startProgressPollingEffect(),
+                    progressUpdatesEffect(),
                     .send(.ai(.appeared(itemID: state.itemID))),
                     .send(.loadDisplayPreference),
                     .send(.restoreOffloadedContent)
@@ -759,34 +775,17 @@ public struct ReaderFeature {
         }
     }
 
-    /// Polls the currently registered reader `WebPage` every 1.5 seconds for
-    /// the topmost visible block index and emits `scrollProgressChanged`
-    /// actions when it changes. Runs as a child effect so `ifLet` cancels it
-    /// atomically with presentation dismissal — unlike the previous manual
-    /// `Task` inside `ReaderWebView`, which kept firing during the window
-    /// between `navigationDestination`'s state nil-ification and the view's
-    /// `.onDisappear`, and tripped a noisy TCA runtime warning on every pop.
-    private func startProgressPollingEffect() -> EffectOf<Self> {
+    /// Consumes reading-position reports from the page's runtime. Runs as a
+    /// child effect so `ifLet` cancels it atomically with presentation
+    /// dismissal, and a late report never reaches an absent reader state.
+    private func progressUpdatesEffect() -> EffectOf<Self> {
         let client = self.readerProgressClient
-        let clock = self.continuousClock
         return .run { send in
-            var lastReported: Int?
-            while !Task.isCancelled {
-                try? await clock.sleep(for: .seconds(1.5))
-                if Task.isCancelled {
-                    return
-                }
-                guard let top = await client.topBlockIndex() else { continue }
-                if Task.isCancelled {
-                    return
-                }
-                if top != lastReported {
-                    lastReported = top
-                    await send(.scrollProgressChanged(top), animation: nil)
-                }
+            for await blockIndex in await client.progressUpdates() {
+                await send(.scrollProgressChanged(blockIndex), animation: nil)
             }
         }
-        .cancellable(id: CancelID.progressPoll, cancelInFlight: true)
+        .cancellable(id: CancelID.progressUpdates, cancelInFlight: true)
     }
 }
 

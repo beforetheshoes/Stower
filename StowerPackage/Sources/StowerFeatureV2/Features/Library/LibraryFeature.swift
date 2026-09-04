@@ -24,6 +24,9 @@ public struct LibraryFeature {
         public var filter: LibraryFilter = .unread
         public var displayStyle: LibraryDisplayStyle = .compact
         public var sortOrder: LibrarySortOrder = .newestFirst
+        /// The item the reader is currently showing. Drives list selection
+        /// on Mac and iPad; kept in sync by the app reducer.
+        public var openItemID: UUID?
         /// Non-nil when the user is creating a new tag inline from the tag submenu.
         public var inlineTagCreation: InlineTagCreation?
         /// Draft for the in-app text/markdown composer.
@@ -91,6 +94,9 @@ public struct LibraryFeature {
         case toggleStar(UUID)
         case toggleRead(UUID)
         case openItem(SavedItem)
+        /// List selection changed (Mac and iPad). Nil is a deselection and
+        /// leaves the reader alone.
+        case rowSelected(UUID?)
         case reprocessItem(UUID)
         case reprocessFinished(SavedItem)
         case sourceURLChanged(String)
@@ -185,6 +191,12 @@ public struct LibraryFeature {
                 state.filter = filter
                 state.query = ""
                 return loadLibrary(state)
+
+            case .rowSelected(let id):
+                guard let id, id != state.openItemID,
+                      let item = state.items.first(where: { $0.id == id })
+                else { return .none }
+                return .send(.openItem(item))
 
             case .displayStyleChanged(let displayStyle):
                 state.displayStyle = displayStyle

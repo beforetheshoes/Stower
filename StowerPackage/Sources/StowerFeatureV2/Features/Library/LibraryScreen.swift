@@ -21,6 +21,10 @@ public struct LibraryScreen: View {
     /// nil on macOS / iPad split-view where the sidebar column is always
     /// visible. Set on iPhone compact to surface the filter sheet.
     private let onOpenFilters: (() -> Void)?
+    /// True in the split layout (Mac, regular-width iPad), where the open
+    /// article is a list selection with a highlight and keyboard navigation.
+    /// False on iPhone, where rows push the reader.
+    private let usesSelection: Bool
     @State private var isAddURLPresented = false
     @State private var isTextImportPresented = false
     #if os(iOS)
@@ -29,16 +33,26 @@ public struct LibraryScreen: View {
 
     public init(
         store: StoreOf<LibraryFeature>,
+        usesSelection: Bool = false,
         onOpenSettings: (() -> Void)? = nil,
         onOpenFilters: (() -> Void)? = nil
     ) {
         self.store = store
+        self.usesSelection = usesSelection
         self.onOpenSettings = onOpenSettings
         self.onOpenFilters = onOpenFilters
     }
 
+    private var selection: Binding<UUID?>? {
+        guard usesSelection else { return nil }
+        return Binding(
+            get: { store.openItemID },
+            set: { store.send(.rowSelected($0)) }
+        )
+    }
+
     public var body: some View {
-        List {
+        List(selection: selection) {
             #if os(macOS)
             // On macOS the inline composer lives at the top of the list
             // because the window is wide enough that it doesn't crowd the
@@ -59,18 +73,8 @@ public struct LibraryScreen: View {
             #endif
 
             ForEach(store.items) { item in
-                Button {
-                    store.send(.openItem(item))
-                } label: {
-                    LibraryItemRow(
-                        item: item,
-                        query: store.query,
-                        tags: resolvedTags(for: item),
-                        displayStyle: store.displayStyle,
-                        isOffloaded: store.storageInfoByID[item.id]?.offloadedAt != nil
-                    )
-                }
-                .buttonStyle(.plain)
+                libraryRow(item)
+                .tag(item.id)
                 .swipeActions(edge: .leading) {
                     if store.filter != .recentlyDeleted {
                         Button {
@@ -318,6 +322,28 @@ public struct LibraryScreen: View {
         }
         .task {
             store.send(.onAppear)
+        }
+    }
+
+    /// A selectable row in the split layout, a push button on iPhone.
+    @ViewBuilder
+    private func libraryRow(_ item: SavedItem) -> some View {
+        let row = LibraryItemRow(
+            item: item,
+            query: store.query,
+            tags: resolvedTags(for: item),
+            displayStyle: store.displayStyle,
+            isOffloaded: store.storageInfoByID[item.id]?.offloadedAt != nil
+        )
+        if usesSelection {
+            row
+        } else {
+            Button {
+                store.send(.openItem(item))
+            } label: {
+                row
+            }
+            .buttonStyle(.plain)
         }
     }
 
