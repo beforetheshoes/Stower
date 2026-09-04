@@ -28,8 +28,22 @@ public struct FailedImport: Equatable, Identifiable, Sendable {
         self.rawPayload = rawPayload
     }
 
+    /// Failed jobs the user should hear about. Asset uploads, downloads, and
+    /// migrations are background maintenance that retries on its own; a
+    /// hiccup there must not read as a lost article.
     public static func list(from jobs: [IngestionJob]) -> [FailedImport] {
-        jobs.map(FailedImport.init(job:))
+        jobs
+            .filter { Self.isUserImport($0.kind) }
+            .map(FailedImport.init(job:))
+    }
+
+    static func isUserImport(_ kind: IngestionJob.Kind) -> Bool {
+        switch kind {
+        case .url, .pdf, .website, .text, .markdown, .hydrate, .hydrateText, .hydrateWebsite:
+            return true
+        case .uploadAsset, .downloadAsset, .migrateWebsiteAsset, .migrateCaptureAsset:
+            return false
+        }
     }
 
     public init(job: IngestionJob) {

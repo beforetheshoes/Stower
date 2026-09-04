@@ -1,43 +1,50 @@
 import ComposableArchitecture
+import Dependencies
+import DependenciesTestSupport
 import Foundation
 @testable import StowerData
 @testable import StowerFeature
 import Testing
 
 @MainActor
-@Suite
+@Suite(.dependencies { try $0.bootstrapStowerDatabase(enableSync: false) })
 struct SidebarFeatureTests {
+    @Dependency(\.stowerRepository)
+    var repository
+
     @Test
     func defaultsToInbox() {
         #expect(SidebarFeature.State().selection == .unread)
     }
 
     @Test
-    func reload_loadsCountsAndTags() async {
-        let counts = LibraryListCounts(
-            unread: 2,
-            read: 1,
-            starred: 1,
-            untagged: 1,
-            all: 3,
-            recentlyDeleted: 1,
-            byTag: [:]
-        )
-        let tag = Tag(name: "inbox")
+    func onAppearObservesCountsAndTags() async throws {
+        var ingestion = IngestionResult.sharedText("Body")
+        ingestion.title = "Unread"
+        let unread = try await repository.createItemFromIngestion(ingestion)
+        ingestion.title = "Read"
+        let readItem = try await repository.createItemFromIngestion(ingestion)
+        try await repository.setReadStatus(readItem.id, true)
+        let tag = try await repository.createTag("inbox", nil)
+        try await repository.addTag(unread.id, tag.id)
 
         let store = TestStore(initialState: SidebarFeature.State()) {
             SidebarFeature()
-        } withDependencies: {
-            $0.stowerRepository.fetchListCounts = { counts }
-            $0.stowerRepository.fetchTags = { [tag] }
         }
+        store.exhaustivity = .off(showSkippedAssertions: false)
 
-        await store.send(.reload) { $0.isLoading = true }
-        await store.receive(.loaded(counts, [tag])) {
-            $0.isLoading = false
-            $0.counts = counts
-            $0.tags = [tag]
-        }
+        await store.send(.onAppear)
+        await store.receive(.sidebarLoaded)
+        #expect(store.state.counts.unread == 1)
+        #expect(store.state.counts.read == 1)
+        #expect(store.state.counts.all == 2)
+        #expect(store.state.counts.untagged == 1)
+        #expect(store.state.counts.byTag[tag.id] == 1)
+        #expect(store.state.tags.map(\.id) == [tag.id])
+
+        // A later write anywhere shows up without a reload action.
+        try await repository.setReadStatus(unread.id, true)
+        try await eventually { store.state.counts.unread == 0 && store.state.counts.read == 2 }
     }
 
     @Test
@@ -52,18 +59,16 @@ struct SidebarFeatureTests {
     }
 
     @Test
-    func newTag_confirmCreatesAndReloads() async {
-        let tag = Tag(name: "ai")
-        let counts = LibraryListCounts(all: 0)
+    func newTag_confirmCreatesAndIsObserved() async throws {
         let expectedColor = TagColorSuggester.suggestColor(existingHexValues: [])
 
         let store = TestStore(initialState: SidebarFeature.State()) {
             SidebarFeature()
-        } withDependencies: {
-            $0.stowerRepository.createTag = { _, _ in tag }
-            $0.stowerRepository.fetchListCounts = { counts }
-            $0.stowerRepository.fetchTags = { [tag] }
         }
+        store.exhaustivity = .off(showSkippedAssertions: false)
+
+        await store.send(.onAppear)
+        await store.receive(.sidebarLoaded)
 
         await store.send(.newTagTapped) {
             $0.isCreatingTag = true
@@ -78,38 +83,32 @@ struct SidebarFeatureTests {
             $0.newTagName = ""
             $0.newTagColorHex = ""
         }
-        await store.receive(.tagCreated(tag))
-        await store.receive(.reload) { $0.isLoading = true }
-        await store.receive(.loaded(counts, [tag])) {
-            $0.isLoading = false
-            $0.counts = counts
-            $0.tags = [tag]
-        }
+        await store.receive(\.tagCreated)
+        try await eventually { store.state.tags.map(\.name) == ["ai"] }
+        #expect(store.state.tags.first?.colorHex == expectedColor)
     }
 
     @Test
-    func newTagConfirmed_passesAutoColor() async {
-        let existingTag = Tag(name: "work", colorHex: FlexokiRaw.shade(.red, 600))
+    func newTagConfirmed_passesAutoColor() async throws {
+        _ = try await repository.createTag("work", FlexokiRaw.shade(.red, 600))
         let expectedColor = TagColorSuggester.suggestColor(
             existingHexValues: [FlexokiRaw.shade(.red, 600)]
         )
-
         let receivedColor = LockIsolated<String?>(nil)
         let newTag = Tag(name: "personal", colorHex: expectedColor)
 
-        var state = SidebarFeature.State()
-        state.tags = [existingTag]
-
-        let store = TestStore(initialState: state) {
+        let store = TestStore(initialState: SidebarFeature.State()) {
             SidebarFeature()
         } withDependencies: {
             $0.stowerRepository.createTag = { _, color in
                 receivedColor.setValue(color)
                 return newTag
             }
-            $0.stowerRepository.fetchListCounts = { .zero }
-            $0.stowerRepository.fetchTags = { [existingTag, newTag] }
         }
+        store.exhaustivity = .off(showSkippedAssertions: false)
+
+        await store.send(.onAppear)
+        await store.receive(.sidebarLoaded)
 
         await store.send(.newTagTapped) {
             $0.isCreatingTag = true
@@ -125,12 +124,6 @@ struct SidebarFeatureTests {
             $0.newTagColorHex = ""
         }
         await store.receive(.tagCreated(newTag))
-        await store.receive(.reload) { $0.isLoading = true }
-        await store.receive(.loaded(.zero, [existingTag, newTag])) {
-            $0.isLoading = false
-            $0.counts = .zero
-            $0.tags = [existingTag, newTag]
-        }
 
         // Red is taken, so orange-600 should have been passed.
         #expect(receivedColor.value == expectedColor)
@@ -138,42 +131,37 @@ struct SidebarFeatureTests {
     }
 
     @Test
-    func deleteTag_whileSelected_fallsBackToAll() async {
-        let id = UUID()
+    func deleteTag_whileSelected_fallsBackToAll() async throws {
+        let tag = try await repository.createTag("gone", nil)
         var state = SidebarFeature.State()
-        state.selection = .tag(id)
+        state.selection = .tag(tag.id)
 
         let store = TestStore(initialState: state) {
             SidebarFeature()
-        } withDependencies: {
-            $0.stowerRepository.deleteTag = { _ in }
-            $0.stowerRepository.fetchListCounts = { .zero }
-            $0.stowerRepository.fetchTags = { [] }
         }
+        store.exhaustivity = .off(showSkippedAssertions: false)
 
-        await store.send(.deleteTagTapped(id)) {
+        await store.send(.onAppear)
+        await store.receive(.sidebarLoaded)
+        #expect(store.state.tags.map(\.id) == [tag.id])
+
+        await store.send(.deleteTagTapped(tag.id)) {
             $0.selection = .all
         }
         await store.receive(.tagDeleted)
-        await store.receive(.reload) { $0.isLoading = true }
-        await store.receive(.loaded(.zero, [])) {
-            $0.isLoading = false
-        }
+        try await eventually { store.state.tags.isEmpty }
     }
 
     @Test
-    func loaded_dropsSelectionOfDeletedTag() async {
-        let ghostID = UUID()
+    func sidebarLoaded_dropsSelectionOfMissingTag() async {
         var state = SidebarFeature.State()
-        state.selection = .tag(ghostID)
+        state.selection = .tag(UUID())
 
         let store = TestStore(initialState: state) {
             SidebarFeature()
         }
 
-        await store.send(.loaded(.zero, [])) {
-            $0.counts = .zero
-            $0.tags = []
+        await store.send(.sidebarLoaded) {
             $0.selection = .all
         }
     }

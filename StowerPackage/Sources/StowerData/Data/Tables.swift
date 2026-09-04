@@ -86,6 +86,10 @@ nonisolated public struct SavedItemContentLocalTable: Hashable, Identifiable, Se
     /// `renderFormat == "pdf"`. Nil for URL/text items. Used for dedup and
     /// to recognize a locally-stored PDF on subsequent shares.
     public var pdfSHA256: String?
+    /// Number of reader blocks in `documentJSON`, maintained by SQL triggers
+    /// so the library list can report reading progress without decoding
+    /// every document. Nil when there is no structured document.
+    public var progressUnitCount: Int?
 
     public var id: UUID { itemID }
 }

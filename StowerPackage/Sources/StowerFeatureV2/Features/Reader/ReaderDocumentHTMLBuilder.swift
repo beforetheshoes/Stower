@@ -28,10 +28,17 @@ public enum ReaderDocumentHTMLBuilder {
         document: ReaderDocument,
         appearance: ReaderAppearanceSettings,
         pageWidth: CGFloat = 10_000,
-        fontScale: Double = 1
+        fontScale: Double = 1,
+        restoreBlockIndex: Int? = nil,
+        insets: ReaderInsets = .zero
     ) -> String {
         var html = String()
         html.reserveCapacity(document.blocks.count * 256)
+
+        // When resuming mid-article the document stays invisible until the
+        // runtime has scrolled to the saved block, so the first painted frame
+        // is already in the right place instead of jumping from the top.
+        let restoreIndex = (restoreBlockIndex ?? 0) > 0 ? restoreBlockIndex : nil
 
         html += "<!DOCTYPE html>\n"
         html += "<html lang=\"en\">\n"
@@ -41,11 +48,15 @@ public enum ReaderDocumentHTMLBuilder {
         html += "  <meta name=\"color-scheme\" content=\"light dark\">\n"
         html += "  <title>\(escapeHTML(item.title))</title>\n"
         html += "  <style id=\"stower-reader-css\">\n"
-        html += appearance.readerCSS(pageWidth: pageWidth, fontScale: fontScale)
+        html += appearance.readerCSS(pageWidth: pageWidth, fontScale: fontScale, insets: insets)
         html += "\n  </style>\n"
         html += "  <style id=\"stower-runtime-css\">\n"
         html += runtimeCSS
         html += "\n  </style>\n"
+        if let restoreIndex {
+            html += "  <style id=\"stower-restore-css\">html { visibility: hidden; }</style>\n"
+            html += "  <script>window.__stowerRestoreBlock = \(restoreIndex);</script>\n"
+        }
         html += "</head>\n"
         html += "<body>\n"
         html += "<article class=\"stower-article\">\n"
@@ -83,6 +94,8 @@ public enum ReaderDocumentHTMLBuilder {
 
         html += "<script>\n"
         html += runtimeJS
+        html += "\n"
+        html += ReaderWebPageFactory.progressReporterScript
         html += "\n</script>\n"
         html += "</body>\n"
         html += "</html>\n"
@@ -793,6 +806,18 @@ public enum ReaderDocumentHTMLBuilder {
         }
         return -1;
       };
+
+      // Resume position before first paint, then reveal the document.
+      (function() {
+        var restore = window.__stowerRestoreBlock;
+        if (typeof restore === 'number' && restore > 0) {
+          window.stowerScrollToBlock(restore);
+          if (typeof window.stowerSetAnchorBlock === 'function') {
+            window.stowerSetAnchorBlock(restore);
+          }
+        }
+        document.documentElement.style.visibility = 'visible';
+      })();
 
       // YouTube facade → iframe swap. Delegated click handler so the swap
       // works for any facade rendered by the builder. The video ID is

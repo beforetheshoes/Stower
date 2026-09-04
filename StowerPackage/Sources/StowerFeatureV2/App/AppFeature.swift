@@ -18,8 +18,15 @@ public struct AppFeature {
         public var startupFinished = false
         public var startupErrorMessage: String?
         public var failedImports = [FailedImport]()
+        /// Number of URL saves queued from this app that are still being
+        /// fetched. Drives the "Saving…" notice.
+        public var pendingSaveCount = 0
         public var recentlyCompletedItem: SavedItem?
         public var cloudSyncStatus: CloudSyncStatus = .starting
+        /// The ordered item IDs the reader was opened from. Next/previous
+        /// walk this snapshot, so marking the open article read (which
+        /// removes it from Inbox) does not strand navigation.
+        public var readerQueue = [UUID]()
         @Presents public var resetAlert: AlertState<Action.ResetAlert>?
 
         public var failedImportCount: Int { failedImports.count }
@@ -29,19 +36,20 @@ public struct AppFeature {
         public var canFocusReader: Bool { reader != nil }
 
         public var canNavigateToNextArticle: Bool {
-            guard
-                let itemID = reader?.itemID,
-                let index = library.filteredItems.firstIndex(where: { $0.id == itemID })
-            else { return false }
-            return library.filteredItems.indices.contains(index + 1)
+            readerNavigationTarget(offset: 1) != nil
         }
 
         public var canNavigateToPreviousArticle: Bool {
+            readerNavigationTarget(offset: -1) != nil
+        }
+
+        func readerNavigationTarget(offset: Int) -> UUID? {
             guard
                 let itemID = reader?.itemID,
-                let index = library.filteredItems.firstIndex(where: { $0.id == itemID })
-            else { return false }
-            return library.filteredItems.indices.contains(index - 1)
+                let index = readerQueue.firstIndex(of: itemID),
+                readerQueue.indices.contains(index + offset)
+            else { return nil }
+            return readerQueue[index + offset]
         }
 
         public init() {
@@ -100,6 +108,7 @@ public struct AppFeature {
         case startupFinished
         case startupFailed(String)
         case failedImportsLoaded([FailedImport])
+        case queuedSaveFinished
         case retryFailedImportsTapped
         case dismissFailedImportsTapped
         case dismissStartupErrorTapped
@@ -236,8 +245,20 @@ public struct AppFeature {
                         }
                     },
                     .run { send in
+                        // Sync is optional. If iCloud is unavailable the app
+                        // still drains shared imports, loads settings, and
+                        // runs maintenance; the sync status shows the problem.
                         do {
                             try await cloudSyncClient.start()
+                        } catch where error.isDatabaseSuspension {
+                            await send(.startupFinished)
+                            return
+                        } catch {
+                            await send(.cloudSyncStatusChanged(
+                                CloudSyncStatus(state: .unavailable(error.localizedDescription))
+                            ))
+                        }
+                        do {
                             _ = try await repository.reconcileOrphanedTagAssignments()
                             // Backfill the text sync table from local content
                             // for any text items missing a sync row (recovery
@@ -256,9 +277,11 @@ public struct AppFeature {
                             await send(.failedImportsLoaded(
                                 FailedImport.list(from: try await repository.fetchFailedIngestionJobs())
                             ))
-                            try await cloudSyncClient.sendChanges()
+                            // Best effort: the coordinator reports sync
+                            // problems through the status stream, and a
+                            // failed push is not a failed launch.
+                            try? await cloudSyncClient.sendChanges()
                             await send(.startupFinished)
-                            await send(.library(.reload))
                             await send(.settings(.load))
                             // Storage maintenance runs last so it never delays
                             // startup, and only every few days. Sweeps are
@@ -321,6 +344,35 @@ public struct AppFeature {
                 state.failedImports = imports
                 return .none
 
+            case .queuedSaveFinished:
+                state.pendingSaveCount = max(0, state.pendingSaveCount - 1)
+                return .none
+
+            case .library(.urlQueued):
+                // The link is in the ingestion queue; fetch it now rather
+                // than at the next launch, and show progress meanwhile. The
+                // row appears through observation as soon as the item exists.
+                state.pendingSaveCount += 1
+                let repository = self.repository
+                let ingestionClient = self.ingestionClient
+                let pdfIngestionClient = self.pdfIngestionClient
+                let textIngestionClient = self.textIngestionClient
+                let date = self.date
+                let ingestionCoordinator = self.ingestionCoordinator
+                return .run { send in
+                    try? await ingestionCoordinator.run {
+                        try await processIngestionJobs(
+                            repository: repository,
+                            ingestionClient: ingestionClient,
+                            pdfIngestionClient: pdfIngestionClient,
+                            textIngestionClient: textIngestionClient
+                        ) { date.now }
+                    }
+                    let jobs = (try? await repository.fetchFailedIngestionJobs()) ?? []
+                    await send(.failedImportsLoaded(FailedImport.list(from: jobs)))
+                    await send(.queuedSaveFinished)
+                }
+
             case .dismissStartupErrorTapped:
                 state.startupErrorMessage = nil
                 return .none
@@ -345,7 +397,6 @@ public struct AppFeature {
                     }
                     let jobs = (try? await repository.fetchFailedIngestionJobs()) ?? []
                     await send(.failedImportsLoaded(FailedImport.list(from: jobs)))
-                    await send(.library(.reload))
                 }
 
             case .dismissFailedImportsTapped:
@@ -390,8 +441,6 @@ public struct AppFeature {
                     }
                     let jobs = (try? await repository.fetchFailedIngestionJobs()) ?? []
                     await send(.failedImportsLoaded(FailedImport.list(from: jobs)))
-                    await send(.library(.reload))
-                    await send(.sidebar(.reload))
                 }
 
             case .browserExtensionURLReceived(let url):
@@ -424,23 +473,29 @@ public struct AppFeature {
                 return navigateReader(offset: -1, state: &state)
 
             case .toggleSelectedItemRead:
-                guard let itemID = state.reader?.itemID else { return .none }
-                state.reader?.item?.isRead.toggle()
-                return .send(.library(.toggleRead(itemID)))
+                guard let item = state.reader?.item else { return .none }
+                let newValue = !item.isRead
+                state.reader?.item?.isRead = newValue
+                let repository = self.repository
+                return .run { _ in
+                    try? await repository.setReadStatus(item.id, newValue)
+                }
 
             case .toggleSelectedItemStarred:
-                guard let itemID = state.reader?.itemID else { return .none }
-                state.reader?.item?.isStarred.toggle()
-                return .send(.library(.toggleStar(itemID)))
+                guard let item = state.reader?.item else { return .none }
+                let newValue = !item.isStarred
+                state.reader?.item?.isStarred = newValue
+                let repository = self.repository
+                return .run { _ in
+                    try? await repository.setStarred(item.id, newValue)
+                }
 
             case .undoCompletedItemTapped:
                 guard let item = state.recentlyCompletedItem else { return .none }
                 state.recentlyCompletedItem = nil
                 let repository = self.repository
-                return .run { send in
+                return .run { _ in
                     try? await repository.setReadStatus(item.id, false)
-                    await send(.library(.reload))
-                    await send(.sidebar(.reload))
                 }
                 .cancellable(id: CancelID.completedItemNotice, cancelInFlight: true)
 
@@ -492,8 +547,6 @@ public struct AppFeature {
                         }
                         let jobs = (try? await repository.fetchFailedIngestionJobs()) ?? []
                         await send(.failedImportsLoaded(FailedImport.list(from: jobs)))
-                        await send(.library(.reload))
-                        await send(.sidebar(.reload))
                     }
                 }
 
@@ -546,8 +599,13 @@ public struct AppFeature {
                 // never run again and the view would fall through its
                 // else-if chain to "Item not found". Leaving the existing
                 // state in place keeps the already-loaded document visible.
+                state.library.openItemID = item.id
                 if state.reader?.itemID == item.id {
                     return .none
+                }
+                state.readerQueue = state.library.items.map(\.id)
+                if !state.readerQueue.contains(item.id) {
+                    state.readerQueue = [item.id]
                 }
                 state.reader = ReaderFeature.State(
                     item: item,
@@ -588,6 +646,7 @@ public struct AppFeature {
                 }
                 state.reader = nil
                 state.isReaderFocused = false
+                state.library.openItemID = nil
 
                 let clock = self.clock
                 let expiration: EffectOf<Self> = wasUnread
@@ -598,14 +657,11 @@ public struct AppFeature {
                     .cancellable(id: CancelID.completedItemNotice, cancelInFlight: true)
                     : .none
 
-                return .merge(
-                    .send(.library(.reload)),
-                    .send(.sidebar(.reload)),
-                    expiration
-                )
+                return expiration
 
             case .reader(.dismiss):
                 state.isReaderFocused = false
+                state.library.openItemID = nil
                 return .none
 
             case .library, .settings, .reader:
@@ -625,17 +681,20 @@ public struct AppFeature {
         offset: Int,
         state: inout State
     ) -> EffectOf<Self> {
-        guard
-            let itemID = state.reader?.itemID,
-            let index = state.library.filteredItems.firstIndex(where: { $0.id == itemID }),
-            state.library.filteredItems.indices.contains(index + offset)
-        else { return .none }
+        guard let targetID = state.readerNavigationTarget(offset: offset) else { return .none }
+        state.library.openItemID = targetID
 
-        state.reader = ReaderFeature.State(
-            item: state.library.filteredItems[index + offset],
-            appearance: state.cachedAppearance
-        )
-        return .none
+        // Prefer the observed row so the header renders instantly; fall
+        // back to a database load when the target has left the current list.
+        if let item = state.library.items.first(where: { $0.id == targetID }) {
+            state.reader = ReaderFeature.State(item: item, appearance: state.cachedAppearance)
+        } else {
+            state.reader = ReaderFeature.State(itemID: targetID, appearance: state.cachedAppearance)
+        }
+        let itemStorageClient = self.itemStorageClient
+        return .run { _ in
+            try? await itemStorageClient.touchOpened(targetID)
+        }
     }
 }
 

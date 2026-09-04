@@ -21,24 +21,39 @@ public struct LibraryScreen: View {
     /// nil on macOS / iPad split-view where the sidebar column is always
     /// visible. Set on iPhone compact to surface the filter sheet.
     private let onOpenFilters: (() -> Void)?
+    /// True in the split layout (Mac, regular-width iPad), where the open
+    /// article is a list selection with a highlight and keyboard navigation.
+    /// False on iPhone, where rows push the reader.
+    private let usesSelection: Bool
     @State private var isAddURLPresented = false
     @State private var isTextImportPresented = false
     #if os(iOS)
     @State private var activeImportPicker: IOSImportPicker?
+    @FocusState private var isURLFieldFocused: Bool
     #endif
 
     public init(
         store: StoreOf<LibraryFeature>,
+        usesSelection: Bool = false,
         onOpenSettings: (() -> Void)? = nil,
         onOpenFilters: (() -> Void)? = nil
     ) {
         self.store = store
+        self.usesSelection = usesSelection
         self.onOpenSettings = onOpenSettings
         self.onOpenFilters = onOpenFilters
     }
 
+    private var selection: Binding<UUID?>? {
+        guard usesSelection else { return nil }
+        return Binding(
+            get: { store.openItemID },
+            set: { store.send(.rowSelected($0)) }
+        )
+    }
+
     public var body: some View {
-        List {
+        List(selection: selection) {
             #if os(macOS)
             // On macOS the inline composer lives at the top of the list
             // because the window is wide enough that it doesn't crowd the
@@ -58,19 +73,9 @@ public struct LibraryScreen: View {
             }
             #endif
 
-            ForEach(store.filteredItems) { item in
-                Button {
-                    store.send(.openItem(item))
-                } label: {
-                    LibraryItemRow(
-                        item: item,
-                        query: store.query,
-                        tags: resolvedTags(for: item),
-                        displayStyle: store.displayStyle,
-                        isOffloaded: store.storageInfoByID[item.id]?.offloadedAt != nil
-                    )
-                }
-                .buttonStyle(.plain)
+            ForEach(store.items) { item in
+                libraryRow(item)
+                .tag(item.id)
                 .swipeActions(edge: .leading) {
                     if store.filter != .recentlyDeleted {
                         Button {
@@ -172,9 +177,10 @@ public struct LibraryScreen: View {
         .navigationTitle(navigationTitle)
         .searchable(text: $store.query.sending(\.queryChanged), prompt: "Search")
         .overlay {
-            if store.isLoading {
-                ProgressView()
-            } else if store.filteredItems.isEmpty {
+            // Only after the first observation has delivered: a populated
+            // list must never be covered by a spinner, and the empty state
+            // must not flash before the rows arrive.
+            if store.hasLoaded, store.items.isEmpty {
                 libraryEmptyState
             }
         }
@@ -253,13 +259,10 @@ public struct LibraryScreen: View {
         .sheet(isPresented: $isAddURLPresented) {
             addURLSheet
         }
-        // Auto-dismiss the "Add URL" sheet the moment a save succeeds.
-        // `saveURLFinished` transitions `saveState` to `.ready` and clears
-        // `sourceURL`, which is our cue that the new item is in the list.
-        .onChange(of: store.saveState) { _, newValue in
-            if isAddURLPresented, newValue == .ready, store.sourceURL.isEmpty {
-                isAddURLPresented = false
-            }
+        // Dismiss the "Add URL" sheet the moment the link is queued; the
+        // fetch continues in the background and the row arrives on its own.
+        .onChange(of: store.queuedSaveCount) { _, _ in
+            isAddURLPresented = false
         }
         #endif
         .sheet(
@@ -317,6 +320,28 @@ public struct LibraryScreen: View {
         }
         .task {
             store.send(.onAppear)
+        }
+    }
+
+    /// A selectable row in the split layout, a push button on iPhone.
+    @ViewBuilder
+    private func libraryRow(_ item: SavedItem) -> some View {
+        let row = LibraryItemRow(
+            item: item,
+            query: store.query,
+            tags: resolvedTags(for: item),
+            displayStyle: store.displayStyle,
+            isOffloaded: store.storageInfoByID[item.id]?.offloadedAt != nil
+        )
+        if usesSelection {
+            row
+        } else {
+            Button {
+                store.send(.openItem(item))
+            } label: {
+                row
+            }
+            .buttonStyle(.plain)
         }
     }
 
@@ -581,6 +606,7 @@ public struct LibraryScreen: View {
                     .textInputAutocapitalization(.never)
                     .keyboardType(.URL)
                     .submitLabel(.go)
+                    .focused($isURLFieldFocused)
                     .onSubmit { store.send(.saveURLTapped) }
                     if store.saveState == .failed, let error = store.errorMessage {
                         // Deliberately a row, not the section footer: a footer
@@ -592,11 +618,19 @@ public struct LibraryScreen: View {
                 } header: {
                     Text("URL")
                 } footer: {
-                    Text("Paste any article URL. Stower will fetch and archive it for offline reading.")
+                    Text("Paste any article URL. Stower saves it in the background and adds it to your Inbox when it is ready.")
                 }
             }
             .navigationTitle("Add URL")
             .navigationBarTitleDisplayMode(.inline)
+            // The field is the whole point of the sheet; put the cursor in it.
+            // `defaultFocus` covers the normal case; the delayed set covers
+            // sheets whose presentation finishes after focus is resolved.
+            .defaultFocus($isURLFieldFocused, true)
+            .task {
+                try? await Task.sleep(for: .milliseconds(350))
+                isURLFieldFocused = true
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {

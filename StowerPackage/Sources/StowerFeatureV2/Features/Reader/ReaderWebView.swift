@@ -16,6 +16,10 @@ private final class ReaderWebViewSession {
 
     var archiveServer: LocalArchiveServer?
     var hasRestoredPosition = false
+    /// False until the page has loaded and its position is restored. The
+    /// web view stays invisible (the themed background shows) until then, so
+    /// the reader never paints a blank page or a mid-load jump.
+    var isRevealed = false
     var loadKey: LoadKey?
     var page: WebPage?
 
@@ -24,6 +28,7 @@ private final class ReaderWebViewSession {
         archiveServer?.stop()
         archiveServer = nil
         hasRestoredPosition = false
+        isRevealed = false
         loadKey = key
         page = nil
     }
@@ -33,8 +38,16 @@ private final class ReaderWebViewSession {
         archiveServer?.stop()
         archiveServer = nil
         hasRestoredPosition = false
+        isRevealed = false
         loadKey = nil
         page = nil
+    }
+
+    /// Forwards a position report from the page's runtime, ignoring reports
+    /// from a page that is no longer this session's.
+    func reportProgress(_ blockIndex: Int) {
+        guard let page else { return }
+        ReaderProgressCoordinator.shared.report(blockIndex, from: page)
     }
 }
 
@@ -60,6 +73,8 @@ public struct ReaderWebView: View {
     let appearance: ReaderAppearanceSettings
     let fontScale: Double
     let viewportWidth: Double?
+    /// Safe-area insets the reader view draws under (see `readerCSS`).
+    let insets: ReaderInsets
     let isWebViewFormat: Bool
     let usesNativeCapture: Bool
     let highlightedBlockIndex: Int?
@@ -79,6 +94,7 @@ public struct ReaderWebView: View {
         appearance: ReaderAppearanceSettings,
         fontScale: Double = 1,
         viewportWidth: Double? = nil,
+        insets: ReaderInsets = .zero,
         isWebViewFormat: Bool = false,
         usesNativeCapture: Bool = false,
         highlightedBlockIndex: Int? = nil,
@@ -93,6 +109,7 @@ public struct ReaderWebView: View {
         self.appearance = appearance
         self.fontScale = fontScale
         self.viewportWidth = viewportWidth
+        self.insets = insets
         self.isWebViewFormat = isWebViewFormat
         self.usesNativeCapture = usesNativeCapture
         self.highlightedBlockIndex = highlightedBlockIndex
@@ -115,8 +132,22 @@ public struct ReaderWebView: View {
             if let page = session.page {
                 WebView(page)
                     .webViewContentBackground(.hidden)
+                    // Blur text as it scrolls under the status bar and the
+                    // Liquid Glass toolbar instead of drawing through them.
+                    .scrollEdgeEffectStyle(.soft, for: .top)
+                    .opacity(session.isRevealed ? 1 : 0)
+            }
+
+            // Heavy original pages can take seconds to load; show a spinner
+            // only once the wait is long enough to notice.
+            if !session.isRevealed {
+                RevealProgressView()
             }
         }
+        // Reader View manages the safe area itself through CSS (see
+        // `readerCSS`), so toolbar changes never resize the page. Original
+        // pages cannot be styled and keep the system behavior.
+        .ignoresSafeArea(edges: isWebViewFormat ? [] : .all)
         // Keyed on item identity plus content version, not on the rendered
         // HTML bytes. Appearance changes update CSS live; they must not tear
         // down and recreate the whole WKWebView while the user drags a slider.
@@ -132,26 +163,12 @@ public struct ReaderWebView: View {
         .onChange(of: fontScale) { _, _ in
             updateCSS(appearance)
         }
+        .onChange(of: insets) { _, _ in
+            updateCSS(appearance)
+        }
         .onChange(of: session.page?.isLoading) { _, isLoading in
             if isLoading == false {
-                // Re-apply CSS in case appearance settings loaded after
-                // the initial HTML was composed, then restore scroll, and
-                // hand the page off to the shared progress coordinator so
-                // `ReaderFeature`'s polling effect can start reading from
-                // it. Registration lives here (and not in `loadContent`)
-                // because `page.isLoading == false` is the first moment
-                // at which `stowerGetTopBlockIndex()` is guaranteed to
-                // exist on the JS side.
-                installContentTapHandler()
-                if usesNativeCapture && !isWebViewFormat {
-                    installReaderRuntime()
-                }
-                if isWebViewFormat {
-                    installHorizontalScrollLock()
-                }
-                updateCSS(appearance)
-                maybeRestorePosition()
-                ReaderProgressCoordinator.shared.register(session.page)
+                Task { await finishLoading() }
             }
         }
         .onChange(of: highlightedBlockIndex) { _, newValue in
@@ -163,6 +180,45 @@ public struct ReaderWebView: View {
     }
 
     // MARK: - Loading
+
+    /// Runs once the page has finished loading: installs the runtime pieces
+    /// the content needs, restores the reading position, registers the page
+    /// with the progress coordinator, and only then reveals the web view.
+    ///
+    /// Registration lives here (and not in `loadContent`) because
+    /// `page.isLoading == false` is the first moment at which the runtime's
+    /// `stowerGetTopBlockIndex()` is guaranteed to exist on the JS side.
+    @MainActor
+    private func finishLoading() async {
+        guard let page = session.page else { return }
+        let loadKey = session.loadKey
+
+        await ReaderWebPageFactory.installContentTapHandler(on: page)
+        if usesNativeCapture && !isWebViewFormat {
+            // Captured articles carry no runtime of their own.
+            await ReaderWebPageFactory.installReaderRuntime(on: page)
+            await ReaderWebPageFactory.installProgressReporter(on: page)
+        }
+        if isWebViewFormat {
+            await ReaderWebPageFactory.installHorizontalScrollLock(on: page)
+        }
+        guard session.loadKey == loadKey, session.page === page else { return }
+
+        updateCSS(appearance)
+        // Structured documents bake their restore into the HTML and are
+        // already positioned; captured articles restore here.
+        if usesNativeCapture && !isWebViewFormat {
+            await restorePositionIfNeeded(on: page)
+        } else {
+            session.hasRestoredPosition = true
+        }
+        guard session.loadKey == loadKey, session.page === page else { return }
+
+        ReaderProgressCoordinator.shared.register(page)
+        withAnimation(.easeOut(duration: 0.18)) {
+            session.isRevealed = true
+        }
+    }
 
     @MainActor
     private func loadContent() async {
@@ -191,7 +247,8 @@ public struct ReaderWebView: View {
             let newPage = ReaderWebPageFactory.makePage(
                 openExternalURL: { [openURL] url in openURL(url) },
                 openInlineEmbed: { openEmbed($0) },
-                toggleChrome: { toggleChrome() }
+                toggleChrome: { toggleChrome() },
+                reportProgress: { [session] index in session.reportProgress(index) }
             )
             let baseURL = currentSourceURL.flatMap(URL.init(string:)) ?? URL(string: "about:blank")!
             _ = newPage.load(
@@ -218,7 +275,8 @@ public struct ReaderWebView: View {
             let newPage = ReaderWebPageFactory.makePage(
                 openExternalURL: { [openURL] url in openURL(url) },
                 openInlineEmbed: { openEmbed($0) },
-                toggleChrome: { toggleChrome() }
+                toggleChrome: { toggleChrome() },
+                reportProgress: { [session] index in session.reportProgress(index) }
             )
             session.archiveServer = server
             _ = newPage.load(URLRequest(url: loadURL))
@@ -249,7 +307,8 @@ public struct ReaderWebView: View {
                 let newPage = ReaderWebPageFactory.makePage(
                     openExternalURL: { [openURL] url in openURL(url) },
                     openInlineEmbed: { openEmbed($0) },
-                    toggleChrome: { toggleChrome() }
+                    toggleChrome: { toggleChrome() },
+                    reportProgress: { [session] index in session.reportProgress(index) }
                 )
                 session.archiveServer = server
                 _ = newPage.load(URLRequest(url: loadURL))
@@ -264,7 +323,8 @@ public struct ReaderWebView: View {
                 let newPage = ReaderWebPageFactory.makePage(
                     openExternalURL: { [openURL] url in openURL(url) },
                     openInlineEmbed: { openEmbed($0) },
-                    toggleChrome: { toggleChrome() }
+                    toggleChrome: { toggleChrome() },
+                    reportProgress: { [session] index in session.reportProgress(index) }
                 )
                 _ = newPage.load(html: currentHTML, baseURL: base)
                 session.page = newPage
@@ -404,32 +464,11 @@ public struct ReaderWebView: View {
 
         let css = appearance.readerCSS(
             pageWidth: CGFloat(viewportWidth ?? 0),
-            fontScale: fontScale
+            fontScale: fontScale,
+            insets: insets
         )
         Task {
             await ReaderWebPageFactory.updateCSS(css, on: page)
-        }
-    }
-
-    @MainActor
-    private func installContentTapHandler() {
-        guard let page = session.page else { return }
-        Task {
-            await ReaderWebPageFactory.installContentTapHandler(on: page)
-        }
-    }
-
-    @MainActor
-    private func installReaderRuntime() {
-        guard let page = session.page else { return }
-        Task { await ReaderWebPageFactory.installReaderRuntime(on: page) }
-    }
-
-    @MainActor
-    private func installHorizontalScrollLock() {
-        guard let page = session.page else { return }
-        Task {
-            await ReaderWebPageFactory.installHorizontalScrollLock(on: page)
         }
     }
 
@@ -446,9 +485,8 @@ public struct ReaderWebView: View {
     // MARK: - Restore reading position
 
     @MainActor
-    private func maybeRestorePosition() {
+    private func restorePositionIfNeeded(on page: WebPage) async {
         guard
-            let page = session.page,
             !session.hasRestoredPosition,
             let restoreBlockIndex,
             restoreBlockIndex > 0
@@ -457,10 +495,24 @@ public struct ReaderWebView: View {
             return
         }
         session.hasRestoredPosition = true
-        Task {
-            // Slight delay to let layout settle after load.
-            try? await Task.sleep(nanoseconds: 150_000_000)
-            await ReaderWebPageFactory.scrollToBlock(restoreBlockIndex, on: page)
-        }
+        await ReaderWebPageFactory.scrollToBlock(restoreBlockIndex, on: page)
+    }
+}
+
+/// A spinner that appears only after a noticeable delay, so quick loads
+/// show nothing but the themed background.
+private struct RevealProgressView: View {
+    @State private var isVisible = false
+
+    var body: some View {
+        ProgressView()
+            .controlSize(.large)
+            .opacity(isVisible ? 1 : 0)
+            .task {
+                try? await Task.sleep(for: .milliseconds(700))
+                withAnimation(.easeIn(duration: 0.2)) {
+                    isVisible = true
+                }
+            }
     }
 }

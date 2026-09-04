@@ -399,14 +399,15 @@ extension ItemStorageClient {
             .execute(db)
     }
 
-    private static func storageInfos(_ db: Database, itemIDs: [UUID]) throws -> [ItemStorageInfo] {
+    /// Storage state for a batch of items. Internal so library observation
+    /// can fold it into the same read transaction as the item rows.
+    static func storageInfos(_ db: Database, itemIDs: [UUID]) throws -> [ItemStorageInfo] {
         guard !itemIDs.isEmpty else { return [] }
         let items = try SavedItemSyncTable
             .where { $0.id.in(itemIDs) }
             .fetchAll(db)
-        let contents = try SavedItemContentLocalTable
-            .where { $0.itemID.in(itemIDs) }
-            .fetchAll(db)
+        // Only the render format is needed here; never pull the text columns.
+        let contents = try LibraryQueries.contentMetas(db, itemIDs: itemIDs)
         let storageRows = try ItemStorageLocalTable
             .where { $0.itemID.in(itemIDs) }
             .fetchAll(db)
