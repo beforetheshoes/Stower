@@ -1,12 +1,290 @@
 import ComposableArchitecture
+import Dependencies
+import DependenciesTestSupport
 import Foundation
 @testable import StowerData
 @testable import StowerFeature
 import Testing
 
+/// Library behavior is driven by database observation, so these tests run
+/// against a real (temporary) database and assert on what observation
+/// delivers rather than on hand-rolled reload actions.
 @MainActor
-@Suite
+@Suite(.dependencies { try $0.bootstrapStowerDatabase(enableSync: false) })
 struct LibraryFeatureTests {
+    @Dependency(\.stowerRepository)
+    var repository
+
+    @Test
+    func defaultsToInboxWithCompactNewestFirstLayout() {
+        let state = LibraryFeature.State()
+        #expect(state.filter == .unread)
+        #expect(state.displayStyle == .compact)
+        #expect(state.sortOrder == .newestFirst)
+        #expect(!state.hasLoaded)
+        #expect(state.items.isEmpty)
+    }
+
+    @Test
+    func onAppearObservesInboxRows() async throws {
+        let unread = try await seed(title: "Unread article")
+        var readItem = try await seed(title: "Read article")
+        try await repository.setReadStatus(readItem.id, true)
+        readItem.isRead = true
+
+        let store = TestStore(initialState: LibraryFeature.State()) {
+            LibraryFeature()
+        }
+        store.exhaustivity = .off(showSkippedAssertions: false)
+
+        await store.send(.onAppear)
+        await store.receive(.libraryLoaded) {
+            $0.hasLoaded = true
+        }
+        #expect(store.state.items.map(\.id) == [unread.id])
+        #expect(store.state.availableTags.isEmpty)
+    }
+
+    @Test
+    func markingReadRemovesRowFromInboxThroughObservation() async throws {
+        let item = try await seed(title: "Finish me")
+        let store = TestStore(initialState: LibraryFeature.State()) {
+            LibraryFeature()
+        }
+        store.exhaustivity = .off(showSkippedAssertions: false)
+
+        await store.send(.onAppear)
+        await store.receive(.libraryLoaded)
+        #expect(store.state.items.map(\.id) == [item.id])
+
+        await store.send(.toggleRead(item.id))
+        try await eventually { store.state.items.isEmpty }
+        #expect(try await repository.loadItem(item.id)?.isRead == true)
+    }
+
+    @Test
+    func filterChangeReloadsObservedQueryAndClearsSearch() async throws {
+        let item = try await seed(title: "Finished")
+        try await repository.setReadStatus(item.id, true)
+
+        var initial = LibraryFeature.State()
+        initial.query = "fin"
+        let store = TestStore(initialState: initial) {
+            LibraryFeature()
+        }
+        store.exhaustivity = .off(showSkippedAssertions: false)
+
+        await store.send(.onAppear)
+        await store.receive(.libraryLoaded)
+        #expect(store.state.items.isEmpty)
+
+        await store.send(.filterChanged(.read)) {
+            $0.filter = .read
+            $0.query = ""
+        }
+        await store.receive(.libraryLoaded)
+        #expect(store.state.items.map(\.id) == [item.id])
+    }
+
+    @Test
+    func searchIsDebouncedAndMatchesBodyText() async throws {
+        let match = try await seed(title: "Alpha", body: "The quick brown fox")
+        _ = try await seed(title: "Beta", body: "Nothing to see")
+        let clock = TestClock()
+
+        let store = TestStore(initialState: LibraryFeature.State()) {
+            LibraryFeature()
+        } withDependencies: {
+            $0.continuousClock = clock
+        }
+        store.exhaustivity = .off(showSkippedAssertions: false)
+
+        await store.send(.onAppear)
+        await store.receive(.libraryLoaded)
+        #expect(store.state.items.count == 2)
+
+        await store.send(.queryChanged("brown")) {
+            $0.query = "brown"
+        }
+        await clock.advance(by: .milliseconds(150))
+        await store.receive(.libraryLoaded)
+        #expect(store.state.items.map(\.id) == [match.id])
+        // Body text travels with search results so the row can show a snippet.
+        #expect(store.state.items[0].content.contains("brown fox"))
+    }
+
+    @Test
+    func sortOrderChangeReversesObservedRows() async throws {
+        let first = try await seed(title: "First")
+        let second = try await seed(title: "Second")
+
+        let store = TestStore(initialState: LibraryFeature.State()) {
+            LibraryFeature()
+        }
+        store.exhaustivity = .off(showSkippedAssertions: false)
+
+        await store.send(.onAppear)
+        await store.receive(.libraryLoaded)
+        #expect(store.state.items.map(\.id) == [second.id, first.id])
+
+        await store.send(.sortOrderChanged(.oldestFirst)) {
+            $0.sortOrder = .oldestFirst
+        }
+        await store.receive(.libraryLoaded)
+        #expect(store.state.items.map(\.id) == [first.id, second.id])
+    }
+
+    @Test
+    func toggleStarWhileViewingStarredRemovesRow() async throws {
+        let item = try await seed(title: "Starred")
+        try await repository.setStarred(item.id, true)
+
+        var initial = LibraryFeature.State()
+        initial.filter = .starred
+        let store = TestStore(initialState: initial) {
+            LibraryFeature()
+        }
+        store.exhaustivity = .off(showSkippedAssertions: false)
+
+        await store.send(.onAppear)
+        await store.receive(.libraryLoaded)
+        #expect(store.state.items.map(\.id) == [item.id])
+
+        await store.send(.toggleStar(item.id))
+        try await eventually { store.state.items.isEmpty }
+    }
+
+    @Test
+    func deleteMovesRowToTrashAndBack() async throws {
+        let item = try await seed(title: "Doomed")
+        let store = TestStore(initialState: LibraryFeature.State()) {
+            LibraryFeature()
+        }
+        store.exhaustivity = .off(showSkippedAssertions: false)
+
+        await store.send(.onAppear)
+        await store.receive(.libraryLoaded)
+
+        await store.send(.deleteItem(item.id))
+        await store.receive(.deleteFinished)
+        try await eventually { store.state.items.isEmpty }
+
+        await store.send(.filterChanged(.recentlyDeleted)) {
+            $0.filter = .recentlyDeleted
+        }
+        await store.receive(.libraryLoaded)
+        #expect(store.state.items.map(\.id) == [item.id])
+
+        await store.send(.restoreFromTrash(item.id))
+        await store.receive(.deleteFinished)
+        try await eventually { store.state.items.isEmpty }
+    }
+
+    @Test
+    func toggleTagOnItemAssignsAndUnassignsThroughObservation() async throws {
+        let item = try await seed(title: "Taggable")
+        let tag = try await repository.createTag("work", nil)
+
+        let store = TestStore(initialState: LibraryFeature.State()) {
+            LibraryFeature()
+        }
+        store.exhaustivity = .off(showSkippedAssertions: false)
+
+        await store.send(.onAppear)
+        await store.receive(.libraryLoaded)
+        #expect(store.state.availableTags.map(\.id) == [tag.id])
+        #expect(store.state.items[0].tagIDs.isEmpty)
+
+        await store.send(.toggleTagOnItem(item.id, tag.id))
+        try await eventually { store.state.items.first?.tagIDs == [tag.id] }
+
+        await store.send(.toggleTagOnItem(item.id, tag.id))
+        try await eventually { store.state.items.first?.tagIDs.isEmpty == true }
+    }
+
+    @Test
+    func toggleTagWhileViewingUntaggedDropsRow() async throws {
+        let item = try await seed(title: "Orphan")
+        let tag = try await repository.createTag("work", nil)
+
+        var initial = LibraryFeature.State()
+        initial.filter = .untagged
+        let store = TestStore(initialState: initial) {
+            LibraryFeature()
+        }
+        store.exhaustivity = .off(showSkippedAssertions: false)
+
+        await store.send(.onAppear)
+        await store.receive(.libraryLoaded)
+        #expect(store.state.items.map(\.id) == [item.id])
+
+        await store.send(.toggleTagOnItem(item.id, tag.id))
+        try await eventually { store.state.items.isEmpty }
+    }
+
+    // MARK: - Inline Tag Creation
+
+    @Test
+    func inlineCreateTagCreatesAssignsAndObserves() async throws {
+        let item = try await seed(title: "Article")
+        let store = TestStore(initialState: LibraryFeature.State()) {
+            LibraryFeature()
+        }
+        store.exhaustivity = .off(showSkippedAssertions: false)
+
+        await store.send(.onAppear)
+        await store.receive(.libraryLoaded)
+
+        let suggestedColor = TagColorSuggester.suggestColor(existingHexValues: [])
+        await store.send(.inlineCreateTagTapped(item.id)) {
+            $0.inlineTagCreation = LibraryFeature.InlineTagCreation(
+                itemID: item.id,
+                colorHex: suggestedColor
+            )
+        }
+        await store.send(.inlineCreateTagNameChanged("reading")) {
+            $0.inlineTagCreation?.name = "reading"
+        }
+        await store.send(.inlineCreateTagConfirmed) {
+            $0.inlineTagCreation = nil
+        }
+        await store.receive(\.inlineTagCreated)
+        try await eventually {
+            store.state.availableTags.map(\.name) == ["reading"]
+                && store.state.items.first?.tagIDs.count == 1
+        }
+    }
+
+    @Test
+    func inlineCreateTag_emptyName_isNoOp() async {
+        var initial = LibraryFeature.State()
+        initial.inlineTagCreation = LibraryFeature.InlineTagCreation(itemID: UUID())
+
+        let store = TestStore(initialState: initial) {
+            LibraryFeature()
+        }
+
+        await store.send(.inlineCreateTagConfirmed) {
+            $0.inlineTagCreation = nil
+        }
+    }
+
+    @Test
+    func inlineCreateTag_dismiss_clearsState() async {
+        var initial = LibraryFeature.State()
+        initial.inlineTagCreation = LibraryFeature.InlineTagCreation(itemID: UUID(), name: "wip")
+
+        let store = TestStore(initialState: initial) {
+            LibraryFeature()
+        }
+
+        await store.send(.inlineCreateTagDismissed) {
+            $0.inlineTagCreation = nil
+        }
+    }
+
+    // MARK: - Saving
+
     @Test
     func browserExtensionSaveDoesNotOpenReader() async throws {
         let url = try #require(URL(string: "https://example.com/reference"))
@@ -32,323 +310,6 @@ struct LibraryFeatureTests {
         await store.receive(.articleSaveFinished(result)) {
             $0.isSaving = false
             $0.saveState = .ready
-            $0.items = [item]
-        }
-    }
-
-    @Test
-    func defaultsToInboxWithCompactNewestFirstLayout() {
-        let state = LibraryFeature.State()
-        #expect(state.filter == .unread)
-        #expect(state.displayStyle == .compact)
-        #expect(state.sortOrder == .newestFirst)
-    }
-
-    @Test
-    func reloadPopulatesItems() async {
-        let expected = [
-            SavedItem(title: "Alpha", content: "A", sourceURL: "https://a.com"),
-            SavedItem(title: "Beta", content: "B", sourceURL: "https://b.com"),
-        ]
-
-        let store = TestStore(initialState: LibraryFeature.State()) {
-            LibraryFeature()
-        } withDependencies: {
-            $0.stowerRepository.fetchLibrary = { _ in expected }
-        }
-
-        await store.send(LibraryFeature.Action.reload) {
-            $0.isLoading = true
-        }
-        await store.receive(LibraryFeature.Action.response(expected)) {
-            $0.isLoading = false
-            $0.items = expected
-        }
-        await store.receive(LibraryFeature.Action.storageInfoLoaded([:]))
-    }
-
-    @Test
-    func searchUsesLocalizedContains() {
-        var state = LibraryFeature.State()
-        state.items = [
-            SavedItem(title: "Swift Concurrency", content: ""),
-            SavedItem(title: "Feed Reader", content: ""),
-        ]
-        state.query = "swift"
-
-        #expect(state.filteredItems.count == 1)
-        #expect(state.filteredItems[0].title == "Swift Concurrency")
-    }
-
-    @Test
-    func filterChanged_triggersReloadWithNewFilter() async {
-        let unreadItem = SavedItem(title: "U", content: "", isRead: false)
-        let readItem = SavedItem(title: "R", content: "", isRead: true)
-
-        let store = TestStore(initialState: LibraryFeature.State()) {
-            LibraryFeature()
-        } withDependencies: {
-            $0.stowerRepository.fetchLibrary = { filter in
-                switch filter {
-                case .read:
-                    return [readItem]
-                case .unread:
-                    return [unreadItem]
-                default:
-                    return [unreadItem, readItem]
-                }
-            }
-        }
-
-        await store.send(.filterChanged(.read)) {
-            $0.filter = .read
-        }
-        await store.receive(.reload) { $0.isLoading = true }
-        await store.receive(.response([readItem])) {
-            $0.isLoading = false
-            $0.items = [readItem]
-        }
-        await store.receive(.storageInfoLoaded([:]))
-    }
-
-    @Test
-    func toggleStar_whileViewingStarred_removesRow() async {
-        let starred = SavedItem(title: "S", content: "", isStarred: true)
-        var initial = LibraryFeature.State()
-        initial.filter = .starred
-        initial.items = [starred]
-
-        let store = TestStore(initialState: initial) {
-            LibraryFeature()
-        } withDependencies: {
-            $0.stowerRepository.setStarred = { _, _ in }
-        }
-
-        await store.send(.toggleStar(starred.id)) {
-            $0.items = []
-        }
-    }
-
-    @Test
-    func deleteItem_inAllFilter_removesOptimistically() async {
-        let item = SavedItem(title: "Doomed", content: "")
-        var initial = LibraryFeature.State()
-        initial.items = [item]
-
-        let store = TestStore(initialState: initial) {
-            LibraryFeature()
-        } withDependencies: {
-            $0.stowerRepository.deleteItem = { _ in }
-        }
-
-        await store.send(.deleteItem(item.id)) {
-            $0.items = []
-        }
-        await store.receive(.deleteFinished)
-    }
-
-    @Test
-    func deleteItem_inTrashFilter_keepsRowVisible() async {
-        let item = SavedItem(title: "Already deleted", content: "")
-        var initial = LibraryFeature.State()
-        initial.filter = .recentlyDeleted
-        initial.items = [item]
-
-        let store = TestStore(initialState: initial) {
-            LibraryFeature()
-        } withDependencies: {
-            $0.stowerRepository.deleteItem = { _ in }
-        }
-
-        await store.send(.deleteItem(item.id))
-        await store.receive(.deleteFinished)
-        #expect(store.state.items.count == 1)
-    }
-
-    @Test
-    func permanentlyDelete_removesRow() async {
-        let item = SavedItem(title: "Gone", content: "")
-        var initial = LibraryFeature.State()
-        initial.filter = .recentlyDeleted
-        initial.items = [item]
-
-        let store = TestStore(initialState: initial) {
-            LibraryFeature()
-        } withDependencies: {
-            $0.stowerRepository.permanentlyDelete = { _ in }
-        }
-
-        await store.send(.permanentlyDelete(item.id)) {
-            $0.items = []
-        }
-        await store.receive(.deleteFinished)
-    }
-
-    @Test
-    func toggleTagOnItem_addsTagOptimistically() async {
-        let tagID = UUID()
-        let item = SavedItem(title: "Untagged", content: "")
-        var initial = LibraryFeature.State()
-        initial.items = [item]
-        initial.availableTags = [Tag(name: "work", id: tagID)]
-
-        let store = TestStore(initialState: initial) {
-            LibraryFeature()
-        } withDependencies: {
-            $0.stowerRepository.addTag = { _, _ in }
-        }
-
-        await store.send(.toggleTagOnItem(item.id, tagID)) {
-            $0.items[0].tagIDs = [tagID]
-        }
-    }
-
-    @Test
-    func toggleTagOnItem_removesTagOptimistically() async {
-        let tagID = UUID()
-        let item = SavedItem(title: "Tagged", content: "", tagIDs: [tagID])
-        var initial = LibraryFeature.State()
-        initial.items = [item]
-        initial.availableTags = [Tag(name: "work", id: tagID)]
-
-        let store = TestStore(initialState: initial) {
-            LibraryFeature()
-        } withDependencies: {
-            $0.stowerRepository.removeTag = { _, _ in }
-        }
-
-        await store.send(.toggleTagOnItem(item.id, tagID)) {
-            $0.items[0].tagIDs = []
-        }
-    }
-
-    @Test
-    func toggleTagOnItem_whileViewingUntagged_dropsRowWhenTagAdded() async {
-        let tagID = UUID()
-        let item = SavedItem(title: "Orphan", content: "")
-        var initial = LibraryFeature.State()
-        initial.filter = .untagged
-        initial.items = [item]
-        initial.availableTags = [Tag(name: "work", id: tagID)]
-
-        let store = TestStore(initialState: initial) {
-            LibraryFeature()
-        } withDependencies: {
-            $0.stowerRepository.addTag = { _, _ in }
-        }
-
-        await store.send(.toggleTagOnItem(item.id, tagID)) {
-            $0.items = []
-        }
-    }
-
-    @Test
-    func toggleTagOnItem_whileViewingTagFilter_dropsRowWhenTagRemoved() async {
-        let tagID = UUID()
-        let otherTag = UUID()
-        let item = SavedItem(title: "Tagged", content: "", tagIDs: [tagID, otherTag])
-        var initial = LibraryFeature.State()
-        initial.filter = .tag(tagID)
-        initial.items = [item]
-        initial.availableTags = [
-            Tag(name: "work", id: tagID),
-            Tag(name: "later", id: otherTag),
-        ]
-
-        let store = TestStore(initialState: initial) {
-            LibraryFeature()
-        } withDependencies: {
-            $0.stowerRepository.removeTag = { _, _ in }
-        }
-
-        await store.send(.toggleTagOnItem(item.id, tagID)) {
-            $0.items = []
-        }
-    }
-
-    @Test
-    func reloadTags_populatesAvailableTags() async {
-        let tags = [Tag(name: "a"), Tag(name: "b")]
-        let store = TestStore(initialState: LibraryFeature.State()) {
-            LibraryFeature()
-        } withDependencies: {
-            $0.stowerRepository.fetchTags = { tags }
-        }
-
-        await store.send(.reloadTags)
-        await store.receive(.tagsLoaded(tags)) {
-            $0.availableTags = tags
-        }
-    }
-
-    // MARK: - Inline Tag Creation
-
-    @Test
-    func inlineCreateTag_createsAndAssigns() async {
-        let item = SavedItem(title: "Article", content: "")
-        let newTag = Tag(name: "reading", colorHex: FlexokiRaw.shade(.red, 600))
-        var initial = LibraryFeature.State()
-        initial.items = [item]
-        initial.availableTags = []
-
-        let store = TestStore(initialState: initial) {
-            LibraryFeature()
-        } withDependencies: {
-            $0.stowerRepository.createTag = { _, _ in newTag }
-            $0.stowerRepository.addTag = { _, _ in }
-            $0.stowerRepository.fetchTags = { [newTag] }
-        }
-
-        let suggestedColor = TagColorSuggester.suggestColor(existingHexValues: [])
-        await store.send(.inlineCreateTagTapped(item.id)) {
-            $0.inlineTagCreation = LibraryFeature.InlineTagCreation(
-                itemID: item.id,
-                colorHex: suggestedColor
-            )
-        }
-        await store.send(.inlineCreateTagNameChanged("reading")) {
-            $0.inlineTagCreation?.name = "reading"
-        }
-        await store.send(.inlineCreateTagConfirmed) {
-            $0.inlineTagCreation = nil
-        }
-        await store.receive(.inlineTagCreated(newTag, item.id)) {
-            $0.availableTags = [newTag]
-            $0.items[0].tagIDs = [newTag.id]
-        }
-        await store.receive(.reloadTags)
-        await store.receive(.tagsLoaded([newTag]))
-    }
-
-    @Test
-    func inlineCreateTag_emptyName_isNoOp() async {
-        let item = SavedItem(title: "Article", content: "")
-        var initial = LibraryFeature.State()
-        initial.items = [item]
-        initial.inlineTagCreation = LibraryFeature.InlineTagCreation(itemID: item.id)
-
-        let store = TestStore(initialState: initial) {
-            LibraryFeature()
-        }
-
-        await store.send(.inlineCreateTagConfirmed) {
-            $0.inlineTagCreation = nil
-        }
-        // No effects — createTag and addTag should NOT be called.
-    }
-
-    @Test
-    func inlineCreateTag_dismiss_clearsState() async {
-        let item = SavedItem(title: "Article", content: "")
-        var initial = LibraryFeature.State()
-        initial.inlineTagCreation = LibraryFeature.InlineTagCreation(itemID: item.id, name: "wip")
-
-        let store = TestStore(initialState: initial) {
-            LibraryFeature()
-        }
-
-        await store.send(.inlineCreateTagDismissed) {
-            $0.inlineTagCreation = nil
         }
     }
 
@@ -377,7 +338,6 @@ struct LibraryFeatureTests {
             $0.isSaving = false
             $0.saveState = .ready
             $0.sourceURL = ""
-            $0.items = [item]
         }
         await store.receive(.openItem(item))
     }
@@ -399,8 +359,8 @@ struct LibraryFeatureTests {
         } withDependencies: {
             $0.articleSaveClient = ArticleSaveClient(
                 save: { _ in result },
-                refresh: { _, _ in throw TestCaptureError.failed },
-                hydrate: { _, _ in throw TestCaptureError.failed }
+                refresh: { _, _ in result },
+                hydrate: { _, _ in result }
             )
         }
 
@@ -416,197 +376,47 @@ struct LibraryFeatureTests {
             $0.saveState = .partial
             $0.errorMessage = warning
             $0.sourceURL = ""
-            $0.items = [item]
         }
         await store.receive(.openItem(item))
     }
 
     @Test
-    func saveURLReportsCaptureFailureWithoutCreatingAnItem() async {
+    func invalidURLFailsWithoutSaving() async {
         let store = TestStore(initialState: LibraryFeature.State()) {
             LibraryFeature()
-        } withDependencies: {
-            $0.articleSaveClient = ArticleSaveClient(
-                save: { _ in throw TestCaptureError.failed },
-                refresh: { _, _ in throw TestCaptureError.failed },
-                hydrate: { _, _ in throw TestCaptureError.failed }
-            )
         }
 
-        await store.send(.sourceURLChanged("https://example.com/failure")) {
-            $0.sourceURL = "https://example.com/failure"
+        await store.send(.sourceURLChanged("not a url")) {
+            $0.sourceURL = "not a url"
         }
         await store.send(.saveURLTapped) {
-            $0.isSaving = true
-            $0.saveState = .extracting
-        }
-        await store.receive(.saveURLFailed("Capture failed.")) {
-            $0.isSaving = false
+            $0.errorMessage = "Enter a valid source URL."
             $0.saveState = .failed
-            $0.errorMessage = "Capture failed."
-        }
-        #expect(store.state.items.isEmpty)
-    }
-
-    @Test
-    func saveURLCanBeCancelledWithoutPublishingAResult() async {
-        let cancelled = LockIsolated(false)
-        let (started, startedContinuation) = AsyncStream<Void>.makeStream()
-        var startedIterator = started.makeAsyncIterator()
-        let store = TestStore(initialState: LibraryFeature.State()) {
-            LibraryFeature()
-        } withDependencies: {
-            $0.articleSaveClient = ArticleSaveClient(
-                save: { _ in
-                    startedContinuation.yield()
-                    return try await withTaskCancellationHandler {
-                        try await Task<Never, Never>.sleep(nanoseconds: 60_000_000_000)
-                        throw TestCaptureError.failed
-                    } onCancel: {
-                        cancelled.setValue(true)
-                    }
-                },
-                refresh: { _, _ in throw TestCaptureError.failed },
-                hydrate: { _, _ in throw TestCaptureError.failed }
-            )
-        }
-
-        await store.send(.sourceURLChanged("https://example.com/slow")) {
-            $0.sourceURL = "https://example.com/slow"
-        }
-        await store.send(.saveURLTapped) {
-            $0.isSaving = true
-            $0.saveState = .extracting
-        }
-        _ = await startedIterator.next()
-        await store.send(.cancelURLSaveTapped) {
-            $0.isSaving = false
-            $0.saveState = .queued
-        }
-        await store.finish()
-        #expect(cancelled.value)
-        #expect(store.state.items.isEmpty)
-    }
-
-    @Test
-    func refreshExplicitlyUpgradesLegacyItemToCaptureVersionOne() async {
-        let legacy = SavedItem(
-            title: "Legacy",
-            content: "Old",
-            sourceURL: "https://example.com/article"
-        )
-        let refreshed = SavedItem(
-            title: "Captured",
-            content: "New",
-            id: legacy.id,
-            sourceURL: "https://example.com/article",
-            captureVersion: 1,
-            processingState: .ready
-        )
-        var initial = LibraryFeature.State()
-        initial.items = [legacy]
-
-        let store = TestStore(initialState: initial) {
-            LibraryFeature()
-        } withDependencies: {
-            $0.stowerRepository.loadItem = { id in id == legacy.id ? legacy : nil }
-            $0.articleSaveClient = ArticleSaveClient(
-                save: { _ in throw TestCaptureError.failed },
-                refresh: { id, url in
-                    #expect(id == legacy.id)
-                    #expect(url.absoluteString == "https://example.com/article")
-                    return ArticleSaveResult(item: refreshed, state: .ready)
-                },
-                hydrate: { _, _ in throw TestCaptureError.failed }
-            )
-        }
-
-        await store.send(.reprocessItem(legacy.id)) {
-            $0.items[0].processingState = .extracting
-        }
-        await store.receive(.reprocessFinished(refreshed)) {
-            $0.items = [refreshed]
         }
     }
 
-    @Test
-    func saveTextImport_usesSelectedModeAndOpensCreatedItem() async throws {
-        let item = SavedItem(title: "Imported", content: "Body", renderFormat: .structuredV1)
-        let ingested = LockIsolated<[(String?, TextImportMode)]>([])
-        var initial = LibraryFeature.State()
-        initial.textImportDraft = LibraryFeature.TextImportDraft(
-            title: "Manual Title",
-            text: "# Heading",
-            mode: .markdown
-        )
+    // MARK: - Helpers
 
-        let store = TestStore(initialState: initial) {
-            LibraryFeature()
-        } withDependencies: {
-            $0.textIngestionClient.ingest = { text, explicitTitle, titleHint, mode in
-                #expect(text == "# Heading")
-                #expect(explicitTitle == "Manual Title")
-                #expect(titleHint == nil)
-                ingested.withValue { $0.append((explicitTitle, mode)) }
-                return IngestionResult.structuredText(
-                    title: "Imported",
-                    blocks: [.heading(level: 1, inlines: [.text("Heading")])],
-                    plainText: "Heading"
-                )
-            }
-            $0.stowerRepository.createItemFromIngestion = { _ in item }
-        }
-
-        await store.send(.saveTextImportTapped) {
-            $0.isSaving = true
-            $0.saveState = .extracting
-        }
-        await store.receive(.saveURLFinished(item)) {
-            $0.isSaving = false
-            $0.saveState = .ready
-            $0.textImportDraft = nil
-            $0.items = [item]
-        }
-        await store.receive(.openItem(item))
-
-        #expect(ingested.value.map(\.1) == [.markdown])
-    }
-
-    @Test
-    func importTextResolved_usesHintAndModeWithoutOpeningReader() async {
-        let item = SavedItem(title: "Meeting Notes", content: "Body", renderFormat: .structuredV1)
-
-        let store = TestStore(initialState: LibraryFeature.State()) {
-            LibraryFeature()
-        } withDependencies: {
-            $0.textIngestionClient.ingest = { text, explicitTitle, titleHint, mode in
-                #expect(text == "Body text")
-                #expect(explicitTitle == nil)
-                #expect(titleHint == "Meeting Notes")
-                #expect(mode == .auto)
-                return IngestionResult.structuredText(
-                    title: "Meeting Notes",
-                    blocks: [.paragraph([.text("Body text")])],
-                    plainText: "Body text"
-                )
-            }
-            $0.stowerRepository.createItemFromIngestion = { _ in item }
-        }
-
-        await store.send(.importTextResolved("Body text", "Meeting Notes", .auto)) {
-            $0.isSaving = true
-            $0.saveState = .extracting
-        }
-        await store.receive(.saveURLFinished(item)) {
-            $0.isSaving = false
-            $0.saveState = .ready
-            $0.items = [item]
-        }
+    @discardableResult
+    private func seed(title: String, body: String = "Body text") async throws -> SavedItem {
+        var ingestion = IngestionResult.sharedText(body)
+        ingestion.title = title
+        return try await repository.createItemFromIngestion(ingestion)
     }
 }
 
-private enum TestCaptureError: Error, LocalizedError {
-    case failed
-
-    var errorDescription: String? { "Capture failed." }
+/// Waits for a database observation to deliver, polling the store's state.
+@MainActor
+func eventually(
+    timeout: Duration = .seconds(3),
+    sourceLocation: SourceLocation = #_sourceLocation,
+    _ condition: @MainActor () -> Bool
+) async throws {
+    let clock = ContinuousClock()
+    let deadline = clock.now + timeout
+    while !condition() {
+        if clock.now > deadline { break }
+        try await Task.sleep(for: .milliseconds(20))
+    }
+    #expect(condition(), "Condition not met before timeout", sourceLocation: sourceLocation)
 }

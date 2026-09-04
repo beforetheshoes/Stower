@@ -1,5 +1,6 @@
 import ComposableArchitecture
 import Foundation
+import SQLiteData
 
 @Reducer
 public struct SidebarFeature {
@@ -8,9 +9,9 @@ public struct SidebarFeature {
     @ObservableState
     public struct State: Equatable {
         public var selection: LibraryFilter = .unread
-        public var counts: LibraryListCounts = .zero
-        public var tags = [Tag]()
-        public var isLoading = false
+        /// Database-observed counts and tags. Badges update on their own
+        /// whenever an item or tag changes anywhere in the app.
+        @Fetch public var sidebar = SidebarRequest.Value()
         public var errorMessage: String?
         /// Bound to the "New Tag" sheet.
         public var isCreatingTag: Bool = false
@@ -19,6 +20,9 @@ public struct SidebarFeature {
         public var newTagColorHex: String = ""
         /// Non-nil when the user is renaming a tag — holds the working name.
         public var renamingTag: RenameState?
+
+        public var counts: LibraryListCounts { sidebar.counts }
+        public var tags: [Tag] { sidebar.tags }
 
         public struct RenameState: Equatable {
             public var tagID: UUID
@@ -34,8 +38,7 @@ public struct SidebarFeature {
 
     public enum Action: Equatable {
         case onAppear
-        case reload
-        case loaded(LibraryListCounts, [Tag])
+        case sidebarLoaded
         case failed(String)
         case selectList(LibraryFilter)
 
@@ -54,59 +57,38 @@ public struct SidebarFeature {
 
         case deleteTagTapped(UUID)
         case tagDeleted
-
-        case observedChange
     }
 
     @Dependency(\.stowerRepository)
     var repository
 
-    enum CancelID: Hashable { case observeChanges }
+    enum CancelID: Hashable { case load }
 
     public var body: some ReducerOf<Self> {
         Reduce { state, action in
             switch action {
             case .onAppear:
-                let repository = self.repository
-                return .merge(
-                    .send(.reload),
-                    .run { send in
-                        for await _ in repository.observeLibraryChanges() {
-                            await send(.observedChange)
-                        }
-                    }
-                    .cancellable(id: CancelID.observeChanges, cancelInFlight: true)
-                )
-
-            case .reload:
-                state.isLoading = true
-                state.errorMessage = nil
-                let repository = self.repository
+                let sidebar = state.$sidebar
                 return .run { send in
                     do {
-                        async let counts = repository.fetchListCounts()
-                        async let tags = repository.fetchTags()
-                        let pair = try await (counts, tags)
-                        await send(.loaded(pair.0, pair.1))
+                        try await sidebar.load(SidebarRequest(), animation: .default)
+                        await send(.sidebarLoaded)
                     } catch {
                         await send(.failed(error.localizedDescription))
                     }
                 }
+                .cancellable(id: CancelID.load, cancelInFlight: true)
 
-            case let .loaded(counts, tags):
-                state.isLoading = false
-                state.counts = counts
-                state.tags = tags
+            case .sidebarLoaded:
                 // If the currently selected tag was deleted elsewhere, fall
                 // back to All so the library doesn't get stuck on a ghost.
                 if case .tag(let id) = state.selection,
-                   !tags.contains(where: { $0.id == id }) {
+                   !state.tags.contains(where: { $0.id == id }) {
                     state.selection = .all
                 }
                 return .none
 
             case .failed(let error):
-                state.isLoading = false
                 state.errorMessage = error
                 return .none
 
@@ -155,7 +137,7 @@ public struct SidebarFeature {
                 }
 
             case .tagCreated:
-                return .send(.reload)
+                return .none
 
             case .renameTagTapped(let tag):
                 state.renamingTag = .init(tagID: tag.id, name: tag.name)
@@ -186,7 +168,7 @@ public struct SidebarFeature {
                 }
 
             case .tagRenamed:
-                return .send(.reload)
+                return .none
 
             case .deleteTagTapped(let id):
                 // If the deleted tag is selected, unfilter back to All.
@@ -204,10 +186,7 @@ public struct SidebarFeature {
                 }
 
             case .tagDeleted:
-                return .send(.reload)
-
-            case .observedChange:
-                return .send(.reload)
+                return .none
             }
         }
     }

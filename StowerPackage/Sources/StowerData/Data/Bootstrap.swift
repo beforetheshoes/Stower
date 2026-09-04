@@ -273,6 +273,9 @@ public enum StowerDatabase {
         migrator.registerMigration("add-cloud-asset-store") { db in
             try migration_v18(db)
         }
+        migrator.registerMigration("add-progress-unit-count") { db in
+            try migration_v19(db)
+        }
         try migrator.migrate(database)
     }
 
@@ -796,6 +799,46 @@ public enum StowerDatabase {
     /// storage state (pin/LRU/upload) and the single-row offload policy.
     /// UUID primary keys and no unique indexes on the synced table, per the
     /// SyncEngine safety rules.
+    /// Stores the reader block count beside `documentJSON` and keeps it
+    /// current with triggers, so list queries never decode a document.
+    private static func migration_v19(_ db: Database) throws {
+        try db.execute(sql: #"ALTER TABLE "savedItemContentLocalTables" ADD COLUMN "progressUnitCount" INTEGER"#)
+        try db.execute(sql: """
+            UPDATE "savedItemContentLocalTables"
+            SET "progressUnitCount" = CASE
+              WHEN "documentJSON" <> '' AND json_valid("documentJSON")
+                THEN json_array_length("documentJSON", '$.blocks')
+              ELSE NULL
+            END
+            """)
+        try db.execute(sql: """
+            CREATE TRIGGER IF NOT EXISTS "trg_savedItemContentLocalTables_progressUnitCount_insert"
+            AFTER INSERT ON "savedItemContentLocalTables"
+            BEGIN
+              UPDATE "savedItemContentLocalTables"
+              SET "progressUnitCount" = CASE
+                WHEN NEW."documentJSON" <> '' AND json_valid(NEW."documentJSON")
+                  THEN json_array_length(NEW."documentJSON", '$.blocks')
+                ELSE NULL
+              END
+              WHERE "itemID" = NEW."itemID";
+            END
+            """)
+        try db.execute(sql: """
+            CREATE TRIGGER IF NOT EXISTS "trg_savedItemContentLocalTables_progressUnitCount_update"
+            AFTER UPDATE OF "documentJSON" ON "savedItemContentLocalTables"
+            BEGIN
+              UPDATE "savedItemContentLocalTables"
+              SET "progressUnitCount" = CASE
+                WHEN NEW."documentJSON" <> '' AND json_valid(NEW."documentJSON")
+                  THEN json_array_length(NEW."documentJSON", '$.blocks')
+                ELSE NULL
+              END
+              WHERE "itemID" = NEW."itemID";
+            END
+            """)
+    }
+
     private static func migration_v18(_ db: Database) throws {
         try db.execute(sql: """
             CREATE TABLE IF NOT EXISTS "savedAssetManifestSyncTables" (

@@ -58,7 +58,7 @@ public struct LibraryScreen: View {
             }
             #endif
 
-            ForEach(store.filteredItems) { item in
+            ForEach(store.items) { item in
                 Button {
                     store.send(.openItem(item))
                 } label: {
@@ -172,9 +172,10 @@ public struct LibraryScreen: View {
         .navigationTitle(navigationTitle)
         .searchable(text: $store.query.sending(\.queryChanged), prompt: "Search")
         .overlay {
-            if store.isLoading {
-                ProgressView()
-            } else if store.filteredItems.isEmpty {
+            // Only after the first observation has delivered: a populated
+            // list must never be covered by a spinner, and the empty state
+            // must not flash before the rows arrive.
+            if store.hasLoaded, store.items.isEmpty {
                 libraryEmptyState
             }
         }

@@ -6,8 +6,13 @@ import SQLiteData
 
 extension StowerRepository {
     static func progressUnitCount(from local: SavedItemContentLocalTable?) -> Int? {
-        guard let local,
-              !local.documentJSON.isEmpty,
+        guard let local else { return nil }
+        // The triggered column is authoritative; decoding is only a fallback
+        // for a row written before the column existed and not yet backfilled.
+        if let count = local.progressUnitCount {
+            return count > 0 ? count : nil
+        }
+        guard !local.documentJSON.isEmpty,
               let data = local.documentJSON.data(using: .utf8),
               let document = try? JSONDecoder().decode(ReaderDocument.self, from: data),
               !document.blocks.isEmpty
@@ -15,6 +20,43 @@ extension StowerRepository {
             return nil
         }
         return document.blocks.count
+    }
+
+    /// Builds a library-row domain value from the sync row plus the light
+    /// content projection, avoiding the heavy text columns entirely.
+    static func toDomain(
+        sync: SavedItemSyncTable,
+        meta: SavedItemContentMeta?,
+        tagIDs: [UUID],
+        content: String
+    ) -> SavedItem {
+        SavedItem(
+            title: sync.title,
+            content: content,
+            id: sync.id,
+            sourceURL: sync.sourceURL,
+            canonicalURL: sync.canonicalURL,
+            renderFormat: RenderFormat(rawValue: meta?.renderFormat ?? "structuredV1") ?? .structuredV1,
+            documentVersion: meta?.documentVersion ?? 1,
+            captureVersion: meta?.captureVersion ?? 0,
+            excerpt: sync.excerpt,
+            heroImageURL: sync.heroImageURL,
+            author: sync.author,
+            publishedAt: sync.publishedAt,
+            siteName: sync.siteName,
+            readingTimeMinutes: sync.readingTimeMinutes,
+            hasRichMedia: sync.hasRichMedia,
+            processingState: processingState(fromStatus: meta?.localStatus),
+            processingError: meta?.localError,
+            createdAt: sync.createdAt,
+            updatedAt: sync.updatedAt,
+            lastReadBlockIndex: sync.lastReadBlockIndex,
+            progressUnitCount: (meta?.progressUnitCount).flatMap { $0 > 0 ? $0 : nil },
+            isRead: sync.isRead,
+            isStarred: sync.isStarred,
+            deletedAt: sync.deletedAt,
+            tagIDs: tagIDs
+        )
     }
 
     static func toDomain(
@@ -91,7 +133,11 @@ extension StowerRepository {
     }
 
     static func processingState(from local: SavedItemContentLocalTable?) -> ProcessingState {
-        switch local?.localStatus {
+        processingState(fromStatus: local?.localStatus)
+    }
+
+    static func processingState(fromStatus status: String?) -> ProcessingState {
+        switch status {
         case "available":
             return .ready
         case "partial":

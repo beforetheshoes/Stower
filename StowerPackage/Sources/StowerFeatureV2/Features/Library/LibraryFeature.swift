@@ -1,5 +1,6 @@
 import ComposableArchitecture
 import Foundation
+import SQLiteData
 
 @Reducer
 public struct LibraryFeature {
@@ -7,67 +8,37 @@ public struct LibraryFeature {
 
     @ObservableState
     public struct State: Equatable {
-        public var items = [SavedItem]()
+        /// Database-observed rows, tags, and storage state for the current
+        /// filter, query, and sort. Every write anywhere in the app shows up
+        /// here through observation; nothing reloads the list by hand.
+        @Fetch public var library = LibraryRequest.Value()
+        /// False until the first observation has delivered a value, so the
+        /// empty state never flashes before the rows arrive.
+        public var hasLoaded = false
         public var query = ""
         public var sourceURL = ""
-        public var isLoading = false
         public var isSaving = false
         public var saveState: ProcessingState = .queued
         public var errorMessage: String?
-        /// Which list is currently being viewed. Drives `fetchLibrary(_:)`.
+        /// Which list is currently being viewed. Part of the observed query.
         public var filter: LibraryFilter = .unread
         public var displayStyle: LibraryDisplayStyle = .compact
         public var sortOrder: LibrarySortOrder = .newestFirst
-        /// All tags known to the repository — drives the "Tags" submenu in the
-        /// library row context menu. Refreshed lazily via observeLibraryChanges.
-        public var availableTags = [Tag]()
         /// Non-nil when the user is creating a new tag inline from the tag submenu.
         public var inlineTagCreation: InlineTagCreation?
         /// Draft for the in-app text/markdown composer.
         public var textImportDraft: TextImportDraft?
-        /// Per-item offload/pin state, refreshed alongside the item list.
-        /// Drives the download-management context menu and the cloud badge.
-        public var storageInfoByID = [UUID: ItemStorageInfo]()
 
-        /// Library search matches against title, URL, site name, author,
-        /// excerpt, AND full body text (`item.content`). The body-text
-        /// component is what makes search work for PDFs rendered as page
-        /// images — their visible content is `<img>` tags, so the only
-        /// way to find a word inside a benefits summary from the library
-        /// bar is to match against the extracted plainText that lives on
-        /// the `SavedItem`. This is a linear scan over the visible
-        /// library window, which is fine at typical library sizes; a
-        /// future optimization could push this into a SQLite FTS5 index.
-        public var filteredItems: [SavedItem] {
-            let matches = query.isEmpty ? items : items.filter { item in
-                if item.title.localizedStandardContains(query) {
-                    return true
-                }
-                if let url = item.sourceURL, url.localizedStandardContains(query) {
-                    return true
-                }
-                if let site = item.siteName, site.localizedStandardContains(query) {
-                    return true
-                }
-                if let author = item.author, author.localizedStandardContains(query) {
-                    return true
-                }
-                if let excerpt = item.excerpt, excerpt.localizedStandardContains(query) {
-                    return true
-                }
-                if !item.content.isEmpty, item.content.localizedStandardContains(query) {
-                    return true
-                }
-                return false
-            }
-            switch sortOrder {
-            case .newestFirst:
-                // Repository reads and optimistic inserts already arrive newest-first.
-                // Keeping that order also preserves stable ties and selection indexes.
-                return matches
-            case .oldestFirst:
-                return Array(matches.reversed())
-            }
+        public var items: [SavedItem] { library.items }
+        public var availableTags: [Tag] { library.tags }
+        public var storageInfoByID: [UUID: ItemStorageInfo] { library.storageInfoByID }
+
+        var request: LibraryRequest {
+            LibraryRequest(
+                filter: filter,
+                query: query,
+                oldestFirst: sortOrder == .oldestFirst
+            )
         }
 
         public init() {}
@@ -106,8 +77,7 @@ public struct LibraryFeature {
 
     public enum Action: Equatable {
         case onAppear
-        case reload
-        case response([SavedItem])
+        case libraryLoaded
         case failed(String)
         case queryChanged(String)
         case filterChanged(LibraryFilter)
@@ -134,7 +104,6 @@ public struct LibraryFeature {
         case importWebsiteSelected(URL)
 
         // Download management (offload)
-        case storageInfoLoaded([UUID: ItemStorageInfo])
         case setPinned(UUID, Bool)
         case removeDownload(UUID)
         case downloadNow(UUID)
@@ -147,12 +116,7 @@ public struct LibraryFeature {
         case importTextResolved(String, String?, TextImportMode)
 
         // Tag assignment
-        case reloadTags
-        case tagsLoaded([Tag])
-        case refreshTagIDs
-        case tagIDsRefreshed([UUID: [UUID]])
         case toggleTagOnItem(UUID, UUID)
-        case observedChange
 
         // Inline tag creation
         case inlineCreateTagTapped(UUID)
@@ -164,7 +128,8 @@ public struct LibraryFeature {
     }
 
     private enum CancelID: Hashable {
-        case observeChanges
+        case load
+        case searchDebounce
         case articleSave
         case articleRefresh
     }
@@ -183,90 +148,60 @@ public struct LibraryFeature {
     var itemStorageClient
     @Dependency(\.cloudAssetClient)
     var cloudAssetClient
+    @Dependency(\.continuousClock)
+    var clock
 
     public var body: some ReducerOf<Self> {
         Reduce { state, action in
             switch action {
             case .onAppear:
-                let repository = self.repository
-                return .merge(
-                    .send(.reload),
-                    .send(.reloadTags),
-                    .run { send in
-                        for await _ in repository.observeLibraryChanges() {
-                            await send(.observedChange)
-                        }
-                    }
-                    .cancellable(id: CancelID.observeChanges, cancelInFlight: true)
-                )
+                return loadLibrary(state)
 
-            case .observedChange:
-                // Refresh tag list and re-populate tagIDs on existing items.
-                // We avoid re-fetching the full item list to preserve scroll
-                // position and pending optimistic mutations.
-                return .merge(
-                    .send(.reloadTags),
-                    .send(.refreshTagIDs)
-                )
-
-            case .reloadTags:
-                let repository = self.repository
-                return .run { send in
-                    do {
-                        let tags = try await repository.fetchTags()
-                        await send(.tagsLoaded(tags))
-                    } catch {
-                        // Tag reload failure is non-critical — surface to
-                        // errorMessage only if nothing else is showing.
-                    }
-                }
-
-            case .tagsLoaded(let tags):
-                state.availableTags = tags
+            case .libraryLoaded:
+                state.hasLoaded = true
                 return .none
 
-            case .refreshTagIDs:
-                let ids = state.items.map(\.id)
-                let repository = self.repository
-                return .run { send in
-                    let mapping = try await repository.fetchTagIDsByItem(ids)
-                    await send(.tagIDsRefreshed(mapping))
-                }
-
-            case .tagIDsRefreshed(let mapping):
-                for idx in state.items.indices {
-                    let itemID = state.items[idx].id
-                    if let tagIDs = mapping[itemID] {
-                        state.items[idx].tagIDs = tagIDs
-                    } else {
-                        state.items[idx].tagIDs = []
-                    }
-                }
+            case .failed(let error):
+                state.errorMessage = error
                 return .none
+
+            case .queryChanged(let value):
+                guard value != state.query else { return .none }
+                state.query = value
+                // Typing re-runs the SQL search; a short debounce keeps the
+                // observation from being torn down on every keystroke.
+                let clock = self.clock
+                let request = state.request
+                let library = state.$library
+                return .run { send in
+                    try await clock.sleep(for: .milliseconds(150))
+                    try await library.load(request, animation: .default)
+                    await send(.libraryLoaded)
+                }
+                .cancellable(id: CancelID.searchDebounce, cancelInFlight: true)
+
+            case .filterChanged(let filter):
+                guard filter != state.filter else { return .none }
+                state.filter = filter
+                state.query = ""
+                return loadLibrary(state)
+
+            case .displayStyleChanged(let displayStyle):
+                state.displayStyle = displayStyle
+                return .none
+
+            case .sortOrderChanged(let sortOrder):
+                guard sortOrder != state.sortOrder else { return .none }
+                state.sortOrder = sortOrder
+                return loadLibrary(state)
 
             case let .toggleTagOnItem(itemID, tagID):
-                guard let idx = state.items.firstIndex(where: { $0.id == itemID }) else {
+                guard let item = state.items.first(where: { $0.id == itemID }) else {
                     return .none
                 }
-                let isApplied = state.items[idx].tagIDs.contains(tagID)
-                if isApplied {
-                    state.items[idx].tagIDs.removeAll { $0 == tagID }
-                } else {
-                    state.items[idx].tagIDs.append(tagID)
-                }
-                // If the current filter no longer matches this item, hide it.
-                let remainingTags = state.items[idx].tagIDs
-                switch state.filter {
-                case .tag(let filterTagID) where !remainingTags.contains(filterTagID):
-                    state.items.remove(at: idx)
-                case .untagged where !remainingTags.isEmpty:
-                    state.items.remove(at: idx)
-                default:
-                    break
-                }
+                let shouldAdd = !item.tagIDs.contains(tagID)
                 let repository = self.repository
-                let shouldAdd = !isApplied
-                return .run { _ in
+                return .run { send in
                     do {
                         if shouldAdd {
                             try await repository.addTag(itemID, tagID)
@@ -274,8 +209,7 @@ public struct LibraryFeature {
                             try await repository.removeTag(itemID, tagID)
                         }
                     } catch {
-                        // Swallow — optimistic UI wins. A subsequent
-                        // observeLibraryChanges ping will reconcile if needed.
+                        await send(.failed(error.localizedDescription))
                     }
                 }
 
@@ -311,60 +245,26 @@ public struct LibraryFeature {
 
                 let repository = self.repository
                 return .run { send in
-                    let tag = try await repository.createTag(name, colorHex)
-                    try await repository.addTag(itemID, tag.id)
-                    await send(.inlineTagCreated(tag, itemID))
-                }
-
-            case let .inlineTagCreated(tag, itemID):
-                if !state.availableTags.contains(where: { $0.id == tag.id }) {
-                    state.availableTags.append(tag)
-                }
-                if let idx = state.items.firstIndex(where: { $0.id == itemID }),
-                   !state.items[idx].tagIDs.contains(tag.id) {
-                    state.items[idx].tagIDs.append(tag.id)
-                }
-                return .send(.reloadTags)
-
-            case .reload:
-                state.isLoading = true
-                state.errorMessage = nil
-                let repository = self.repository
-                let filter = state.filter
-                return .run { send in
                     do {
-                        let items = try await repository.fetchLibrary(filter)
-                        await send(.response(items))
+                        let tag = try await repository.createTag(name, colorHex)
+                        try await repository.addTag(itemID, tag.id)
+                        await send(.inlineTagCreated(tag, itemID))
                     } catch {
                         await send(.failed(error.localizedDescription))
                     }
                 }
 
-            case .response(let items):
-                state.isLoading = false
-                state.items = items
-                let itemStorageClient = self.itemStorageClient
-                return .run { [ids = items.map(\.id)] send in
-                    var infos = [UUID: ItemStorageInfo]()
-                    for info in (try? await itemStorageClient.storageInfosForItems(ids)) ?? [] {
-                        infos[info.itemID] = info
-                    }
-                    await send(.storageInfoLoaded(infos))
-                }
-
-            case .storageInfoLoaded(let infos):
-                state.storageInfoByID = infos
+            case .inlineTagCreated:
+                // Observation delivers the new tag and assignment.
                 return .none
 
             case let .setPinned(id, isPinned):
-                state.storageInfoByID[id]?.isPinned = isPinned
                 let itemStorageClient = self.itemStorageClient
                 return .run { _ in
                     try? await itemStorageClient.setPinned(id, isPinned)
                 }
 
             case .removeDownload(let id):
-                state.storageInfoByID[id]?.offloadedAt = .distantPast
                 let repository = self.repository
                 return .run { send in
                     do {
@@ -372,45 +272,18 @@ public struct LibraryFeature {
                     } catch {
                         await send(.failed(error.localizedDescription))
                     }
-                    await send(.reload)
                 }
 
             case .downloadNow(let id):
-                if let index = state.items.firstIndex(where: { $0.id == id }) {
-                    state.items[index].processingState = .extracting
-                }
                 let repository = self.repository
                 return .run { send in
                     do {
+                        try? await repository.updateLocalContentStatus(id, "downloading", nil)
                         try await CloudAssetService.restore(itemID: id, repository: repository)
                     } catch {
                         await send(.failed(error.localizedDescription))
                     }
-                    await send(.reload)
                 }
-
-            case .failed(let error):
-                state.isLoading = false
-                state.errorMessage = error
-                return .none
-
-            case .queryChanged(let value):
-                state.query = value
-                return .none
-
-            case .filterChanged(let filter):
-                guard filter != state.filter else { return .none }
-                state.filter = filter
-                state.query = ""
-                return .send(.reload)
-
-            case .displayStyleChanged(let displayStyle):
-                state.displayStyle = displayStyle
-                return .none
-
-            case .sortOrderChanged(let sortOrder):
-                state.sortOrder = sortOrder
-                return .none
 
             case .sourceURLChanged(let value):
                 state.sourceURL = value
@@ -560,9 +433,6 @@ public struct LibraryFeature {
                     : result.warnings.joined(separator: "\n")
                 state.sourceURL = ""
                 state.textImportDraft = nil
-                if shouldShowInFilter(result.item, filter: state.filter) {
-                    state.items.insert(result.item, at: 0)
-                }
                 return .none
 
             case .saveURLFinished(let item):
@@ -570,12 +440,6 @@ public struct LibraryFeature {
                 state.saveState = item.processingState
                 state.sourceURL = ""
                 state.textImportDraft = nil
-                // Only pre-insert if the current filter would include the new
-                // item. Otherwise the subsequent sidebar reload will
-                // surface it in the correct bucket.
-                if shouldShowInFilter(item, filter: state.filter) {
-                    state.items.insert(item, at: 0)
-                }
                 return .none
 
             case .saveURLFailed(let error):
@@ -588,22 +452,14 @@ public struct LibraryFeature {
                 // Foreground import via `UIDocumentPicker` / SwiftUI
                 // `fileImporter`. Bypasses the ingestion queue — we have the
                 // main app's full memory budget and can run PDFKit + Vision
-                // inline. The picked URL is inside a security-scoped
-                // resource; the caller (LibraryScreen) starts/stops access
-                // and copies the file into a temp scratch before dispatching
-                // this action, so by the time we see the URL it's a plain
-                // temp file we own.
+                // inline. The caller copies the picked file into a temp
+                // scratch we own before dispatching this action.
                 state.isSaving = true
                 state.saveState = .extracting
                 state.errorMessage = nil
                 let repository = self.repository
                 let pdfIngestionClient = self.pdfIngestionClient
                 return .run { send in
-                    // The screen copies the picked file into a UUID-named
-                    // scratch subdirectory inside the temp dir so the
-                    // original filename is preserved for title fallback.
-                    // Clean up the whole subdir when we're done, but guard
-                    // against ever removing the temp dir itself.
                     defer {
                         let parent = pickedURL.deletingLastPathComponent()
                         if parent.path != FileManager.default.temporaryDirectory.path {
@@ -631,12 +487,6 @@ public struct LibraryFeature {
                 }
 
             case .importWebsiteSelected(let pickedURL):
-                // Foreground import via `UIDocumentPicker` / `NSOpenPanel`.
-                // The screen copies the picked .zip into a UUID-named scratch
-                // subdirectory before dispatching this action so we own the
-                // file and security-scoped access has already been released.
-                // Mirrors `.importPDFSelected` — we run inline to open the
-                // site as soon as the unpack finishes.
                 state.isSaving = true
                 state.saveState = .extracting
                 state.errorMessage = nil
@@ -663,11 +513,6 @@ public struct LibraryFeature {
                 }
 
             case .deleteItem(let id):
-                // Soft delete. If we're already looking at the trash, keep the
-                // row visible — it's now the current list.
-                if state.filter != .recentlyDeleted {
-                    state.items.removeAll { $0.id == id }
-                }
                 let repository = self.repository
                 return .run { send in
                     do {
@@ -679,7 +524,6 @@ public struct LibraryFeature {
                 }
 
             case .permanentlyDelete(let id):
-                state.items.removeAll { $0.id == id }
                 let repository = self.repository
                 let itemStorageClient = self.itemStorageClient
                 let cloudAssetClient = self.cloudAssetClient
@@ -703,10 +547,6 @@ public struct LibraryFeature {
                 }
 
             case .restoreFromTrash(let id):
-                // Leaves the item visible unless we're in the trash view.
-                if state.filter == .recentlyDeleted {
-                    state.items.removeAll { $0.id == id }
-                }
                 let repository = self.repository
                 return .run { send in
                     do {
@@ -718,39 +558,34 @@ public struct LibraryFeature {
                 }
 
             case .toggleStar(let id):
-                guard let idx = state.items.firstIndex(where: { $0.id == id }) else {
+                guard let item = state.items.first(where: { $0.id == id }) else {
                     return .none
                 }
-                let newValue = !state.items[idx].isStarred
-                state.items[idx].isStarred = newValue
-                // If the active filter depends on the toggled attribute,
-                // drop the row so it doesn't misfile.
-                if state.filter == .starred, newValue == false {
-                    state.items.remove(at: idx)
-                }
+                let newValue = !item.isStarred
                 let repository = self.repository
-                return .run { _ in try? await repository.setStarred(id, newValue) }
+                return .run { send in
+                    do {
+                        try await repository.setStarred(id, newValue)
+                    } catch {
+                        await send(.failed(error.localizedDescription))
+                    }
+                }
 
             case .toggleRead(let id):
-                guard let idx = state.items.firstIndex(where: { $0.id == id }) else {
+                guard let item = state.items.first(where: { $0.id == id }) else {
                     return .none
                 }
-                let newValue = !state.items[idx].isRead
-                state.items[idx].isRead = newValue
-                switch state.filter {
-                case .unread where newValue == true, .read where newValue == false:
-                    state.items.remove(at: idx)
-                default:
-                    break
-                }
+                let newValue = !item.isRead
                 let repository = self.repository
-                return .run { _ in try? await repository.setReadStatus(id, newValue) }
+                return .run { send in
+                    do {
+                        try await repository.setReadStatus(id, newValue)
+                    } catch {
+                        await send(.failed(error.localizedDescription))
+                    }
+                }
 
             case .reprocessItem(let id):
-                // Mark extracting in UI immediately
-                if let idx = state.items.firstIndex(where: { $0.id == id }) {
-                    state.items[idx].processingState = .extracting
-                }
                 let repository = self.repository
                 let articleSaveClient = self.articleSaveClient
                 return .run { send in
@@ -762,12 +597,15 @@ public struct LibraryFeature {
                             await send(.failed("Source URL unavailable for refresh."))
                             return
                         }
-
+                        // The row shows its spinner from this status until the
+                        // refresh writes the new content.
+                        try? await repository.updateLocalContentStatus(id, "downloading", nil)
                         let refreshed = try await articleSaveClient.refresh(id, url)
                         await send(.reprocessFinished(refreshed.item))
                     } catch is CancellationError {
                         return
                     } catch {
+                        try? await repository.updateLocalContentStatus(id, "failed", error.localizedDescription)
                         await send(.failed(error.localizedDescription))
                     }
                 }
@@ -777,16 +615,26 @@ public struct LibraryFeature {
                 state.errorMessage = error
                 return .none
 
-            case .reprocessFinished(let updatedItem):
-                if let idx = state.items.firstIndex(where: { $0.id == updatedItem.id }) {
-                    state.items[idx] = updatedItem
-                }
-                return .none
-
-            case .deleteFinished, .openItem:
+            case .reprocessFinished, .deleteFinished, .openItem:
                 return .none
             }
         }
+    }
+
+    /// Points the observed query at the current filter, sort, and search
+    /// text. Rows animate into their new positions when the query changes.
+    private func loadLibrary(_ state: State) -> EffectOf<Self> {
+        let request = state.request
+        let library = state.$library
+        return .run { send in
+            do {
+                try await library.load(request, animation: .default)
+                await send(.libraryLoaded)
+            } catch {
+                await send(.failed(error.localizedDescription))
+            }
+        }
+        .cancellable(id: CancelID.load, cancelInFlight: true)
     }
 }
 
@@ -840,25 +688,4 @@ private func normalizeSourceURL(_ value: String) -> String? {
         return "https://\(trimmed)"
     }
     return nil
-}
-
-/// Does this item belong in the currently displayed filter? Used to decide
-/// whether newly-saved items should be pre-inserted at the top of the list.
-private func shouldShowInFilter(_ item: SavedItem, filter: LibraryFilter) -> Bool {
-    switch filter {
-    case .all:
-        return item.deletedAt == nil
-    case .unread:
-        return item.deletedAt == nil && !item.isRead
-    case .read:
-        return item.deletedAt == nil && item.isRead
-    case .starred:
-        return item.deletedAt == nil && item.isStarred
-    case .untagged:
-        return item.deletedAt == nil && item.tagIDs.isEmpty
-    case .recentlyDeleted:
-        return item.deletedAt != nil
-    case let .tag(id):
-        return item.deletedAt == nil && item.tagIDs.contains(id)
-    }
 }

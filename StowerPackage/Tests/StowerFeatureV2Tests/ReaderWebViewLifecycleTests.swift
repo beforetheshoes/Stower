@@ -99,6 +99,10 @@ struct ReaderWebViewLifecycleTests {
         state.reader = reader
         return Store(initialState: state) {
             AppFeature()
+        } withDependencies: {
+            // The library and sidebar observe the database as soon as the
+            // app view appears.
+            try? $0.bootstrapStowerDatabase(enableSync: false)
         }
     }
 

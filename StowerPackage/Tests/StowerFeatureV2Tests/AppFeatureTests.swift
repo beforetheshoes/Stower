@@ -1,11 +1,13 @@
 import ComposableArchitecture
+import Dependencies
+import DependenciesTestSupport
 import Foundation
 @testable import StowerData
 @testable import StowerFeature
 import Testing
 
 @MainActor
-@Suite
+@Suite(.dependencies { try $0.bootstrapStowerDatabase(enableSync: false) })
 struct AppFeatureTests {
     @Test
     func doneDismissesReaderButKeepsItemAvailableForUndo() async {
@@ -51,11 +53,14 @@ struct AppFeatureTests {
         let item = SavedItem(title: "Focused", content: "Body")
         let store = TestStore(initialState: AppFeature.State()) {
             AppFeature()
+        } withDependencies: {
+            $0.date.now = Date(timeIntervalSince1970: 1000)
         }
 
         await store.send(.readerFocusButtonTapped)
 
         await store.send(.library(.openItem(item))) {
+            $0.readerQueue = [item.id]
             $0.reader = ReaderFeature.State(item: item, appearance: $0.cachedAppearance)
         }
         await store.send(.readerFocusButtonTapped) {
@@ -71,19 +76,23 @@ struct AppFeatureTests {
         let first = SavedItem(title: "First", content: "One")
         let second = SavedItem(title: "Second", content: "Two")
         var state = AppFeature.State()
-        state.library.items = [first, second]
+        state.readerQueue = [first.id, second.id]
         state.reader = ReaderFeature.State(item: first, appearance: state.cachedAppearance)
         state.isReaderFocused = true
 
         let store = TestStore(initialState: state) {
             AppFeature()
+        } withDependencies: {
+            $0.date.now = Date(timeIntervalSince1970: 1000)
         }
 
         #expect(!store.state.canNavigateToPreviousArticle)
         #expect(store.state.canNavigateToNextArticle)
 
+        // The target is no longer in the observed list (for example it was
+        // just marked read in Inbox), so the reader loads it by ID.
         await store.send(.nextArticleButtonTapped) {
-            $0.reader = ReaderFeature.State(item: second, appearance: $0.cachedAppearance)
+            $0.reader = ReaderFeature.State(itemID: second.id, appearance: $0.cachedAppearance)
         }
         #expect(store.state.canNavigateToPreviousArticle)
         #expect(!store.state.canNavigateToNextArticle)

@@ -20,6 +20,10 @@ public struct AppFeature {
         public var failedImports = [FailedImport]()
         public var recentlyCompletedItem: SavedItem?
         public var cloudSyncStatus: CloudSyncStatus = .starting
+        /// The ordered item IDs the reader was opened from. Next/previous
+        /// walk this snapshot, so marking the open article read (which
+        /// removes it from Inbox) does not strand navigation.
+        public var readerQueue = [UUID]()
         @Presents public var resetAlert: AlertState<Action.ResetAlert>?
 
         public var failedImportCount: Int { failedImports.count }
@@ -29,19 +33,20 @@ public struct AppFeature {
         public var canFocusReader: Bool { reader != nil }
 
         public var canNavigateToNextArticle: Bool {
-            guard
-                let itemID = reader?.itemID,
-                let index = library.filteredItems.firstIndex(where: { $0.id == itemID })
-            else { return false }
-            return library.filteredItems.indices.contains(index + 1)
+            readerNavigationTarget(offset: 1) != nil
         }
 
         public var canNavigateToPreviousArticle: Bool {
+            readerNavigationTarget(offset: -1) != nil
+        }
+
+        func readerNavigationTarget(offset: Int) -> UUID? {
             guard
                 let itemID = reader?.itemID,
-                let index = library.filteredItems.firstIndex(where: { $0.id == itemID })
-            else { return false }
-            return library.filteredItems.indices.contains(index - 1)
+                let index = readerQueue.firstIndex(of: itemID),
+                readerQueue.indices.contains(index + offset)
+            else { return nil }
+            return readerQueue[index + offset]
         }
 
         public init() {
@@ -258,7 +263,6 @@ public struct AppFeature {
                             ))
                             try await cloudSyncClient.sendChanges()
                             await send(.startupFinished)
-                            await send(.library(.reload))
                             await send(.settings(.load))
                             // Storage maintenance runs last so it never delays
                             // startup, and only every few days. Sweeps are
@@ -345,7 +349,6 @@ public struct AppFeature {
                     }
                     let jobs = (try? await repository.fetchFailedIngestionJobs()) ?? []
                     await send(.failedImportsLoaded(FailedImport.list(from: jobs)))
-                    await send(.library(.reload))
                 }
 
             case .dismissFailedImportsTapped:
@@ -390,8 +393,6 @@ public struct AppFeature {
                     }
                     let jobs = (try? await repository.fetchFailedIngestionJobs()) ?? []
                     await send(.failedImportsLoaded(FailedImport.list(from: jobs)))
-                    await send(.library(.reload))
-                    await send(.sidebar(.reload))
                 }
 
             case .browserExtensionURLReceived(let url):
@@ -424,23 +425,29 @@ public struct AppFeature {
                 return navigateReader(offset: -1, state: &state)
 
             case .toggleSelectedItemRead:
-                guard let itemID = state.reader?.itemID else { return .none }
-                state.reader?.item?.isRead.toggle()
-                return .send(.library(.toggleRead(itemID)))
+                guard let item = state.reader?.item else { return .none }
+                let newValue = !item.isRead
+                state.reader?.item?.isRead = newValue
+                let repository = self.repository
+                return .run { _ in
+                    try? await repository.setReadStatus(item.id, newValue)
+                }
 
             case .toggleSelectedItemStarred:
-                guard let itemID = state.reader?.itemID else { return .none }
-                state.reader?.item?.isStarred.toggle()
-                return .send(.library(.toggleStar(itemID)))
+                guard let item = state.reader?.item else { return .none }
+                let newValue = !item.isStarred
+                state.reader?.item?.isStarred = newValue
+                let repository = self.repository
+                return .run { _ in
+                    try? await repository.setStarred(item.id, newValue)
+                }
 
             case .undoCompletedItemTapped:
                 guard let item = state.recentlyCompletedItem else { return .none }
                 state.recentlyCompletedItem = nil
                 let repository = self.repository
-                return .run { send in
+                return .run { _ in
                     try? await repository.setReadStatus(item.id, false)
-                    await send(.library(.reload))
-                    await send(.sidebar(.reload))
                 }
                 .cancellable(id: CancelID.completedItemNotice, cancelInFlight: true)
 
@@ -492,8 +499,6 @@ public struct AppFeature {
                         }
                         let jobs = (try? await repository.fetchFailedIngestionJobs()) ?? []
                         await send(.failedImportsLoaded(FailedImport.list(from: jobs)))
-                        await send(.library(.reload))
-                        await send(.sidebar(.reload))
                     }
                 }
 
@@ -549,6 +554,10 @@ public struct AppFeature {
                 if state.reader?.itemID == item.id {
                     return .none
                 }
+                state.readerQueue = state.library.items.map(\.id)
+                if !state.readerQueue.contains(item.id) {
+                    state.readerQueue = [item.id]
+                }
                 state.reader = ReaderFeature.State(
                     item: item,
                     appearance: state.cachedAppearance
@@ -598,11 +607,7 @@ public struct AppFeature {
                     .cancellable(id: CancelID.completedItemNotice, cancelInFlight: true)
                     : .none
 
-                return .merge(
-                    .send(.library(.reload)),
-                    .send(.sidebar(.reload)),
-                    expiration
-                )
+                return expiration
 
             case .reader(.dismiss):
                 state.isReaderFocused = false
@@ -625,17 +630,19 @@ public struct AppFeature {
         offset: Int,
         state: inout State
     ) -> EffectOf<Self> {
-        guard
-            let itemID = state.reader?.itemID,
-            let index = state.library.filteredItems.firstIndex(where: { $0.id == itemID }),
-            state.library.filteredItems.indices.contains(index + offset)
-        else { return .none }
+        guard let targetID = state.readerNavigationTarget(offset: offset) else { return .none }
 
-        state.reader = ReaderFeature.State(
-            item: state.library.filteredItems[index + offset],
-            appearance: state.cachedAppearance
-        )
-        return .none
+        // Prefer the observed row so the header renders instantly; fall
+        // back to a database load when the target has left the current list.
+        if let item = state.library.items.first(where: { $0.id == targetID }) {
+            state.reader = ReaderFeature.State(item: item, appearance: state.cachedAppearance)
+        } else {
+            state.reader = ReaderFeature.State(itemID: targetID, appearance: state.cachedAppearance)
+        }
+        let itemStorageClient = self.itemStorageClient
+        return .run { _ in
+            try? await itemStorageClient.touchOpened(targetID)
+        }
     }
 }
 
