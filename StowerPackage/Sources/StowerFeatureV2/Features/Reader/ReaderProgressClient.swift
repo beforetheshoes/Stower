@@ -2,6 +2,21 @@ import Dependencies
 import Foundation
 import WebKit
 
+/// One reading-position report from the page's runtime.
+public struct ReaderProgressReport: Equatable, Sendable {
+    /// The topmost visible block; what gets restored on the next open.
+    public var blockIndex: Int
+    /// How much of the document has scrolled past the bottom of the
+    /// viewport, 0…1. Reaches 1 exactly when the end is on screen, which the
+    /// block index alone never does.
+    public var fraction: Double?
+
+    public init(blockIndex: Int, fraction: Double? = nil) {
+        self.blockIndex = blockIndex
+        self.fraction = fraction
+    }
+}
+
 /// A @MainActor-isolated registry that holds a reference to the currently
 /// rendering reader `WebPage` and relays reading-position reports from the
 /// page's in-document runtime to whoever is listening (the reader reducer).
@@ -18,7 +33,7 @@ public final class ReaderProgressCoordinator {
     public static let shared = ReaderProgressCoordinator()
 
     private var currentPage: WebPage?
-    private var continuations = [UUID: AsyncStream<Int>.Continuation]()
+    private var continuations = [UUID: AsyncStream<ReaderProgressReport>.Continuation]()
     /// The most recent block index reported by the active page.
     public private(set) var latestBlockIndex: Int?
 
@@ -42,17 +57,17 @@ public final class ReaderProgressCoordinator {
 
     /// Records a position reported by the page's runtime. Reports from a page
     /// that is not the active registration are dropped.
-    public func report(_ blockIndex: Int, from page: WebPage) {
-        guard page === currentPage, blockIndex >= 0 else { return }
-        latestBlockIndex = blockIndex
+    public func report(_ report: ReaderProgressReport, from page: WebPage) {
+        guard page === currentPage, report.blockIndex >= 0 else { return }
+        latestBlockIndex = report.blockIndex
         for continuation in continuations.values {
-            continuation.yield(blockIndex)
+            continuation.yield(report)
         }
     }
 
-    /// A stream of block indexes as the reader scrolls. Finishes when the
-    /// consuming task is cancelled.
-    public func updates() -> AsyncStream<Int> {
+    /// A stream of position reports as the reader scrolls. Finishes when
+    /// the consuming task is cancelled.
+    public func updates() -> AsyncStream<ReaderProgressReport> {
         AsyncStream { continuation in
             let id = UUID()
             continuations[id] = continuation
@@ -77,12 +92,12 @@ public final class ReaderProgressCoordinator {
 /// `@Dependency` inside a TCA reducer effect.
 public struct ReaderProgressClient: Sendable {
     /// Positions reported by the page as the user scrolls.
-    public var progressUpdates: @Sendable () async -> AsyncStream<Int>
+    public var progressUpdates: @Sendable () async -> AsyncStream<ReaderProgressReport>
     /// One-shot query of the topmost visible block.
     public var topBlockIndex: @Sendable () async -> Int?
 
     public init(
-        progressUpdates: @escaping @Sendable () async -> AsyncStream<Int>,
+        progressUpdates: @escaping @Sendable () async -> AsyncStream<ReaderProgressReport>,
         topBlockIndex: @escaping @Sendable () async -> Int?
     ) {
         self.progressUpdates = progressUpdates

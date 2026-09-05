@@ -10,6 +10,13 @@ struct ReaderProgressReportingTests {
     func deciderParsesProgressReports() throws {
         let url = try #require(URL(string: "stower-reader://progress?block=42"))
         #expect(ReaderNavigationDecider.progressBlockIndex(from: url) == 42)
+        #expect(ReaderNavigationDecider.progressReport(from: url) == ReaderProgressReport(blockIndex: 42))
+
+        let withFraction = try #require(URL(string: "stower-reader://progress?block=3&fraction=0.875"))
+        #expect(ReaderNavigationDecider.progressReport(from: withFraction) == ReaderProgressReport(blockIndex: 3, fraction: 0.875))
+
+        let overshoot = try #require(URL(string: "stower-reader://progress?block=3&fraction=1.2"))
+        #expect(ReaderNavigationDecider.progressReport(from: overshoot)?.fraction == 1)
 
         let missing = try #require(URL(string: "stower-reader://progress"))
         #expect(ReaderNavigationDecider.progressBlockIndex(from: missing) == nil)
@@ -22,6 +29,7 @@ struct ReaderProgressReportingTests {
     func runtimeReportsScrollPositionAndReanchorsOnWidthChange() {
         let script = ReaderWebPageFactory.progressReporterScript
         #expect(script.contains("stower-reader://progress?block="))
+        #expect(script.contains("&fraction="))
         #expect(script.contains("addEventListener('scroll'"))
         // Height-only resizes (toolbars, keyboards) must not move the reader.
         #expect(script.contains("window.innerWidth === lastWidth"))
@@ -92,8 +100,55 @@ struct ReaderProgressReportingTests {
         state.currentBlockIndex = 10
         #expect(state.progressFraction == 1)
 
+        // Once the page reports a scroll fraction it wins, so the bar can
+        // reach 100% even though the topmost block is never the last one.
+        state.currentBlockIndex = 5
+        state.scrollFraction = 1
+        #expect(state.progressFraction == 1)
+
         state.renderModeOverride = .webView
         #expect(!state.showsProgressBar)
+    }
+
+    @MainActor
+    @Test
+    func reachingTheEndMarksAnUnreadArticleReadOnce() async {
+        let item = SavedItem(title: "Finish", content: "Body", progressUnitCount: 20, isRead: false)
+        let writes = LockIsolated<[Bool]>([])
+        let store = TestStore(initialState: ReaderFeature.State(item: item)) {
+            ReaderFeature()
+        } withDependencies: {
+            $0.continuousClock = TestClock()
+            $0.stowerRepository.setReadStatus = { _, isRead in
+                writes.withValue { $0.append(isRead) }
+            }
+        }
+        store.exhaustivity = .off(showSkippedAssertions: false)
+
+        await store.send(.scrollProgressChanged(ReaderProgressReport(blockIndex: 4, fraction: 0.5))) {
+            $0.currentBlockIndex = 4
+            $0.item?.lastReadBlockIndex = 4
+            $0.scrollFraction = 0.5
+        }
+        #expect(!store.state.hasReachedEnd)
+
+        await store.send(.scrollProgressChanged(ReaderProgressReport(blockIndex: 12, fraction: 1))) {
+            $0.currentBlockIndex = 12
+            $0.item?.lastReadBlockIndex = 12
+            $0.scrollFraction = 1
+            $0.hasReachedEnd = true
+            $0.item?.isRead = true
+        }
+        await store.receive(.delegate(.finishedReading(itemID: item.id)))
+
+        // Scrolling around at the end does not mark it again.
+        await store.send(.scrollProgressChanged(ReaderProgressReport(blockIndex: 11, fraction: 0.99))) {
+            $0.currentBlockIndex = 11
+            $0.item?.lastReadBlockIndex = 11
+            $0.scrollFraction = 0.99
+        }
+        await store.finish()
+        #expect(writes.value == [true])
     }
 
     @MainActor
@@ -102,7 +157,7 @@ struct ReaderProgressReportingTests {
         let itemID = UUID()
         let item = SavedItem(title: "Read", content: "Body", id: itemID, progressUnitCount: 20)
         let document = ReaderDocument(title: "Read", blocks: [.paragraph([.text("Body")])])
-        let (stream, continuation) = AsyncStream<Int>.makeStream()
+        let (stream, continuation) = AsyncStream<ReaderProgressReport>.makeStream()
         let saved = LockIsolated<[Int]>([])
         let clock = TestClock()
 
@@ -125,15 +180,17 @@ struct ReaderProgressReportingTests {
         await store.send(.load)
         await store.receive(\.loaded)
 
-        continuation.yield(3)
-        await store.receive(.scrollProgressChanged(3)) {
+        continuation.yield(ReaderProgressReport(blockIndex: 3, fraction: 0.2))
+        await store.receive(.scrollProgressChanged(ReaderProgressReport(blockIndex: 3, fraction: 0.2))) {
             $0.currentBlockIndex = 3
             $0.item?.lastReadBlockIndex = 3
+            $0.scrollFraction = 0.2
         }
-        continuation.yield(7)
-        await store.receive(.scrollProgressChanged(7)) {
+        continuation.yield(ReaderProgressReport(blockIndex: 7, fraction: 0.4))
+        await store.receive(.scrollProgressChanged(ReaderProgressReport(blockIndex: 7, fraction: 0.4))) {
             $0.currentBlockIndex = 7
             $0.item?.lastReadBlockIndex = 7
+            $0.scrollFraction = 0.4
         }
 
         // Only the latest position is written, one second after scrolling stops.

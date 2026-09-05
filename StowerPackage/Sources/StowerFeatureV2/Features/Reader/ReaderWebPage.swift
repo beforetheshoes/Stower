@@ -12,7 +12,7 @@ struct ReaderNavigationDecider: WebPage.NavigationDeciding {
     var openExternalURL: @MainActor (URL) -> Void
     var openInlineEmbed: @MainActor (String) -> Void
     var toggleChrome: @MainActor () -> Void
-    var reportProgress: @MainActor (Int) -> Void = { _ in }
+    var reportProgress: @MainActor (ReaderProgressReport) -> Void = { _ in }
 
     @MainActor
     mutating func decidePolicy(
@@ -39,8 +39,8 @@ struct ReaderNavigationDecider: WebPage.NavigationDeciding {
             case "toggle-chrome":
                 toggleChrome()
             case "progress":
-                if let index = Self.progressBlockIndex(from: url) {
-                    reportProgress(index)
+                if let report = Self.progressReport(from: url) {
+                    reportProgress(report)
                 }
             default:
                 break
@@ -62,13 +62,21 @@ struct ReaderNavigationDecider: WebPage.NavigationDeciding {
         return .allow
     }
 
-    /// Parses `stower-reader://progress?block=N`.
+    /// Parses `stower-reader://progress?block=N&fraction=F`.
+    static func progressReport(from url: URL) -> ReaderProgressReport? {
+        let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        guard let block = items.first(where: { $0.name == "block" })?.value.flatMap(Int.init) else {
+            return nil
+        }
+        let fraction = items.first { $0.name == "fraction" }?.value
+            .flatMap(Double.init)
+            .map { min(1, max(0, $0)) }
+        return ReaderProgressReport(blockIndex: block, fraction: fraction)
+    }
+
+    /// Kept for callers that only need the block.
     static func progressBlockIndex(from url: URL) -> Int? {
-        URLComponents(url: url, resolvingAgainstBaseURL: false)?
-            .queryItems?
-            .first { $0.name == "block" }?
-            .value
-            .flatMap(Int.init)
+        progressReport(from: url)?.blockIndex
     }
 }
 
@@ -83,7 +91,7 @@ enum ReaderWebPageFactory {
         openExternalURL: @MainActor @escaping (URL) -> Void,
         openInlineEmbed: @MainActor @escaping (String) -> Void = { _ in },
         toggleChrome: @MainActor @escaping () -> Void = {},
-        reportProgress: @MainActor @escaping (Int) -> Void = { _ in }
+        reportProgress: @MainActor @escaping (ReaderProgressReport) -> Void = { _ in }
     ) -> WebPage {
         let decider = ReaderNavigationDecider(
             openExternalURL: openExternalURL,
@@ -107,6 +115,7 @@ enum ReaderWebPageFactory {
             window.__stowerProgressReporterInstalled = true;
 
             var lastReported = -1;
+            var lastFraction = -1;
             var anchorIndex = -1;
             var reportTimer = null;
             var resizeTimer = null;
@@ -118,14 +127,28 @@ enum ReaderWebPageFactory {
                     : -1;
             }
 
+            // Share of the document that has passed the bottom of the
+            // viewport. Hits 1 when the end is on screen.
+            function currentFraction() {
+                var root = document.documentElement;
+                var total = Math.max(root.scrollHeight, 1);
+                var seen = (window.scrollY || root.scrollTop || 0) + window.innerHeight;
+                var f = seen / total;
+                if (f > 0.995) { f = 1; }
+                return Math.min(1, Math.max(0, f));
+            }
+
             function report() {
                 reportTimer = null;
                 var idx = currentTop();
                 if (idx < 0) { return; }
                 anchorIndex = idx;
-                if (idx !== lastReported) {
+                var fraction = currentFraction();
+                if (idx !== lastReported || Math.abs(fraction - lastFraction) >= 0.01) {
                     lastReported = idx;
-                    window.location.href = 'stower-reader://progress?block=' + idx;
+                    lastFraction = fraction;
+                    window.location.href = 'stower-reader://progress?block=' + idx
+                        + '&fraction=' + fraction.toFixed(3);
                 }
             }
 
