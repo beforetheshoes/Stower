@@ -14,6 +14,11 @@ public struct ReaderFeature {
         public var appearance: ReaderAppearanceSettings
         var viewportWidth: Double?
         var currentBlockIndex: Int?
+        /// Latest scroll fraction reported by the page (0…1), if any.
+        var scrollFraction: Double?
+        /// Set once the end of the article has been on screen. Reaching it
+        /// marks the item read, once per open.
+        var hasReachedEnd = false
         var isChromeHidden = false
         var speech = ReaderSpeechFeature.State()
         var ai = ReaderAIFeature.State()
@@ -89,9 +94,13 @@ public struct ReaderFeature {
             effectiveRenderFormat != .webView
         }
 
-        /// 0…1 fill for the progress bar; zero at the top and one when the
-        /// last block has been reached.
+        /// 0…1 fill for the progress bar. Prefers the page's scroll
+        /// fraction, which reaches 1 when the end is on screen; falls back to
+        /// the block index until the first report arrives.
         public var progressFraction: Double {
+            if let scrollFraction {
+                return min(1, max(0, scrollFraction))
+            }
             guard let totalProgressUnitCount, totalProgressUnitCount > 1,
                   let currentBlockIndex, currentBlockIndex > 0
             else { return 0 }
@@ -184,7 +193,7 @@ public struct ReaderFeature {
 
         /// Emitted by the reader view when the top-visible block changes.
         /// Triggers a debounced save of the reading position.
-        case scrollProgressChanged(Int)
+        case scrollProgressChanged(ReaderProgressReport)
         case saveReadingProgress(Int)
         case contentAreaTapped
 
@@ -197,6 +206,9 @@ public struct ReaderFeature {
 
         public enum Delegate: Equatable {
             case done(itemID: UUID, wasUnread: Bool)
+            /// The reader scrolled to the end of an unread article and marked
+            /// it read. The reader stays open.
+            case finishedReading(itemID: UUID)
         }
     }
 
@@ -298,6 +310,8 @@ public struct ReaderFeature {
                 state.document = document
                 state.sourceHTML = sourceHTML
                 state.currentBlockIndex = state.item?.lastReadBlockIndex ?? 0
+                state.scrollFraction = nil
+                state.hasReachedEnd = false
                 return .merge(
                     archiveIfNeeded(item: state.item, sourceHTML: sourceHTML),
                     progressUpdatesEffect(),
@@ -660,16 +674,36 @@ public struct ReaderFeature {
                 }
                 return .none
 
-            case .scrollProgressChanged(let blockIndex):
+            case .scrollProgressChanged(let report):
                 // Update local state immediately; debounce the DB write.
                 // Block index 0 means "at the top" — don't persist it (treat
                 // as "no restore state") so new opens don't get a false restore.
+                let blockIndex = report.blockIndex
                 guard blockIndex >= 0 else { return .none }
                 state.currentBlockIndex = blockIndex
                 state.item?.lastReadBlockIndex = blockIndex > 0 ? blockIndex : nil
+                if let fraction = report.fraction {
+                    state.scrollFraction = fraction
+                }
+
+                // Reaching the end finishes the article: it leaves Inbox on
+                // its own, with the same Undo notice as the Done button.
+                var finishEffect: EffectOf<Self> = .none
+                if (report.fraction ?? 0) >= 0.98, !state.hasReachedEnd {
+                    state.hasReachedEnd = true
+                    if let item = state.item, !item.isRead {
+                        state.item?.isRead = true
+                        let repository = self.repository
+                        let itemID = state.itemID
+                        finishEffect = .run { send in
+                            try? await repository.setReadStatus(itemID, true)
+                            await send(.delegate(.finishedReading(itemID: itemID)))
+                        }
+                    }
+                }
 
                 if blockIndex == 0 {
-                    return .cancel(id: CancelID.readingProgressSave)
+                    return .merge(.cancel(id: CancelID.readingProgressSave), finishEffect)
                 }
                 let clock = self.continuousClock
                 let saveEffect: EffectOf<Self> = .run { send in
@@ -677,7 +711,7 @@ public struct ReaderFeature {
                     await send(.saveReadingProgress(blockIndex), animation: nil)
                 }
                 .cancellable(id: CancelID.readingProgressSave, cancelInFlight: true)
-                return saveEffect
+                return .merge(saveEffect, finishEffect)
 
             case .saveReadingProgress(let blockIndex):
                 let repository = self.repository
@@ -781,8 +815,8 @@ public struct ReaderFeature {
     private func progressUpdatesEffect() -> EffectOf<Self> {
         let client = self.readerProgressClient
         return .run { send in
-            for await blockIndex in await client.progressUpdates() {
-                await send(.scrollProgressChanged(blockIndex), animation: nil)
+            for await report in await client.progressUpdates() {
+                await send(.scrollProgressChanged(report), animation: nil)
             }
         }
         .cancellable(id: CancelID.progressUpdates, cancelInFlight: true)

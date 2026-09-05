@@ -45,9 +45,9 @@ private final class ReaderWebViewSession {
 
     /// Forwards a position report from the page's runtime, ignoring reports
     /// from a page that is no longer this session's.
-    func reportProgress(_ blockIndex: Int) {
+    func reportProgress(_ report: ReaderProgressReport) {
         guard let page else { return }
-        ReaderProgressCoordinator.shared.report(blockIndex, from: page)
+        ReaderProgressCoordinator.shared.report(report, from: page)
     }
 }
 
@@ -248,7 +248,7 @@ public struct ReaderWebView: View {
                 openExternalURL: { [openURL] url in openURL(url) },
                 openInlineEmbed: { openEmbed($0) },
                 toggleChrome: { toggleChrome() },
-                reportProgress: { [session] index in session.reportProgress(index) }
+                reportProgress: { [session] report in session.reportProgress(report) }
             )
             let baseURL = currentSourceURL.flatMap(URL.init(string:)) ?? URL(string: "about:blank")!
             _ = newPage.load(
@@ -276,7 +276,7 @@ public struct ReaderWebView: View {
                 openExternalURL: { [openURL] url in openURL(url) },
                 openInlineEmbed: { openEmbed($0) },
                 toggleChrome: { toggleChrome() },
-                reportProgress: { [session] index in session.reportProgress(index) }
+                reportProgress: { [session] report in session.reportProgress(report) }
             )
             session.archiveServer = server
             _ = newPage.load(URLRequest(url: loadURL))
@@ -308,7 +308,7 @@ public struct ReaderWebView: View {
                     openExternalURL: { [openURL] url in openURL(url) },
                     openInlineEmbed: { openEmbed($0) },
                     toggleChrome: { toggleChrome() },
-                    reportProgress: { [session] index in session.reportProgress(index) }
+                    reportProgress: { [session] report in session.reportProgress(report) }
                 )
                 session.archiveServer = server
                 _ = newPage.load(URLRequest(url: loadURL))
@@ -324,7 +324,7 @@ public struct ReaderWebView: View {
                     openExternalURL: { [openURL] url in openURL(url) },
                     openInlineEmbed: { openEmbed($0) },
                     toggleChrome: { toggleChrome() },
-                    reportProgress: { [session] index in session.reportProgress(index) }
+                    reportProgress: { [session] report in session.reportProgress(report) }
                 )
                 _ = newPage.load(html: currentHTML, baseURL: base)
                 session.page = newPage
