@@ -110,4 +110,64 @@ struct LibraryQueriesTests {
         #expect(counts.untagged == 1)
         #expect(counts.byTag[tag.id] == 1)
     }
+
+    @Test
+    func countsCollapseRowsThatShareAURLLikeTheListDoes() async throws {
+        let database = try StowerDatabase.makeDatabase()
+        let repository = StowerRepository.live(database: database, cloudSyncClient: .noop)
+
+        // A legacy row saved before IDs were derived from the URL.
+        let legacyID = UUID()
+        let url = "https://example.com/post"
+        try await database.write { db in
+            try SavedItemSyncTable.insert {
+                SavedItemSyncTable.Draft(
+                    id: legacyID,
+                    title: "Legacy",
+                    sourceURL: url,
+                    canonicalURL: url,
+                    createdAt: Date(timeIntervalSince1970: 1000),
+                    updatedAt: Date(timeIntervalSince1970: 1000)
+                )
+            }
+            .execute(db)
+        }
+
+        // Re-saving the same URL refreshes the legacy row instead of adding
+        // a second one beside it.
+        var ingestion = IngestionResult.sharedText("Body")
+        ingestion.title = "Fresh"
+        ingestion.sourceURL = url
+        ingestion.canonicalURL = url
+        let saved = try await repository.createItemFromIngestion(ingestion)
+        #expect(saved.id == legacyID)
+
+        let rowCount = try await database.read { db in try SavedItemSyncTable.fetchCount(db) }
+        #expect(rowCount == 1)
+
+        // And even if a duplicate pair does exist, counts match the list.
+        try await database.write { db in
+            try SavedItemSyncTable.insert {
+                SavedItemSyncTable.Draft(
+                    id: StowerRepository.stableItemID(from: url),
+                    title: "Duplicate",
+                    sourceURL: url,
+                    canonicalURL: url,
+                    createdAt: Date(timeIntervalSince1970: 2000),
+                    updatedAt: Date(timeIntervalSince1970: 2000)
+                )
+            }
+            .execute(db)
+        }
+        let (counts, listed) = try await database.read { db in
+            (
+                try LibraryQueries.fetchListCounts(db),
+                try LibraryQueries.fetchItems(db, filter: .all, query: "", oldestFirst: false)
+            )
+        }
+        #expect(listed.count == 1)
+        #expect(counts.all == 1)
+        #expect(counts.unread == 1)
+        #expect(counts.untagged == 1)
+    }
 }

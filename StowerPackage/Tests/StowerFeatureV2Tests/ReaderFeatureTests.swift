@@ -97,7 +97,7 @@ struct ReaderFeatureTests {
 
         #expect(store.state.readingProgress?.percentComplete == 0)
 
-        await store.send(.scrollProgressChanged(2)) {
+        await store.send(.scrollProgressChanged(ReaderProgressReport(blockIndex: 2))) {
             $0.currentBlockIndex = 2
             $0.item?.lastReadBlockIndex = 2
         }

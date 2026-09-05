@@ -493,6 +493,9 @@ public struct AppFeature {
             case .undoCompletedItemTapped:
                 guard let item = state.recentlyCompletedItem else { return .none }
                 state.recentlyCompletedItem = nil
+                if state.reader?.itemID == item.id {
+                    state.reader?.item?.isRead = false
+                }
                 let repository = self.repository
                 return .run { _ in
                     try? await repository.setReadStatus(item.id, false)
@@ -658,6 +661,16 @@ public struct AppFeature {
                     : .none
 
                 return expiration
+
+            case let .reader(.presented(.delegate(.finishedReading(itemID)))):
+                guard let item = state.reader?.item, item.id == itemID else { return .none }
+                state.recentlyCompletedItem = item
+                let clock = self.clock
+                return .run { send in
+                    try? await clock.sleep(for: .seconds(6))
+                    await send(.completedItemNoticeExpired(itemID))
+                }
+                .cancellable(id: CancelID.completedItemNotice, cancelInFlight: true)
 
             case .reader(.dismiss):
                 state.isReaderFocused = false
