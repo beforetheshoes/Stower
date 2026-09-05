@@ -180,46 +180,45 @@ public enum LibraryQueries {
             .map(StowerRepository.toDomain(tag:))
     }
 
+    /// Counts for every sidebar list. Rows that share a normalized URL are
+    /// collapsed exactly as the list collapses them, so a badge never says
+    /// one more than the rows it labels.
     public static func fetchListCounts(_ db: Database) throws -> LibraryListCounts {
-        let allCount = try SavedItemSyncTable
-            .where { $0.deletedAt.is(nil) }
-            .fetchCount(db)
-        let unreadCount = try SavedItemSyncTable
-            .where { $0.deletedAt.is(nil) && !$0.isRead }
-            .fetchCount(db)
-        let readCount = try SavedItemSyncTable
-            .where { $0.deletedAt.is(nil) && $0.isRead }
-            .fetchCount(db)
-        let starredCount = try SavedItemSyncTable
-            .where { $0.deletedAt.is(nil) && $0.isStarred }
-            .fetchCount(db)
-        let trashCount = try SavedItemSyncTable
-            .where { $0.deletedAt.isNot(nil) }
-            .fetchCount(db)
-        let untaggedCount = try SavedItemSyncTable
-            .where { $0.deletedAt.is(nil) && !$0.id.in(ItemTagSyncTable.select(\.itemID)) }
-            .fetchCount(db)
+        let rows = try SavedItemSyncTable
+            .order { $0.createdAt.desc() }
+            .select { ($0.id, $0.canonicalURL, $0.sourceURL, $0.isRead, $0.isStarred, $0.deletedAt) }
+            .fetchAll(db)
 
-        // Per-tag counts over live items only.
-        let liveIDs = Set(
-            try SavedItemSyncTable
-                .where { $0.deletedAt.is(nil) }
-                .select(\.id)
-                .fetchAll(db)
-        )
-        let byTag = try ItemTagSyncTable.all
+        var seenLive = Set<String>()
+        var seenTrash = Set<String>()
+        var live = [(id: UUID, isRead: Bool, isStarred: Bool)]()
+        var trashCount = 0
+        for (id, canonicalURL, sourceURL, isRead, isStarred, deletedAt) in rows {
+            let key = StowerRepository.normalizedURLKey(canonicalURL ?? sourceURL)
+            if deletedAt == nil {
+                if let key, !seenLive.insert(key).inserted { continue }
+                live.append((id, isRead, isStarred))
+            } else {
+                if let key, !seenTrash.insert(key).inserted { continue }
+                trashCount += 1
+            }
+        }
+
+        let liveIDs = Set(live.map(\.id))
+        let junctions = try ItemTagSyncTable.all
             .fetchAll(db)
             .filter { liveIDs.contains($0.itemID) }
-            .reduce(into: [UUID: Int]()) { result, row in
-                result[row.tagID, default: 0] += 1
-            }
+        let taggedIDs = Set(junctions.map(\.itemID))
+        let byTag = junctions.reduce(into: [UUID: Int]()) { result, row in
+            result[row.tagID, default: 0] += 1
+        }
 
         return LibraryListCounts(
-            unread: unreadCount,
-            read: readCount,
-            starred: starredCount,
-            untagged: untaggedCount,
-            all: allCount,
+            unread: live.filter { !$0.isRead }.count,
+            read: live.filter(\.isRead).count,
+            starred: live.filter(\.isStarred).count,
+            untagged: live.filter { !taggedIDs.contains($0.id) }.count,
+            all: live.count,
             recentlyDeleted: trashCount,
             byTag: byTag
         )
