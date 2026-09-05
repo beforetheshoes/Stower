@@ -30,7 +30,11 @@ extension StowerRepository {
         { (result: IngestionResult) async throws -> SavedItem in
             let item: SavedItem = try await database.write { db -> SavedItem in
                 let now = Date.now
-                let itemID = stableItemID(from: result.canonicalURL ?? result.sourceURL)
+                let url = result.canonicalURL ?? result.sourceURL
+                // Items saved before IDs were derived from the URL carry a
+                // random ID. Re-saving such a URL must refresh that row, not
+                // add a second one beside it.
+                let itemID = try existingLiveItemID(db, matching: url) ?? stableItemID(from: url)
                 let syncDraft = makeSyncDraft(id: itemID, result: result, now: now)
                 try SavedItemSyncTable.upsert { syncDraft }.execute(db)
                 try persistLocalContentAndCaches(db: db, itemID: itemID, result: result, now: now, updateLocalStatus: localStatus(for: result.processingState))
@@ -111,5 +115,22 @@ extension StowerRepository {
                     .execute(db)
             }
         }
+    }
+}
+
+extension StowerRepository {
+    /// The ID of a live item whose URL normalizes to the same key as `url`,
+    /// preferring the deterministic ID when several rows match.
+    static func existingLiveItemID(_ db: Database, matching url: String?) throws -> UUID? {
+        guard let key = normalizedURLKey(url) else { return nil }
+        let stableID = stableItemID(from: url)
+        let candidates = try SavedItemSyncTable
+            .where { $0.deletedAt.is(nil) }
+            .fetchAll(db)
+            .filter { normalizedURLKey($0.canonicalURL ?? $0.sourceURL) == key }
+        if candidates.contains(where: { $0.id == stableID }) {
+            return stableID
+        }
+        return candidates.max { $0.createdAt < $1.createdAt }?.id
     }
 }
