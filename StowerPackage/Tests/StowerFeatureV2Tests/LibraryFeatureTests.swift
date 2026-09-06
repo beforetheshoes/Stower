@@ -364,6 +364,98 @@ struct LibraryFeatureTests {
         }
     }
 
+    // MARK: - EPUB export
+
+    @Test
+    func exportEPUBProducesResultAndDismissDiscardsFile() async throws {
+        let item = try await seed(title: "Export me")
+        let fileURL = URL(fileURLWithPath: "/tmp/StowerExports/x/Export me.epub")
+        let result = EPUBExportResult(itemID: item.id, fileURL: fileURL, suggestedFilename: "Export me")
+        let discarded = LockIsolated<[URL]>([])
+
+        let store = TestStore(initialState: LibraryFeature.State()) {
+            LibraryFeature()
+        } withDependencies: {
+            $0.epubExportClient.export = { id in
+                #expect(id == item.id)
+                return result
+            }
+            $0.epubExportClient.discard = { url in discarded.withValue { $0.append(url) } }
+        }
+        store.exhaustivity = .off(showSkippedAssertions: false)
+
+        await store.send(.onAppear)
+        await store.receive(.libraryLoaded)
+
+        await store.send(.exportEPUBTapped(item.id)) {
+            $0.exportingItemID = item.id
+        }
+        await store.receive(.epubExportSucceeded(result)) {
+            $0.exportingItemID = nil
+            $0.epubExport = result
+        }
+        await store.send(.epubExportDismissed) {
+            $0.epubExport = nil
+        }
+        await store.finish()
+        #expect(discarded.value == [fileURL])
+
+        // A second dismiss (sheet binding plus completion handler) is a no-op.
+        await store.send(.epubExportDismissed)
+        #expect(discarded.value == [fileURL])
+    }
+
+    @Test
+    func exportEPUBFailureShowsErrorAndClears() async {
+        let id = UUID()
+        let store = TestStore(initialState: LibraryFeature.State()) {
+            LibraryFeature()
+        } withDependencies: {
+            $0.epubExportClient.export = { _ in throw EPUBExportError.emptyDocument }
+        }
+
+        await store.send(.exportEPUBTapped(id)) {
+            $0.exportingItemID = id
+        }
+        await store.receive(.epubExportFailed(EPUBExportError.emptyDocument.localizedDescription)) {
+            $0.exportingItemID = nil
+            $0.epubExportError = EPUBExportError.emptyDocument.localizedDescription
+        }
+        await store.send(.epubExportErrorDismissed) {
+            $0.epubExportError = nil
+        }
+    }
+
+    @Test
+    func secondExportTapWhileExportingIsIgnored() async {
+        let first = UUID()
+        let second = UUID()
+        let exported = LockIsolated<[UUID]>([])
+        // Holds the first export open so the second tap lands mid-flight.
+        let (gate, release) = AsyncStream<Void>.makeStream()
+        let result = EPUBExportResult(itemID: first, fileURL: URL(fileURLWithPath: "/tmp/x.epub"), suggestedFilename: "x")
+        let store = TestStore(initialState: LibraryFeature.State()) {
+            LibraryFeature()
+        } withDependencies: {
+            $0.epubExportClient.export = { id in
+                exported.withValue { $0.append(id) }
+                for await _ in gate { break }
+                return result
+            }
+        }
+
+        await store.send(.exportEPUBTapped(first)) {
+            $0.exportingItemID = first
+        }
+        await store.send(.exportEPUBTapped(second))
+        release.yield()
+        await store.receive(.epubExportSucceeded(result)) {
+            $0.exportingItemID = nil
+            $0.epubExport = result
+        }
+        #expect(exported.value == [first])
+    }
+
     // MARK: - Helpers
 
     @discardableResult

@@ -34,6 +34,13 @@ public struct LibraryFeature {
         public var inlineTagCreation: InlineTagCreation?
         /// Draft for the in-app text/markdown composer.
         public var textImportDraft: TextImportDraft?
+        /// The item whose EPUB is being built. Only one export runs at a time.
+        public var exportingItemID: UUID?
+        /// A finished EPUB waiting for the share sheet (iOS) or save panel (macOS).
+        public var epubExport: EPUBExportResult?
+        /// Shown in an alert; separate from `errorMessage`, which belongs to
+        /// the URL composer.
+        public var epubExportError: String?
 
         public var items: [SavedItem] { library.items }
         public var availableTags: [Tag] { library.tags }
@@ -136,12 +143,21 @@ public struct LibraryFeature {
         case inlineCreateTagConfirmed
         case inlineCreateTagDismissed
         case inlineTagCreated(Tag, UUID)
+
+        // EPUB export
+        case exportEPUBTapped(UUID)
+        case epubExportSucceeded(EPUBExportResult)
+        case epubExportFailed(String)
+        /// The share sheet or save panel closed, saved or not. Deletes the temp file.
+        case epubExportDismissed
+        case epubExportErrorDismissed
     }
 
     private enum CancelID: Hashable {
         case load
         case searchDebounce
         case articleRefresh
+        case epubExport
     }
 
     @Dependency(\.stowerRepository)
@@ -160,6 +176,8 @@ public struct LibraryFeature {
     var cloudAssetClient
     @Dependency(\.continuousClock)
     var clock
+    @Dependency(\.epubExportClient)
+    var epubExportClient
 
     public var body: some ReducerOf<Self> {
         Reduce { state, action in
@@ -173,6 +191,48 @@ public struct LibraryFeature {
 
             case .failed(let error):
                 state.errorMessage = error
+                return .none
+
+            case .exportEPUBTapped(let id):
+                guard state.exportingItemID == nil else { return .none }
+                if let item = state.items.first(where: { $0.id == id }), !item.isEPUBExportable {
+                    return .none
+                }
+                state.exportingItemID = id
+                state.epubExportError = nil
+                let epubExportClient = self.epubExportClient
+                return .run { send in
+                    do {
+                        let result = try await epubExportClient.export(id)
+                        await send(.epubExportSucceeded(result))
+                    } catch is CancellationError {
+                        return
+                    } catch {
+                        await send(.epubExportFailed(error.localizedDescription))
+                    }
+                }
+                .cancellable(id: CancelID.epubExport, cancelInFlight: true)
+
+            case .epubExportSucceeded(let result):
+                state.exportingItemID = nil
+                state.epubExport = result
+                return .none
+
+            case .epubExportFailed(let message):
+                state.exportingItemID = nil
+                state.epubExportError = message
+                return .none
+
+            case .epubExportDismissed:
+                guard let url = state.epubExport?.fileURL else { return .none }
+                state.epubExport = nil
+                let epubExportClient = self.epubExportClient
+                return .run { _ in
+                    await epubExportClient.discard(url)
+                }
+
+            case .epubExportErrorDismissed:
+                state.epubExportError = nil
                 return .none
 
             case .queryChanged(let value):

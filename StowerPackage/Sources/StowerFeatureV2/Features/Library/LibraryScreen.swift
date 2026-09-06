@@ -157,6 +157,12 @@ public struct LibraryScreen: View {
                         Button("Refresh Reader View") {
                             store.send(.reprocessItem(item.id))
                         }
+                        if item.isEPUBExportable, store.storageInfoByID[item.id]?.offloadedAt == nil {
+                            Button("Export as EPUB…") {
+                                store.send(.exportEPUBTapped(item.id))
+                            }
+                            .disabled(store.exportingItemID != nil)
+                        }
                         Button("Delete", role: .destructive) {
                             store.send(.deleteItem(item.id))
                         }

@@ -85,6 +85,14 @@ public struct ReaderCommands: Commands {
             }
             .keyboardShortcut("s", modifiers: [.command, .shift])
             .disabled(!store.canFocusReader)
+
+            Divider()
+
+            Button("Export as EPUB…") {
+                store.send(.exportOpenArticleAsEPUB)
+            }
+            .keyboardShortcut("e", modifiers: [.command, .shift])
+            .disabled(!store.canExportOpenArticleAsEPUB)
         }
     }
 }
@@ -152,6 +160,10 @@ public struct AppView: View {
                 }
             }
             .alert($store.scope(state: \.resetAlert, action: \.resetAlert))
+            // Lives at the root rather than on `LibraryScreen` because Mac
+            // reader focus removes the library from the hierarchy, and the
+            // export command must still be able to present its save panel.
+            .modifier(EPUBExportPresenter(store: store.scope(state: \.library, action: \.library)))
             .sheet(
                 isPresented: Binding(
                     get: { store.isSettingsPresented },

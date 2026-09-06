@@ -49,6 +49,55 @@ struct AppFeatureTests {
     }
 
     @Test
+    func exportCommandRoutesToLibraryForOpenArticle() async {
+        let item = SavedItem(title: "Open", content: "Body", renderFormat: .structuredV1)
+        var state = AppFeature.State()
+        state.reader = ReaderFeature.State(item: item, appearance: state.cachedAppearance)
+        let exported = LockIsolated<[UUID]>([])
+        let result = EPUBExportResult(itemID: item.id, fileURL: URL(fileURLWithPath: "/tmp/x.epub"), suggestedFilename: "x")
+
+        let store = TestStore(initialState: state) {
+            AppFeature()
+        } withDependencies: {
+            $0.epubExportClient.export = { id in
+                exported.withValue { $0.append(id) }
+                return result
+            }
+        }
+        store.exhaustivity = .off(showSkippedAssertions: false)
+        #expect(store.state.canExportOpenArticleAsEPUB)
+
+        await store.send(.exportOpenArticleAsEPUB)
+        await store.receive(.library(.exportEPUBTapped(item.id))) {
+            $0.library.exportingItemID = item.id
+        }
+        #expect(!store.state.canExportOpenArticleAsEPUB)
+        await store.receive(.library(.epubExportSucceeded(result))) {
+            $0.library.exportingItemID = nil
+            $0.library.epubExport = result
+        }
+        #expect(exported.value == [item.id])
+    }
+
+    @Test
+    func exportCommandIsIgnoredWithoutAnExportableArticle() async {
+        let store = TestStore(initialState: AppFeature.State()) {
+            AppFeature()
+        }
+        #expect(!store.state.canExportOpenArticleAsEPUB)
+        await store.send(.exportOpenArticleAsEPUB)
+
+        let website = SavedItem(title: "Site", content: "", renderFormat: .webView)
+        var state = AppFeature.State()
+        state.reader = ReaderFeature.State(item: website, appearance: state.cachedAppearance)
+        let websiteStore = TestStore(initialState: state) {
+            AppFeature()
+        }
+        #expect(!websiteStore.state.canExportOpenArticleAsEPUB)
+        await websiteStore.send(.exportOpenArticleAsEPUB)
+    }
+
+    @Test
     func readerFocusRequiresSelectionAndToggles() async {
         let item = SavedItem(title: "Focused", content: "Body")
         let store = TestStore(initialState: AppFeature.State()) {
