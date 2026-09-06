@@ -237,7 +237,7 @@ public enum ReaderDocumentHTMLBuilder {
     /// input is the format produced by `PDFIngestionClient`'s OCR pipeline:
     /// a header row, a separator row (`| --- | --- |`), and zero or more
     /// body rows. Any line that doesn't start with `|` is skipped.
-    private static func renderMarkdownTable(_ markdown: String, idAttr: String) -> String {
+    static func renderMarkdownTable(_ markdown: String, idAttr: String) -> String {
         let rawLines = markdown
             .split(separator: "\n", omittingEmptySubsequences: false)
             .map { String($0).trimmingCharacters(in: .whitespaces) }
@@ -471,7 +471,7 @@ public enum ReaderDocumentHTMLBuilder {
         return isSafeHTTPURL(media.sourceURL) ? media.sourceURL : ""
     }
 
-    private static func isSafeHTTPURL(_ url: String) -> Bool {
+    static func isSafeHTTPURL(_ url: String) -> Bool {
         guard let parsed = URL(string: url), let scheme = parsed.scheme?.lowercased() else {
             return false
         }
@@ -479,7 +479,7 @@ public enum ReaderDocumentHTMLBuilder {
     }
 
     /// Allow only http(s), mailto, and fragment-local URLs for inline links.
-    private static func isSafeLinkURL(_ url: String) -> Bool {
+    static func isSafeLinkURL(_ url: String) -> Bool {
         if url.hasPrefix("#") {
             return true
         }

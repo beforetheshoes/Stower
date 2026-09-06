@@ -35,6 +35,11 @@ public struct AppFeature {
 
         public var canFocusReader: Bool { reader != nil }
 
+        /// Drives the macOS "Export as EPUB…" command.
+        public var canExportOpenArticleAsEPUB: Bool {
+            (reader?.item?.isEPUBExportable ?? false) && library.exportingItemID == nil
+        }
+
         public var canNavigateToNextArticle: Bool {
             readerNavigationTarget(offset: 1) != nil
         }
@@ -120,6 +125,7 @@ public struct AppFeature {
         case previousArticleButtonTapped
         case toggleSelectedItemRead
         case toggleSelectedItemStarred
+        case exportOpenArticleAsEPUB
         case undoCompletedItemTapped
         case completedItemNoticeExpired(UUID)
         case openSettings
@@ -489,6 +495,12 @@ public struct AppFeature {
                 return .run { _ in
                     try? await repository.setStarred(item.id, newValue)
                 }
+
+            case .exportOpenArticleAsEPUB:
+                guard state.canExportOpenArticleAsEPUB, let itemID = state.reader?.item?.id else {
+                    return .none
+                }
+                return .send(.library(.exportEPUBTapped(itemID)))
 
             case .undoCompletedItemTapped:
                 guard let item = state.recentlyCompletedItem else { return .none }

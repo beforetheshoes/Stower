@@ -34,6 +34,15 @@ public struct SavedItem: Equatable, Identifiable, Sendable {
     /// batched junction-table query (never N+1).
     public var tagIDs = [UUID]()
 
+    /// Whether the article can be packaged as an EPUB. Website archives
+    /// render from unpacked files rather than a block document, so they are
+    /// excluded; so are items still extracting or sitting in the trash.
+    public var isEPUBExportable: Bool {
+        renderFormat != .webView
+            && (processingState == .ready || processingState == .partial)
+            && deletedAt == nil
+    }
+
     public init(
         title: String,
         content: String,
