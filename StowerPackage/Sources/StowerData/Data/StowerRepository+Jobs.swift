@@ -330,60 +330,66 @@ extension StowerRepository {
         { () async throws -> Int in
             @Dependency(\.date.now)
             var now
-            return try await database.write { db -> Int in
-                // Find text items that have local content but no sync row.
-                let locals = try SavedItemContentLocalTable
-                    .where { $0.localStatus.eq("available") }
-                    .fetchAll(db)
+            // An immediate transaction is refused outright while the database
+            // is suspended (GRDB waves deferred transactions and their SELECTs
+            // through as read-only), so this can never start scanning after
+            // the app has gone to the background.
+            return try await database.writeWithoutTransaction { db -> Int in
                 var backfilled = 0
-                for local in locals {
-                    // Only text items — skip URL-sourced and PDF items.
-                    guard let sync = try SavedItemSyncTable.find(local.itemID).fetchOne(db) else {
-                        continue
-                    }
-                    guard sync.sourceURL == nil || sync.sourceURL?.isEmpty == true else {
-                        continue
-                    }
-                    let format = RenderFormat(rawValue: local.renderFormat) ?? .structuredV1
-                    guard format != .pdf else { continue }
-
-                    // Skip if a sync row already exists with content.
-                    if let existing = try SavedTextContentSyncTable.find(local.itemID).fetchOne(db),
-                       !existing.rawSourceText.isEmpty {
-                        continue
-                    }
-
-                    // Build the compressed raw source text for the sync row.
-                    let rawText: String
-                    if !local.rawSourceText.isEmpty {
-                        rawText = local.rawSourceText
-                    } else if !local.documentJSON.isEmpty,
-                              let data = local.documentJSON.data(using: .utf8),
-                              let document = try? JSONDecoder().decode(ReaderDocument.self, from: data),
-                              !document.blocks.isEmpty {
-                        rawText = ReaderDocumentMarkdownWriter.markdown(from: document)
-                    } else {
-                        rawText = local.plainText
-                    }
-                    guard !rawText.isEmpty else { continue }
-
-                    let compressed = TextSyncCompression.compress(rawText)
-                    let truncatedPlain = String(local.plainText.prefix(1000))
-
-                    try SavedTextContentSyncTable
-                        .upsert {
-                            SavedTextContentSyncTable.Draft(
-                                id: local.itemID,
-                                plainText: truncatedPlain,
-                                rawSourceText: compressed,
-                                rawSourceMode: local.rawSourceMode,
-                                renderFormat: local.renderFormat,
-                                createdAt: now,
-                                updatedAt: now
-                            )
+                try db.inTransaction(.immediate) {
+                    // Text items with local content and no usable sync row.
+                    // Every filter runs in SQL so the only rows that come off
+                    // disk in full — documentJSON, sourceHTML and all — are
+                    // the ones that actually need a sync row, which after the
+                    // first launch is none. The old version loaded the whole
+                    // library's content on every launch just to skip it, and
+                    // held the lock for the duration.
+                    let textItemIDs = SavedItemSyncTable
+                        .where { $0.sourceURL.is(nil) || $0.sourceURL.eq("") }
+                        .select(\.id)
+                    let alreadySynced = SavedTextContentSyncTable
+                        .where { $0.rawSourceText.neq("") }
+                        .select(\.id)
+                    let locals = try SavedItemContentLocalTable
+                        .where { $0.localStatus.eq("available") }
+                        .where { $0.renderFormat.neq("pdf") }
+                        .where { $0.itemID.in(textItemIDs) }
+                        .where { !$0.itemID.in(alreadySynced) }
+                        .fetchAll(db)
+                    for local in locals {
+                        // Build the compressed raw source text for the sync row.
+                        let rawText: String
+                        if !local.rawSourceText.isEmpty {
+                            rawText = local.rawSourceText
+                        } else if !local.documentJSON.isEmpty,
+                                  let data = local.documentJSON.data(using: .utf8),
+                                  let document = try? JSONDecoder().decode(ReaderDocument.self, from: data),
+                                  !document.blocks.isEmpty {
+                            rawText = ReaderDocumentMarkdownWriter.markdown(from: document)
+                        } else {
+                            rawText = local.plainText
                         }
-                        .execute(db)
-                    backfilled += 1
+                        guard !rawText.isEmpty else { continue }
+
+                        let compressed = TextSyncCompression.compress(rawText)
+                        let truncatedPlain = String(local.plainText.prefix(1000))
+
+                        try SavedTextContentSyncTable
+                            .upsert {
+                                SavedTextContentSyncTable.Draft(
+                                    id: local.itemID,
+                                    plainText: truncatedPlain,
+                                    rawSourceText: compressed,
+                                    rawSourceMode: local.rawSourceMode,
+                                    renderFormat: local.renderFormat,
+                                    createdAt: now,
+                                    updatedAt: now
+                                )
+                            }
+                            .execute(db)
+                        backfilled += 1
+                    }
+                    return .commit
                 }
                 return backfilled
             }
@@ -507,36 +513,41 @@ extension StowerRepository {
             // and taking the write only when there is something to insert
             // shrinks that window to near nothing, and skips it entirely for
             // the common case where nothing needs hydrating.
-            let pending: [(item: SavedItemSyncTable, url: String)] = try await database.read { db in
-                let synced: [SavedItemSyncTable] = try SavedItemSyncTable
+            //
+            // Only IDs and URLs come off disk. The previous scan loaded every
+            // content row in full — documentJSON and sourceHTML for the whole
+            // library — just to collect IDs, which kept a read lock open for
+            // seconds on a large library and is what iOS killed the app over.
+            let pending: [(id: UUID, url: String)] = try await database.read { db in
+                try SavedItemSyncTable
                     .where { !$0.isArchived }
+                    .where { $0.sourceURL.isNot(nil) }
+                    .where { !$0.id.in(SavedItemContentLocalTable.select(\.itemID)) }
+                    .select { ($0.id, $0.sourceURL) }
                     .fetchAll(db)
-                let locals: [SavedItemContentLocalTable] = try SavedItemContentLocalTable.fetchAll(db)
-                let localIDs: Set<UUID> = Set(locals.map(\.itemID))
-
-                return synced.compactMap { item in
-                    guard !localIDs.contains(item.id) else { return nil }
-                    guard let url = item.sourceURL, !url.isEmpty else { return nil }
-                    return (item, url)
-                }
+                    .compactMap { id, url in
+                        guard let url, !url.isEmpty else { return nil }
+                        return (id, url)
+                    }
             }
 
             guard !pending.isEmpty else { return 0 }
 
             return try await database.write { db -> Int in
                 var enqueued = 0
-                for (item, url) in pending {
+                for (id, url) in pending {
                     // Re-check inside the write: another process (the share
                     // extension) may have inserted content since the read.
                     let existing = try SavedItemContentLocalTable
-                        .find(item.id)
+                        .where { $0.itemID.eq(id) }
+                        .select(\.itemID)
                         .fetchOne(db)
                     guard existing == nil else { continue }
 
                     try SavedItemContentLocalTable
                         .insert {
                             SavedItemContentLocalTable.Draft(
-                                itemID: item.id,
+                                itemID: id,
                                 renderFormat: "structuredV1",
                                 documentVersion: 1,
                                 plainText: "",
@@ -552,7 +563,7 @@ extension StowerRepository {
                         .execute(db)
 
                     let payload = try String(
-                        bytes: JSONEncoder().encode(HydrationPayload(itemID: item.id, url: url)),
+                        bytes: JSONEncoder().encode(HydrationPayload(itemID: id, url: url)),
                         encoding: .utf8
                     ) ?? ""
                     try IngestionJobLocalTable
