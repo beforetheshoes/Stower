@@ -32,11 +32,9 @@ struct ReaderListenControls: View {
             speedSection
             voiceSection
 
-            #if os(iOS)
-            if catalog.onlyDefaultQualityForPreferred {
-                downloadVoicesRow
+            if catalog.siriVoices.isEmpty {
+                siriVoiceHint
             }
-            #endif
 
             footerMessages
         }
@@ -204,6 +202,21 @@ struct ReaderListenControls: View {
     @ViewBuilder private var voiceMenuContents: some View {
         Button("Automatic") { onVoiceChanged(nil) }
         Divider()
+        if catalog.siriVoices.isEmpty {
+            otherVoiceMenus
+        } else {
+            // Siri's neural voices lead; everything older is tucked away.
+            ForEach(catalog.siriVoices) { voice in
+                Button(voice.displayName) { onVoiceChanged(voice.id) }
+            }
+            Divider()
+            Menu("Other Voices") {
+                otherVoiceMenus
+            }
+        }
+    }
+
+    @ViewBuilder private var otherVoiceMenus: some View {
         ForEach(catalog.preferredGroups) { group in
             voiceGroupMenu(group)
         }
@@ -227,32 +240,26 @@ struct ReaderListenControls: View {
 
     private var currentVoiceLabel: String {
         guard let id = speech.selectedVoiceID else { return "Automatic" }
-        let all = catalog.preferredGroups.flatMap(\.voices) + catalog.otherGroups.flatMap(\.voices)
+        let all = catalog.siriVoices
+            + catalog.preferredGroups.flatMap(\.voices)
+            + catalog.otherGroups.flatMap(\.voices)
         return all.first { $0.id == id }?.displayName ?? "Automatic"
     }
 
-    // MARK: - Download voices footer
+    // MARK: - Siri voice hint
 
-    #if os(iOS)
-    @ViewBuilder private var downloadVoicesRow: some View {
-        Button {
-            openVoiceSettings()
-        } label: {
-            Label("Download better voices…", systemImage: "arrow.down.circle")
-                .font(.footnote)
+    /// Shown when no Siri voice is installed. There is no public deep link
+    /// to the voice download screen, so this says where to find it.
+    @ViewBuilder private var siriVoiceHint: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Label("For a more natural voice, download a Siri voice", systemImage: "arrow.down.circle")
+                .font(.footnote.weight(.medium))
+            Text("Open Settings, go to Accessibility, and look in the spoken content voices for your language. Siri voices are listed in their own section.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
         }
-        .buttonStyle(.plain)
-        .foregroundStyle(.tint)
     }
-
-    private func openVoiceSettings() {
-        #if canImport(UIKit)
-        if let url = URL(string: UIApplication.openSettingsURLString) {
-            UIApplication.shared.open(url)
-        }
-        #endif
-    }
-    #endif
 
     // MARK: - Footer messages
 
