@@ -17,6 +17,17 @@ public struct AppFeature {
         @Presents public var reader: ReaderFeature.State?
         public var startupFinished = false
         public var startupErrorMessage: String?
+        /// True from the scene entering the background until its next
+        /// activation, on platforms that suspend the process. Database
+        /// maintenance is deferred while set — see `sceneDidEnterBackground`.
+        public var isSceneInBackground = false
+        /// Startup's database maintenance was cancelled, refused, or skipped
+        /// because the app was in the background. The next activation runs it.
+        public var startupMaintenancePending = false
+        /// The post-sync hydration pass was interrupted or skipped in the
+        /// background and should run on the next activation.
+        public var syncFollowUpPending = false
+        var isSyncFollowUpRunning = false
         public var failedImports = [FailedImport]()
         /// Number of URL saves queued from this app that are still being
         /// fetched. Drives the "Saving…" notice.
@@ -112,6 +123,14 @@ public struct AppFeature {
         case browserExtensionURLReceived(URL)
         case startupFinished
         case startupFailed(String)
+        /// Cloud sync start has settled (started, or unavailable) and the
+        /// database maintenance half of startup can begin.
+        case startupSyncStarted
+        /// Startup maintenance stopped because the database was suspended;
+        /// it re-runs on the next activation instead of reporting an error.
+        case startupMaintenanceInterrupted
+        case syncFollowUpFinished
+        case sceneDidEnterBackground
         case failedImportsLoaded([FailedImport])
         case queuedSaveFinished
         case retryFailedImportsTapped
@@ -254,86 +273,70 @@ public struct AppFeature {
                         // Sync is optional. If iCloud is unavailable the app
                         // still drains shared imports, loads settings, and
                         // runs maintenance; the sync status shows the problem.
+                        //
+                        // Sync start is deliberately not cancellable: the
+                        // engine cannot be started twice. Everything that
+                        // touches the database afterwards runs in the
+                        // separately cancellable `startupSyncStarted` effect.
                         do {
                             try await cloudSyncClient.start()
                         } catch where error.isDatabaseSuspension {
-                            await send(.startupFinished)
+                            await send(.startupMaintenanceInterrupted)
                             return
                         } catch {
                             await send(.cloudSyncStatusChanged(
                                 CloudSyncStatus(state: .unavailable(error.localizedDescription))
                             ))
                         }
-                        do {
-                            _ = try await repository.reconcileOrphanedTagAssignments()
-                            // Backfill the text sync table from local content
-                            // for any text items missing a sync row (recovery
-                            // from the v11 DROP TABLE migration or items that
-                            // predate the sync table).
-                            _ = try await repository.backfillTextSyncTable()
-                            _ = try await repository.enqueueHydrationJobsForMissingContent()
-                            try await ingestionCoordinator.run {
-                                try await processIngestionJobs(
-                                    repository: repository,
-                                    ingestionClient: ingestionClient,
-                                    pdfIngestionClient: pdfIngestionClient,
-                                    textIngestionClient: textIngestionClient
-                                ) { date.now }
-                            }
-                            await send(.failedImportsLoaded(
-                                FailedImport.list(from: try await repository.fetchFailedIngestionJobs())
-                            ))
-                            // Best effort: the coordinator reports sync
-                            // problems through the status stream, and a
-                            // failed push is not a failed launch.
-                            try? await cloudSyncClient.sendChanges()
-                            await send(.startupFinished)
-                            await send(.settings(.load))
-                            // Storage maintenance runs last so it never delays
-                            // startup, and only every few days. Sweeps are
-                            // age-gated and the orphan sweep quarantines for a
-                            // week before deleting, so running shortly after a
-                            // fresh install is safe.
-                            let defaults = UserDefaults.standard
-                            let lastMaintenance = defaults.object(
-                                forKey: "lastStorageMaintenanceDate"
-                            ) as? Date
-                            let isDue = lastMaintenance
-                                .map { date.now.timeIntervalSince($0) >= 3 * 24 * 3600 } ?? true
-                            if isDue {
-                                _ = try? await storageUsageClient.runMaintenance(.periodic)
-                                defaults.set(date.now, forKey: "lastStorageMaintenanceDate")
-                            }
-                            // Cloud-asset backfill: upload PDFs that predate
-                            // the asset store and (past the gate date) migrate
-                            // legacy website zips; then run the budget-based
-                            // eviction pass. All idempotent and cheap when
-                            // there is nothing to do.
-                            if (try? await CloudAssetService.enqueueBackfillJobs(repository: repository)) ?? 0 > 0 {
-                                try? await ingestionCoordinator.run {
-                                    try await processIngestionJobs(
-                                        repository: repository,
-                                        ingestionClient: ingestionClient,
-                                        pdfIngestionClient: pdfIngestionClient,
-                                        textIngestionClient: textIngestionClient
-                                    ) { date.now }
-                                }
-                            }
-                            _ = try? await StorageOffloadService.runEviction(
-                                repository: repository,
-                                excluding: Set([openReaderItemID].compactMap(\.self))
-                            )
-                        } catch where error.isDatabaseSuspension {
-                            // Backgrounded mid-startup. Not a failure worth
-                            // reporting — startup re-runs on the next
-                            // activation, and showing "database is suspended"
-                            // would be alarming and useless.
-                            await send(.startupFinished)
-                        } catch {
-                            await send(.startupFailed(error.localizedDescription))
-                        }
+                        await send(.startupSyncStarted)
                     }
                     .cancellable(id: CancelID.startup, cancelInFlight: true)
+                )
+
+            case .startupSyncStarted:
+                // Backgrounded while sync was starting. Running the scans now
+                // would hold locks on the App Group database right as iOS
+                // suspends the process — the 0xDEAD10CC termination seen on
+                // TestFlight — so wait for the next activation.
+                guard !state.isSceneInBackground else {
+                    state.startupMaintenancePending = true
+                    return .none
+                }
+                state.startupMaintenancePending = false
+                return startupMaintenance(state: state)
+
+            case .startupMaintenanceInterrupted:
+                // Not a failure worth reporting — showing "database is
+                // suspended" would be alarming and useless. The work re-runs
+                // on the next activation.
+                state.startupFinished = true
+                state.startupErrorMessage = nil
+                state.startupMaintenancePending = true
+                return .none
+
+            case .syncFollowUpFinished:
+                state.isSyncFollowUpRunning = false
+                return .none
+
+            case .sceneDidEnterBackground:
+                // iOS kills a process with 0xDEAD10CC if it holds a lock on a
+                // file in a shared container when suspended. GRDB's suspension
+                // only interrupts statements running at that instant and still
+                // admits WAL reads afterwards, so the long-running effects are
+                // cancelled outright: GRDB interrupts a statement the moment
+                // its task is cancelled, which releases the lock now. Whatever
+                // was cut short runs again on activation.
+                state.isSceneInBackground = true
+                if !state.startupFinished {
+                    state.startupMaintenancePending = true
+                }
+                if state.isSyncFollowUpRunning {
+                    state.isSyncFollowUpRunning = false
+                    state.syncFollowUpPending = true
+                }
+                return .merge(
+                    .cancel(id: CancelID.startupMaintenance),
+                    .cancel(id: CancelID.syncFollowUp)
                 )
 
             case .startupFinished:
@@ -430,13 +433,14 @@ public struct AppFeature {
                 // the drain then left the just-shared URL sitting in the queue
                 // until some later launch. `ingestionCoordinator` serializes
                 // the two drains, so overlapping is safe.
+                state.isSceneInBackground = false
                 let repository = self.repository
                 let ingestionClient = self.ingestionClient
                 let pdfIngestionClient = self.pdfIngestionClient
                 let textIngestionClient = self.textIngestionClient
                 let date = self.date
                 let ingestionCoordinator = self.ingestionCoordinator
-                return .run { send in
+                let drain: EffectOf<Self> = .run { send in
                     try? await ingestionCoordinator.run {
                         try await processIngestionJobs(
                             repository: repository,
@@ -448,6 +452,18 @@ public struct AppFeature {
                     let jobs = (try? await repository.fetchFailedIngestionJobs()) ?? []
                     await send(.failedImportsLoaded(FailedImport.list(from: jobs)))
                 }
+                var effects = [drain]
+                // Anything the background transition cut short runs now.
+                if state.startupMaintenancePending {
+                    state.startupMaintenancePending = false
+                    effects.append(startupMaintenance(state: state))
+                }
+                if state.syncFollowUpPending {
+                    state.syncFollowUpPending = false
+                    state.isSyncFollowUpRunning = true
+                    effects.append(syncFollowUp())
+                }
+                return .merge(effects)
 
             case .browserExtensionURLReceived(let url):
                 return .send(.library(.saveExternalURL(url)))
@@ -540,29 +556,16 @@ public struct AppFeature {
 
                 // If we just completed a sync, refresh the library and kick hydration for newly-arrived records.
                 if status.lastSyncSuccess != nil, status.lastSyncSuccess != previous.lastSyncSuccess {
-                    let repository = self.repository
-                    let ingestionClient = self.ingestionClient
-                    let pdfIngestionClient = self.pdfIngestionClient
-                    let textIngestionClient = self.textIngestionClient
-                    let date = self.date
-                    let ingestionCoordinator = self.ingestionCoordinator
-                    return .run { send in
-                        _ = try? await repository.enqueueHydrationJobsForMissingContent()
-                        _ = try? await repository.hydratePDFItemsFromSyncedContent()
-                        _ = try? await repository.hydrateTextItemsFromSyncedContent()
-                        _ = try? await repository.hydrateWebsiteItemsFromSyncedContent()
-                        _ = try? await repository.reconcileOrphanedTagAssignments()
-                        try? await ingestionCoordinator.run {
-                            try await processIngestionJobs(
-                                repository: repository,
-                                ingestionClient: ingestionClient,
-                                pdfIngestionClient: pdfIngestionClient,
-                                textIngestionClient: textIngestionClient
-                            ) { date.now }
-                        }
-                        let jobs = (try? await repository.fetchFailedIngestionJobs()) ?? []
-                        await send(.failedImportsLoaded(FailedImport.list(from: jobs)))
+                    // Sync completes in the background too; the follow-up
+                    // scans wait for the foreground so they cannot be holding
+                    // a lock when iOS suspends the process.
+                    guard !state.isSceneInBackground else {
+                        state.syncFollowUpPending = true
+                        return .none
                     }
+                    state.syncFollowUpPending = false
+                    state.isSyncFollowUpRunning = true
+                    return syncFollowUp()
                 }
 
                 switch status.state {
@@ -697,9 +700,125 @@ public struct AppFeature {
 
     enum CancelID {
         case startup
+        case startupMaintenance
+        case syncFollowUp
         case syncStatus
         case periodicSync
         case completedItemNotice
+    }
+
+    /// The database half of startup: reconcile, backfill, hydrate, drain the
+    /// ingestion queue, then the age-gated storage work. Idempotent, and
+    /// cancelled when the scene enters the background — see
+    /// `sceneDidEnterBackground`.
+    private func startupMaintenance(state: State) -> EffectOf<Self> {
+        let cloudSyncClient = self.cloudSyncClient
+        let repository = self.repository
+        let ingestionClient = self.ingestionClient
+        let pdfIngestionClient = self.pdfIngestionClient
+        let textIngestionClient = self.textIngestionClient
+        let date = self.date
+        let ingestionCoordinator = self.ingestionCoordinator
+        let storageUsageClient = self.storageUsageClient
+        let openReaderItemID = state.reader?.itemID
+        return .run { send in
+            do {
+                _ = try await repository.reconcileOrphanedTagAssignments()
+                // Backfill the text sync table from local content
+                // for any text items missing a sync row (recovery
+                // from the v11 DROP TABLE migration or items that
+                // predate the sync table).
+                _ = try await repository.backfillTextSyncTable()
+                _ = try await repository.enqueueHydrationJobsForMissingContent()
+                try await ingestionCoordinator.run {
+                    try await processIngestionJobs(
+                        repository: repository,
+                        ingestionClient: ingestionClient,
+                        pdfIngestionClient: pdfIngestionClient,
+                        textIngestionClient: textIngestionClient
+                    ) { date.now }
+                }
+                await send(.failedImportsLoaded(
+                    FailedImport.list(from: try await repository.fetchFailedIngestionJobs())
+                ))
+                // Best effort: the coordinator reports sync
+                // problems through the status stream, and a
+                // failed push is not a failed launch.
+                try? await cloudSyncClient.sendChanges()
+                await send(.startupFinished)
+                await send(.settings(.load))
+                // Storage maintenance runs last so it never delays
+                // startup, and only every few days. Sweeps are
+                // age-gated and the orphan sweep quarantines for a
+                // week before deleting, so running shortly after a
+                // fresh install is safe.
+                let defaults = UserDefaults.standard
+                let lastMaintenance = defaults.object(
+                    forKey: "lastStorageMaintenanceDate"
+                ) as? Date
+                let isDue = lastMaintenance
+                    .map { date.now.timeIntervalSince($0) >= 3 * 24 * 3600 } ?? true
+                if isDue {
+                    _ = try? await storageUsageClient.runMaintenance(.periodic)
+                    defaults.set(date.now, forKey: "lastStorageMaintenanceDate")
+                }
+                // Cloud-asset backfill: upload PDFs that predate
+                // the asset store and (past the gate date) migrate
+                // legacy website zips; then run the budget-based
+                // eviction pass. All idempotent and cheap when
+                // there is nothing to do.
+                if (try? await CloudAssetService.enqueueBackfillJobs(repository: repository)) ?? 0 > 0 {
+                    try? await ingestionCoordinator.run {
+                        try await processIngestionJobs(
+                            repository: repository,
+                            ingestionClient: ingestionClient,
+                            pdfIngestionClient: pdfIngestionClient,
+                            textIngestionClient: textIngestionClient
+                        ) { date.now }
+                    }
+                }
+                _ = try? await StorageOffloadService.runEviction(
+                    repository: repository,
+                    excluding: Set([openReaderItemID].compactMap(\.self))
+                )
+            } catch where error.isDatabaseSuspension {
+                // Backgrounded mid-startup; re-runs on activation.
+                await send(.startupMaintenanceInterrupted)
+            } catch {
+                await send(.startupFailed(error.localizedDescription))
+            }
+        }
+        .cancellable(id: CancelID.startupMaintenance, cancelInFlight: true)
+    }
+
+    /// Hydrates content for records that just arrived through CloudKit and
+    /// drains anything the share extension queued.
+    private func syncFollowUp() -> EffectOf<Self> {
+        let repository = self.repository
+        let ingestionClient = self.ingestionClient
+        let pdfIngestionClient = self.pdfIngestionClient
+        let textIngestionClient = self.textIngestionClient
+        let date = self.date
+        let ingestionCoordinator = self.ingestionCoordinator
+        return .run { send in
+            _ = try? await repository.enqueueHydrationJobsForMissingContent()
+            _ = try? await repository.hydratePDFItemsFromSyncedContent()
+            _ = try? await repository.hydrateTextItemsFromSyncedContent()
+            _ = try? await repository.hydrateWebsiteItemsFromSyncedContent()
+            _ = try? await repository.reconcileOrphanedTagAssignments()
+            try? await ingestionCoordinator.run {
+                try await processIngestionJobs(
+                    repository: repository,
+                    ingestionClient: ingestionClient,
+                    pdfIngestionClient: pdfIngestionClient,
+                    textIngestionClient: textIngestionClient
+                ) { date.now }
+            }
+            let jobs = (try? await repository.fetchFailedIngestionJobs()) ?? []
+            await send(.failedImportsLoaded(FailedImport.list(from: jobs)))
+            await send(.syncFollowUpFinished)
+        }
+        .cancellable(id: CancelID.syncFollowUp, cancelInFlight: true)
     }
 
     private func navigateReader(

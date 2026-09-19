@@ -52,6 +52,81 @@ struct DatabaseSuspensionTests {
         #expect(!(URLError(.timedOut) as Error).isDatabaseSuspension)
     }
 
+    // MARK: - Text backfill filters in SQL
+
+    @Test
+    func textBackfillOnlyLoadsTextItemsMissingASyncRow() async throws {
+        // The second TestFlight termination caught this scan loading every
+        // content row in full inside a write transaction. Every filter now
+        // runs in SQL, so the rows that come off disk are the ones that get
+        // a sync row — and a second run finds none.
+        let database = try StowerDatabase.makeDatabase()
+        let repository = StowerRepository.live(database: database, cloudSyncClient: .noop)
+        let now = Date(timeIntervalSince1970: 1000)
+        let textID = UUID()
+        let urlID = UUID()
+        let pdfID = UUID()
+        let syncedID = UUID()
+        let offloadedID = UUID()
+
+        try await database.write { db in
+            let items: [(UUID, String?)] = [
+                (textID, nil), (urlID, "https://example.com/a"), (pdfID, ""), (syncedID, nil), (offloadedID, nil),
+            ]
+            for (id, url) in items {
+                try SavedItemSyncTable
+                    .insert {
+                        SavedItemSyncTable.Draft(id: id, title: "T", sourceURL: url, createdAt: now, updatedAt: now)
+                    }
+                    .execute(db)
+            }
+            let locals = [
+                SavedItemContentLocalTable.Draft(itemID: textID, renderFormat: "structuredV1", plainText: "# Hello", localStatus: "available"),
+                SavedItemContentLocalTable.Draft(itemID: urlID, renderFormat: "structuredV1", plainText: "web", localStatus: "available"),
+                SavedItemContentLocalTable.Draft(itemID: pdfID, renderFormat: "pdf", plainText: "", localStatus: "available"),
+                SavedItemContentLocalTable.Draft(itemID: syncedID, renderFormat: "plainText", plainText: "already", localStatus: "available"),
+                SavedItemContentLocalTable.Draft(itemID: offloadedID, renderFormat: "plainText", plainText: "gone", localStatus: "notDownloaded"),
+            ]
+            for var local in locals {
+                local.rawSourceText = local.plainText
+                local.createdAt = now
+                local.updatedAt = now
+                try SavedItemContentLocalTable.insert { local }.execute(db)
+            }
+            try SavedTextContentSyncTable
+                .insert {
+                    SavedTextContentSyncTable.Draft(
+                        id: syncedID,
+                        plainText: "already",
+                        rawSourceText: TextSyncCompression.compress("already"),
+                        renderFormat: "plainText",
+                        createdAt: now,
+                        updatedAt: now
+                    )
+                }
+                .execute(db)
+        }
+
+        let backfilled = try await withDependencies {
+            $0.date.now = now
+        } operation: {
+            try await repository.backfillTextSyncTable()
+        }
+        #expect(backfilled == 1)
+
+        let syncRows = try await database.read { db in
+            try SavedTextContentSyncTable.select(\.id).fetchAll(db)
+        }
+        #expect(Set(syncRows) == [textID, syncedID])
+
+        let again = try await withDependencies {
+            $0.date.now = now
+        } operation: {
+            try await repository.backfillTextSyncTable()
+        }
+        #expect(again == 0)
+    }
+
     // MARK: - Hydration scan no longer holds a write lock to read
 
     @Test

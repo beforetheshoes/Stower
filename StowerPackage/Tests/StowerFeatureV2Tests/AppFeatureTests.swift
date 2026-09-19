@@ -486,6 +486,139 @@ struct AppFeatureTests {
         #expect(settingsLoaded.value)
     }
 
+    // MARK: - Background suspension
+
+    /// Stubs the startup pipeline so the tests can count and gate its
+    /// database steps without a real CloudKit engine.
+    private func prepareStartupStubs(_ dependencies: inout DependencyValues) {
+        dependencies.cloudSyncClient = CloudSyncClient(
+            start: {},
+            sendChanges: {},
+            scheduleSendChanges: {},
+            statusStream: { AsyncStream { $0.finish() } }
+        )
+        dependencies.stowerRepository.claimNextIngestionJob = { _ in nil }
+        dependencies.stowerRepository.fetchFailedIngestionJobs = { [] }
+        dependencies.stowerRepository.purgeOldTrash = { [] }
+        dependencies.stowerRepository.reconcileOrphanedTagAssignments = { 0 }
+        dependencies.stowerRepository.backfillTextSyncTable = { 0 }
+        dependencies.stowerRepository.enqueueHydrationJobsForMissingContent = { 0 }
+        dependencies.stowerRepository.loadSettings = {
+            ImageDownloadSettings(globalAutoDownload: true, askForNewSources: false)
+        }
+        dependencies.continuousClock = ImmediateClock()
+        dependencies.date.now = Date(timeIntervalSince1970: 1000)
+        dependencies.uuid = .incrementing
+        dependencies.syncDiagnosticsClient = .noop
+    }
+
+    @Test
+    func backgroundingBeforeSyncSettlesDefersStartupMaintenanceToActivation() async {
+        // The TestFlight 0xDEAD10CC: sync start was still awaiting the
+        // network when the user left, and the scans began in the background.
+        let (gate, release) = AsyncStream<Void>.makeStream()
+        let backfills = LockIsolated(0)
+        let store = TestStore(initialState: AppFeature.State()) {
+            AppFeature()
+        } withDependencies: {
+            prepareStartupStubs(&$0)
+            $0.cloudSyncClient.start = { for await _ in gate { break } }
+            $0.stowerRepository.backfillTextSyncTable = {
+                backfills.withValue { $0 += 1 }
+                return 0
+            }
+        }
+        store.exhaustivity = .off(showSkippedAssertions: false)
+
+        await store.send(.onAppear)
+        await store.send(.sceneDidEnterBackground) {
+            $0.isSceneInBackground = true
+            $0.startupMaintenancePending = true
+        }
+        release.yield()
+        await store.receive(.startupSyncStarted)
+        #expect(backfills.value == 0)
+
+        await store.send(.sceneDidBecomeActive) {
+            $0.isSceneInBackground = false
+            $0.startupMaintenancePending = false
+        }
+        await store.receive(.startupFinished) {
+            $0.startupFinished = true
+        }
+        #expect(backfills.value == 1)
+    }
+
+    @Test
+    func backgroundingDuringStartupMaintenanceCancelsItAndRerunsOnActivation() async {
+        let (gate, _) = AsyncStream<Void>.makeStream()
+        let backfills = LockIsolated(0)
+        let store = TestStore(initialState: AppFeature.State()) {
+            AppFeature()
+        } withDependencies: {
+            prepareStartupStubs(&$0)
+            $0.stowerRepository.backfillTextSyncTable = {
+                let call = backfills.withValue { $0 += 1; return $0 }
+                if call == 1 {
+                    // Blocks until the effect is cancelled.
+                    for await _ in gate { break }
+                }
+                return 0
+            }
+        }
+        store.exhaustivity = .off(showSkippedAssertions: false)
+
+        await store.send(.onAppear)
+        await store.receive(.startupSyncStarted)
+        await store.send(.sceneDidEnterBackground) {
+            $0.isSceneInBackground = true
+            $0.startupMaintenancePending = true
+        }
+        await store.send(.sceneDidBecomeActive) {
+            $0.isSceneInBackground = false
+            $0.startupMaintenancePending = false
+        }
+        await store.receive(.startupFinished) {
+            $0.startupFinished = true
+        }
+        #expect(backfills.value == 2)
+    }
+
+    @Test
+    func syncCompletingInBackgroundDefersHydrationUntilActive() async {
+        let hydrations = LockIsolated(0)
+        var state = AppFeature.State()
+        state.isSceneInBackground = true
+        let store = TestStore(initialState: state) {
+            AppFeature()
+        } withDependencies: {
+            prepareStartupStubs(&$0)
+            $0.stowerRepository.enqueueHydrationJobsForMissingContent = {
+                hydrations.withValue { $0 += 1 }
+                return 0
+            }
+        }
+        store.exhaustivity = .off(showSkippedAssertions: false)
+
+        let synced = Date(timeIntervalSince1970: 2000)
+        await store.send(.cloudSyncStatusChanged(
+            CloudSyncStatus(state: .available, lastSyncAttempt: synced, lastSyncSuccess: synced)
+        )) {
+            $0.syncFollowUpPending = true
+        }
+        #expect(hydrations.value == 0)
+
+        await store.send(.sceneDidBecomeActive) {
+            $0.isSceneInBackground = false
+            $0.syncFollowUpPending = false
+            $0.isSyncFollowUpRunning = true
+        }
+        await store.receive(.syncFollowUpFinished) {
+            $0.isSyncFollowUpRunning = false
+        }
+        #expect(hydrations.value == 1)
+    }
+
     @Test
     func startupFailureIsVisibleAndDismissible() async {
         // `startupErrorMessage` used to be set and read by nothing, so a failed

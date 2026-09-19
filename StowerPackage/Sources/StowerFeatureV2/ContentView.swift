@@ -23,6 +23,14 @@ public struct ContentView: View {
                     // in the background, so this is not hypothetical — it is
                     // what took the shipped build down. Suspending here turns a
                     // termination into an interrupted write we can retry.
+                    //
+                    // Cancel the long-running database effects first: GRDB's
+                    // suspension leaves WAL reads and deferred transactions
+                    // running, and a startup scan mid-flight is exactly what a
+                    // second TestFlight termination caught.
+                    if DatabaseSuspensionObserver.isSupported {
+                        store.send(.sceneDidEnterBackground)
+                    }
                     DatabaseSuspensionObserver.suspend()
                 case .active:
                     DatabaseSuspensionObserver.resume()
