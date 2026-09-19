@@ -1,0 +1,54 @@
+name: TestFlight
+
+# Tag-triggered, not push-triggered, so a build ships when a version is cut rather than on
+# every merge. workflow_dispatch lets one be fired by hand.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: "Which platform to ship"
+        required: true
+        default: both
+        type: choice
+        options: [ios, mac, both]
+
+jobs:
+  testflight:
+    # Stower targets iOS 27 / macOS 27, so it needs the Xcode 27 SDK. Same runner label the
+    # Blocks TestFlight workflow ships from.
+    runs-on: xcode-27
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+          bundler-cache: true
+
+      - name: Install xcbeautify
+        run: which xcbeautify || brew install xcbeautify
+
+      - name: Ship
+        env:
+          # fastlane misbehaves on anything but a UTF-8 locale.
+          LANG: en_US.UTF-8
+          LC_ALL: en_US.UTF-8
+          CI: "true"
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
+          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+          MATCH_GIT_URL: ${{ secrets.MATCH_GIT_URL }}
+          # Lets match clone the private certificates repo.
+          MATCH_GIT_BASIC_AUTHORIZATION: ${{ secrets.MATCH_GIT_BASIC_AUTHORIZATION }}
+        run: |
+          set -euo pipefail
+          case "${{ github.event.inputs.platform || 'both' }}" in
+            ios)  bundle exec fastlane ios beta ;;
+            mac)  bundle exec fastlane mac beta ;;
+            both) bundle exec fastlane ios beta && bundle exec fastlane mac beta ;;
+          esac

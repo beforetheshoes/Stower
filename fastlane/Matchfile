@@ -1,0 +1,14 @@
+# Certificates and profiles live encrypted in a separate private repo, shared with the
+# other apps on this team. It must NOT be the Stower repo.
+git_url(ENV["MATCH_GIT_URL"] || "https://github.com/beforetheshoes/certificates")
+
+storage_mode("git")
+type("appstore")
+
+# Every embedded extension is its own bundle identifier and needs its own profile. Signing
+# fails at the extension if one is missing.
+app_identifier([
+  "com.ryanleewilliams.stower",
+  "com.ryanleewilliams.stower.share",
+  "com.ryanleewilliams.stower.safari"
+])
