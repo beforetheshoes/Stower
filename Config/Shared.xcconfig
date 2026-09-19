@@ -35,6 +35,9 @@ INFOPLIST_KEY_UIBackgroundModes = remote-notification background-processing
 
 // macOS App Store category (ignored on iOS)
 INFOPLIST_KEY_LSApplicationCategoryType = public.app-category.productivity
+// Stower uses only exempt encryption (HTTPS, CloudKit, and hashing through Apple's
+// frameworks). Declaring it here keeps every upload from stopping at "Missing Compliance".
+INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO
 
 // Privacy usage descriptions
 INFOPLIST_KEY_NSUserNotificationsUsageDescription = Stower uses notifications to inform you when articles are processed and ready to read.

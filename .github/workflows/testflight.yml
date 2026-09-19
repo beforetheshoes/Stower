@@ -20,7 +20,7 @@ jobs:
     # Stower targets iOS 27 / macOS 27, so it needs the Xcode 27 SDK. Same runner label the
     # Blocks TestFlight workflow ships from.
     runs-on: xcode-27
-    timeout-minutes: 90
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
 
@@ -45,6 +45,8 @@ jobs:
           MATCH_GIT_URL: ${{ secrets.MATCH_GIT_URL }}
           # Lets match clone the private certificates repo.
           MATCH_GIT_BASIC_AUTHORIZATION: ${{ secrets.MATCH_GIT_BASIC_AUTHORIZATION }}
+          # Comma-separated TestFlight group names that should receive each build.
+          TESTFLIGHT_GROUPS: ${{ vars.TESTFLIGHT_GROUPS }}
         run: |
           set -euo pipefail
           case "${{ github.event.inputs.platform || 'both' }}" in
