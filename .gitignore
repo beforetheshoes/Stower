@@ -67,3 +67,15 @@ fastlane/test_output
 build
 .DS_Store
 database-export-logs.json
+
+# fastlane output and signing material
+/Stower.ipa
+/Stower.pkg
+/Stower.app
+*.app.dSYM.zip
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots
+fastlane/test_output
+fastlane/README.md
+*.p8

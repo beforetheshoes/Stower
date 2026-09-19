@@ -1,0 +1,179 @@
+require "tmpdir"
+APP_ID = "com.ryanleewilliams.stower"
+SHARE_ID = "com.ryanleewilliams.stower.share"
+SAFARI_ID = "com.ryanleewilliams.stower.safari"
+WORKSPACE = "Stower.xcworkspace"
+SCHEME = "Stower"
+MINIMUM_OS_FLOOR = "27.0"
+
+# Loads the App Store Connect API key and parks it in lane_context, where match, gym and
+# pilot each pick it up on their own. A Team key is required — individual keys can't reach
+# the Provisioning endpoints match needs.
+private_lane :authenticate do
+  # Locally you point at the .p8 on disk; CI passes the same key base64-encoded in a secret.
+  # Either way this avoids Apple ID login, which fastlane cannot complete for an account
+  # that signs in with passkeys.
+  key_path = ENV["ASC_KEY_FILEPATH"]
+
+  app_store_connect_api_key(
+    key_id: ENV.fetch("ASC_KEY_ID"),
+    issuer_id: ENV.fetch("ASC_ISSUER_ID"),
+    key_filepath: key_path,
+    key_content: key_path ? nil : ENV.fetch("ASC_KEY_CONTENT"),
+    is_key_content_base64: key_path.nil?,
+    in_house: false
+  )
+end
+
+desc "Create the signing certificates and profiles. Run once, locally."
+lane :certs do
+  authenticate
+  match(type: "appstore", platform: "ios", readonly: false)
+  # The share extension is iOS-only, so macOS needs profiles for the app and the Safari
+  # extension alone.
+  match(
+    type: "appstore",
+    platform: "macos",
+    app_identifier: [APP_ID, SAFARI_ID],
+    additional_cert_types: ["mac_installer_distribution"],
+    readonly: false
+  )
+end
+
+# The build number is passed as a build setting rather than written into the project, so a
+# release never leaves the working tree dirty. The extensions read the same setting, which
+# keeps their CFBundleVersion equal to the app's (a mismatch is rejected at upload).
+#
+# -skipMacroValidation lets this build on a machine that has never opened the project:
+# Swift macro trust is a local Xcode setting that nothing in the repo can substitute for.
+def build_args(platform)
+  latest = latest_testflight_build_number(app_identifier: APP_ID, platform: platform)
+  "CURRENT_PROJECT_VERSION=#{latest + 1} -skipMacroValidation"
+end
+
+# Reads the SIGNED entitlements off a built .app and fails the lane unless the platform's
+# push key is present with the production value. Signing strips an entitlement the profile
+# can't grant without any error, and the only symptom is CloudKit sync that needs a relaunch
+# to notice remote changes. The key is spelled differently per platform, so it is asserted
+# exactly.
+def assert_push_entitlement!(app_path, key:)
+  xml = sh("codesign -d --entitlements :- #{app_path.shellescape} | plutil -convert xml1 -o - -", log: false)
+  unless xml =~ %r{<key>#{Regexp.escape(key)}</key>\s*<string>production</string>}
+    UI.user_error!(
+      "Signed app at #{app_path} lacks #{key}=production, so this build cannot receive " \
+      "CloudKit pushes — do not ship it. Check the entitlements file for this platform and " \
+      "the App ID's Push Notifications capability."
+    )
+  end
+  UI.success("Signed entitlements carry #{key}=production")
+end
+
+# Fails the lane unless the built app declares the intended OS floor.
+def assert_minimum_os!(info_plist, plist_key:)
+  value = sh("/usr/libexec/PlistBuddy -c 'Print :#{plist_key}' #{info_plist.shellescape}", log: false).strip
+  unless value == MINIMUM_OS_FLOOR
+    UI.user_error!("#{info_plist} declares #{plist_key}=#{value}, expected #{MINIMUM_OS_FLOOR}.")
+  end
+  UI.success("Artifact declares #{plist_key}=#{value}")
+end
+
+platform :ios do
+  desc "Build and upload an iOS build to TestFlight"
+  lane :beta do
+    # Creates a temporary keychain on CI, which avoids hung builds and the
+    # "User interaction is not allowed" signing failure.
+    setup_ci if ENV["CI"]
+    authenticate
+
+    match(type: "appstore", platform: "ios", readonly: ENV["CI"].to_s == "true")
+
+    build_app(
+      workspace: WORKSPACE,
+      scheme: SCHEME,
+      configuration: "Release",
+      export_method: "app-store",
+      xcodebuild_formatter: "xcbeautify",
+      destination: "generic/platform=iOS",
+      # The scheme is multiplatform, so gym only treats this as an iOS build when `sdk`
+      # says so.
+      sdk: "iphoneos",
+      xcargs: build_args("ios"),
+      export_options: {
+        provisioningProfiles: {
+          APP_ID => "match AppStore #{APP_ID}",
+          SHARE_ID => "match AppStore #{SHARE_ID}",
+          SAFARI_ID => "match AppStore #{SAFARI_ID}"
+        }
+      }
+    )
+
+    # The ipa is a zip; the checks need the .app inside it.
+    Dir.mktmpdir do |dir|
+      sh("unzip -q #{lane_context[SharedValues::IPA_OUTPUT_PATH].shellescape} 'Payload/*' -d #{dir.shellescape}")
+      app = Dir["#{dir}/Payload/*.app"].fetch(0)
+      assert_push_entitlement!(app, key: "aps-environment")
+      assert_minimum_os!("#{app}/Info.plist", plist_key: "MinimumOSVersion")
+    end
+
+    upload_to_testflight(
+      app_platform: "ios",
+      # Apple's processing can take many minutes; waiting for it just burns time.
+      skip_waiting_for_build_processing: true
+    )
+  end
+end
+
+platform :mac do
+  desc "Build and upload a macOS build to TestFlight"
+  lane :beta do
+    setup_ci if ENV["CI"]
+    authenticate
+
+    # Packaging a .pkg for the Mac App Store needs a Mac Installer Distribution certificate,
+    # which a plain appstore run does not create.
+    match(
+      type: "appstore",
+      platform: "macos",
+      app_identifier: [APP_ID, SAFARI_ID],
+      additional_cert_types: ["mac_installer_distribution"],
+      readonly: ENV["CI"].to_s == "true"
+    )
+
+    build_app(
+      workspace: WORKSPACE,
+      scheme: SCHEME,
+      configuration: "Release",
+      export_method: "app-store",
+      xcodebuild_formatter: "xcbeautify",
+      destination: "generic/platform=macOS",
+      # For a multiplatform scheme gym decides ipa-vs-pkg from `sdk` alone and ignores
+      # `destination`. Without this it archives macOS and then tries to package an .ipa.
+      sdk: "macosx",
+      xcargs: build_args("osx"),
+      export_options: {
+        provisioningProfiles: {
+          APP_ID => "match AppStore #{APP_ID} macos",
+          SAFARI_ID => "match AppStore #{SAFARI_ID} macos"
+        }
+      }
+    )
+
+    # gym drops the archived .app next to the .pkg, and Launch Services registers every app
+    # bundle it sees. That copy carries the production identifier, so it would compete with
+    # the installed app for the stower:// scheme and the extensions. Only the .pkg is
+    # uploaded, so check the .app and then remove it.
+    exported_app = File.expand_path("../Stower.app", __dir__)
+    assert_push_entitlement!(exported_app, key: "com.apple.developer.aps-environment")
+    assert_minimum_os!("#{exported_app}/Contents/Info.plist", plist_key: "LSMinimumSystemVersion")
+    if Dir.exist?(exported_app)
+      sh("/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -u #{exported_app.shellescape} || true")
+      FileUtils.rm_rf(exported_app)
+    end
+
+    upload_to_testflight(
+      app_platform: "osx",
+      pkg: lane_context[SharedValues::PKG_OUTPUT_PATH],
+      skip_waiting_for_build_processing: true
+    )
+  end
+end
