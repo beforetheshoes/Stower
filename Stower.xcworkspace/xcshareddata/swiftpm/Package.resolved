@@ -1,5 +1,5 @@
 {
-  "originHash" : "e0547833b577e6c79ea51e771a8ebc4785f822ec41265ca09de71227e29808f8",
+  "originHash" : "bb89a9e4218d249a099d240b8cac4ef94caa10d61c3a8caa8ab6d9ec5661214f",
   "pins" : [
     {
       "identity" : "combine-schedulers",
@@ -8,6 +8,15 @@
       "state" : {
         "revision" : "dcccb979a2183b8df3334237e3dc1ae2b4116a86",
         "version" : "1.2.0"
+      }
+    },
+    {
+      "identity" : "fluidaudio",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/FluidInference/FluidAudio.git",
+      "state" : {
+        "revision" : "41540ea237350afe5117a082b5c28eda642d0612",
+        "version" : "0.15.7"
       }
     },
     {

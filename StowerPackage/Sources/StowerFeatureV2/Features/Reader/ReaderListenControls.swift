@@ -20,26 +20,17 @@ struct ReaderListenControls: View {
     let onRateChanged: (Float) -> Void
     let onVoiceChanged: (String?) -> Void
 
-    @State private var catalog = ReaderSpeechVoiceCatalog.Catalog(
-        preferredGroups: [],
-        otherGroups: [],
-        onlyDefaultQualityForPreferred: false
-    )
-
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             playbackRow
             speedSection
             voiceSection
 
-            if catalog.siriVoices.isEmpty {
-                siriVoiceHint
+            if speech.isPreparingVoice {
+                preparingVoiceRow
             }
 
             footerMessages
-        }
-        .task {
-            catalog = ReaderSpeechVoiceCatalog.loadCatalog()
         }
     }
 
@@ -200,65 +191,39 @@ struct ReaderListenControls: View {
     }
 
     @ViewBuilder private var voiceMenuContents: some View {
-        Button("Automatic") { onVoiceChanged(nil) }
-        Divider()
-        if catalog.siriVoices.isEmpty {
-            otherVoiceMenus
-        } else {
-            // Siri's neural voices lead; everything older is tucked away.
-            ForEach(catalog.siriVoices) { voice in
-                Button(voice.displayName) { onVoiceChanged(voice.id) }
-            }
-            Divider()
-            Menu("Other Voices") {
-                otherVoiceMenus
-            }
-        }
-    }
-
-    @ViewBuilder private var otherVoiceMenus: some View {
-        ForEach(catalog.preferredGroups) { group in
-            voiceGroupMenu(group)
-        }
-        if !catalog.otherGroups.isEmpty {
-            Menu("More languages") {
-                ForEach(catalog.otherGroups) { group in
-                    voiceGroupMenu(group)
+        ForEach(ReaderSpeechVoice.allCases) { voice in
+            Button {
+                onVoiceChanged(voice.rawValue)
+            } label: {
+                if voice == speech.voice {
+                    Label(voice.displayName, systemImage: "checkmark")
+                } else {
+                    Text(voice.displayName)
                 }
             }
         }
     }
 
-    @ViewBuilder
-    private func voiceGroupMenu(_ group: ReaderSpeechVoiceCatalog.LanguageGroup) -> some View {
-        Menu(group.displayName) {
-            ForEach(group.voices) { voice in
-                Button(voice.displayName) { onVoiceChanged(voice.id) }
+    private var currentVoiceLabel: String {
+        speech.voice.displayName
+    }
+
+    // MARK: - Preparing voice
+
+    /// Shown while the voice model downloads (first use) or loads into memory.
+    @ViewBuilder private var preparingVoiceRow: some View {
+        HStack(spacing: 10) {
+            ProgressView()
+                .controlSize(.small)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Preparing voice…")
+                    .font(.footnote.weight(.medium))
+                Text("The first time, this downloads about 100 MB. After that it works offline.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
-    }
-
-    private var currentVoiceLabel: String {
-        guard let id = speech.selectedVoiceID else { return "Automatic" }
-        let all = catalog.siriVoices
-            + catalog.preferredGroups.flatMap(\.voices)
-            + catalog.otherGroups.flatMap(\.voices)
-        return all.first { $0.id == id }?.displayName ?? "Automatic"
-    }
-
-    // MARK: - Siri voice hint
-
-    /// Shown when no Siri voice is installed. There is no public deep link
-    /// to the voice download screen, so this says where to find it.
-    @ViewBuilder private var siriVoiceHint: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Label("For a more natural voice, download a Siri voice", systemImage: "arrow.down.circle")
-                .font(.footnote.weight(.medium))
-            Text("Open Settings, go to Accessibility, and look in the spoken content voices for your language. Siri voices are listed in their own section.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .textSelection(.enabled)
-        }
+        .accessibilityElement(children: .combine)
     }
 
     // MARK: - Footer messages

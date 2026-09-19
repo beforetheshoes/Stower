@@ -21,6 +21,8 @@ let package = Package(
         ),
         .package(url: "https://github.com/swiftlang/swift-markdown.git", from: "0.7.0"),
         .package(url: "https://github.com/weichsel/ZIPFoundation.git", from: "0.9.19"),
+        // On-device neural text-to-speech (Kokoro on Core ML) for the reader's Listen mode.
+        .package(url: "https://github.com/FluidInference/FluidAudio.git", from: "0.15.7"),
     ],
     targets: [
         .target(
@@ -37,6 +39,7 @@ let package = Package(
             dependencies: [
                 .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
                 .product(name: "Dependencies", package: "swift-dependencies"),
+                .product(name: "FluidAudio", package: "FluidAudio"),
                 .product(name: "Markdown", package: "swift-markdown"),
                 .product(name: "SwiftSoup", package: "SwiftSoup"),
                 .product(name: "ZIPFoundation", package: "ZIPFoundation"),

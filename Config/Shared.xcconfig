@@ -31,7 +31,8 @@ INFOPLIST_KEY_UISupportedInterfaceOrientations = portrait portrait-upside-down l
 INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = portrait landscape-left landscape-right portrait-upside-down
 
 // Background modes for CloudKit (iOS only — ignored on macOS)
-INFOPLIST_KEY_UIBackgroundModes = remote-notification background-processing
+// `audio` keeps Listen narration playing when the screen locks or the app is backgrounded.
+INFOPLIST_KEY_UIBackgroundModes = audio remote-notification background-processing
 
 // macOS App Store category (ignored on iOS)
 INFOPLIST_KEY_LSApplicationCategoryType = public.app-category.productivity
