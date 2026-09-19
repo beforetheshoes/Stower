@@ -46,9 +46,12 @@ end
 #
 # -skipMacroValidation lets this build on a machine that has never opened the project:
 # Swift macro trust is a local Xcode setting that nothing in the repo can substitute for.
-def build_args(platform)
-  latest = latest_testflight_build_number(app_identifier: APP_ID, platform: platform)
-  "CURRENT_PROJECT_VERSION=#{latest + 1} -skipMacroValidation"
+def next_build_number(platform)
+  latest_testflight_build_number(app_identifier: APP_ID, platform: platform) + 1
+end
+
+def build_args(build_number)
+  "CURRENT_PROJECT_VERSION=#{build_number} -skipMacroValidation"
 end
 
 # Reads the SIGNED entitlements off a built .app and fails the lane unless the platform's
@@ -91,20 +94,32 @@ def assert_export_compliance_declared!(info_plist)
   UI.success("Artifact declares ITSAppUsesNonExemptEncryption=NO")
 end
 
-# TestFlight groups to hand the build to, from TESTFLIGHT_GROUPS (comma-separated). A build
-# can only be given to a group once Apple has processed it, so naming groups makes the lane
-# wait for processing; with none set it returns as soon as the upload lands.
-def testflight_distribution
+# Hands the uploaded build to the TestFlight groups named in TESTFLIGHT_GROUPS
+# (comma-separated). This is a second step, after the upload has already succeeded, and a
+# failure here is reported without failing the lane: the build is in App Store Connect
+# either way, and a group problem must not stop the other platform from shipping.
+#
+# A build can only be given to a group once Apple has processed it, so this waits.
+# This is for internal groups, which need no beta review.
+def hand_to_testflight_groups(platform:, build_number:)
   groups = ENV.fetch("TESTFLIGHT_GROUPS", "").split(",").map(&:strip).reject(&:empty?)
-  if groups.empty?
-    { skip_waiting_for_build_processing: true }
-  else
-    {
-      skip_waiting_for_build_processing: false,
+  return if groups.empty?
+
+  begin
+    upload_to_testflight(
+      app_platform: platform,
+      distribute_only: true,
+      build_number: build_number.to_s,
       distribute_external: false,
+      # pilot submits for beta review whenever groups are named, internal or not, unless
+      # told otherwise — and App Store Connect rejects that submission for an app with no
+      # Beta App Description. Internal groups need no review.
+      submit_beta_review: false,
       groups: groups,
       notify_external_testers: false
-    }
+    )
+  rescue => error
+    UI.important("Build #{build_number} uploaded, but could not be added to #{groups.join(', ')}: #{error.message}")
   end
 end
 
@@ -117,6 +132,7 @@ platform :ios do
     authenticate
 
     match(type: "appstore", platform: "ios", readonly: ENV["CI"].to_s == "true")
+    build_number = next_build_number("ios")
 
     build_app(
       workspace: WORKSPACE,
@@ -128,7 +144,7 @@ platform :ios do
       # The scheme is multiplatform, so gym only treats this as an iOS build when `sdk`
       # says so.
       sdk: "iphoneos",
-      xcargs: build_args("ios"),
+      xcargs: build_args(build_number),
       export_options: {
         provisioningProfiles: {
           APP_ID => "match AppStore #{APP_ID}",
@@ -147,7 +163,9 @@ platform :ios do
       assert_export_compliance_declared!("#{app}/Info.plist")
     end
 
-    upload_to_testflight(app_platform: "ios", **testflight_distribution)
+    # Apple's processing can take many minutes; the upload itself does not wait for it.
+    upload_to_testflight(app_platform: "ios", skip_waiting_for_build_processing: true)
+    hand_to_testflight_groups(platform: "ios", build_number: build_number)
   end
 end
 
@@ -166,6 +184,7 @@ platform :mac do
       additional_cert_types: ["mac_installer_distribution"],
       readonly: ENV["CI"].to_s == "true"
     )
+    build_number = next_build_number("osx")
 
     build_app(
       workspace: WORKSPACE,
@@ -177,7 +196,7 @@ platform :mac do
       # For a multiplatform scheme gym decides ipa-vs-pkg from `sdk` alone and ignores
       # `destination`. Without this it archives macOS and then tries to package an .ipa.
       sdk: "macosx",
-      xcargs: build_args("osx"),
+      xcargs: build_args(build_number),
       export_options: {
         provisioningProfiles: {
           APP_ID => "match AppStore #{APP_ID} macos",
@@ -202,7 +221,8 @@ platform :mac do
     upload_to_testflight(
       app_platform: "osx",
       pkg: lane_context[SharedValues::PKG_OUTPUT_PATH],
-      **testflight_distribution
+      skip_waiting_for_build_processing: true
     )
+    hand_to_testflight_groups(platform: "osx", build_number: build_number)
   end
 end
