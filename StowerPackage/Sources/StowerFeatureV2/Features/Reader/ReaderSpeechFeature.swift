@@ -9,9 +9,14 @@ public struct ReaderSpeechFeature {
     public struct State: Equatable {
         var isSpeaking = false
         var isPaused = false
+        /// True while the voice model downloads or loads, before any audio.
+        var isPreparingVoice = false
+        /// Raw value of the chosen `ReaderSpeechVoice`; nil means the default.
         var selectedVoiceID: String?
-        // Stored as a multiplier on AVSpeechUtteranceDefaultSpeechRate.
+        /// Playback speed multiplier, where 1.0 is the voice's natural pace.
         var rate: Float = 1.0
+
+        var voice: ReaderSpeechVoice { ReaderSpeechVoice.resolve(selectedVoiceID) }
 
         var currentBlockIndex: Int?
         var currentRangeInBlockUTF16: NSRange?
@@ -94,14 +99,7 @@ public struct ReaderSpeechFeature {
                 state.currentSequence = nil
                 state.currentBlocks = blocks
 
-                // If the user hasn't picked a specific voice, resolve the best
-                // installed Premium/Enhanced voice for their preferred language
-                // each time. We don't store this back into state — keeping
-                // `selectedVoiceID == nil` means "automatic" so a newly
-                // downloaded better voice will be picked up next time.
-                let resolvedVoiceID = state.selectedVoiceID ?? ReaderSpeechVoiceCatalog.bestDefaultVoiceID()
-
-                let config = ReaderSpeechClient.Config(voiceID: resolvedVoiceID, rate: state.rate)
+                let config = ReaderSpeechClient.Config(voice: state.voice, rate: state.rate)
                 let speechClient = self.speechClient
                 return .run { send in
                     do {
@@ -130,6 +128,7 @@ public struct ReaderSpeechFeature {
 
             case .stopTapped:
                 state.isSpeaking = false
+                state.isPreparingVoice = false
                 state.isPaused = false
                 state.currentBlockIndex = nil
                 state.currentRangeInBlockUTF16 = nil
@@ -238,7 +237,12 @@ public struct ReaderSpeechFeature {
 
             case .speechEvent(let event):
                 switch event {
+                case .preparingVoice:
+                    state.isPreparingVoice = true
+                    return .none
+
                 case let .didStart(blockIndex, sequence):
+                    state.isPreparingVoice = false
                     state.currentBlockIndex = blockIndex
                     state.currentSequence = sequence
                     state.currentRangeInBlockUTF16 = nil
@@ -252,6 +256,7 @@ public struct ReaderSpeechFeature {
 
                 case .didFinishAll:
                     state.isSpeaking = false
+                    state.isPreparingVoice = false
                     state.isPaused = false
                     state.currentBlockIndex = nil
                     state.currentSequence = nil
@@ -260,6 +265,7 @@ public struct ReaderSpeechFeature {
 
                 case .didCancel:
                     state.isSpeaking = false
+                    state.isPreparingVoice = false
                     state.isPaused = false
                     state.currentBlockIndex = nil
                     state.currentSequence = nil
@@ -269,6 +275,7 @@ public struct ReaderSpeechFeature {
 
             case .speechFailed(let message):
                 state.isSpeaking = false
+                state.isPreparingVoice = false
                 state.isPaused = false
                 state.errorMessage = message
                 state.currentBlockIndex = nil
