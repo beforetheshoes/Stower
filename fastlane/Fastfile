@@ -100,8 +100,7 @@ end
 # either way, and a group problem must not stop the other platform from shipping.
 #
 # A build can only be given to a group once Apple has processed it, so this waits.
-# Internal groups take it directly. An external group needs the app's Beta App Description
-# and beta review, which App Store Connect rejects with a message if they are missing.
+# This is for internal groups, which need no beta review.
 def hand_to_testflight_groups(platform:, build_number:)
   groups = ENV.fetch("TESTFLIGHT_GROUPS", "").split(",").map(&:strip).reject(&:empty?)
   return if groups.empty?
@@ -112,6 +111,10 @@ def hand_to_testflight_groups(platform:, build_number:)
       distribute_only: true,
       build_number: build_number.to_s,
       distribute_external: false,
+      # pilot submits for beta review whenever groups are named, internal or not, unless
+      # told otherwise — and App Store Connect rejects that submission for an app with no
+      # Beta App Description. Internal groups need no review.
+      submit_beta_review: false,
       groups: groups,
       notify_external_testers: false
     )
