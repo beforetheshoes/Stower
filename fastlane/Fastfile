@@ -77,6 +77,37 @@ def assert_minimum_os!(info_plist, plist_key:)
   UI.success("Artifact declares #{plist_key}=#{value}")
 end
 
+# Fails the lane unless the app answers the export-compliance question itself. Without the
+# key every build stops at "Missing Compliance" in App Store Connect and never reaches
+# testers until someone answers by hand.
+def assert_export_compliance_declared!(info_plist)
+  value = sh(
+    "/usr/libexec/PlistBuddy -c 'Print :ITSAppUsesNonExemptEncryption' #{info_plist.shellescape}",
+    log: false
+  ).strip rescue ""
+  unless value == "false"
+    UI.user_error!("#{info_plist} does not declare ITSAppUsesNonExemptEncryption=NO.")
+  end
+  UI.success("Artifact declares ITSAppUsesNonExemptEncryption=NO")
+end
+
+# TestFlight groups to hand the build to, from TESTFLIGHT_GROUPS (comma-separated). A build
+# can only be given to a group once Apple has processed it, so naming groups makes the lane
+# wait for processing; with none set it returns as soon as the upload lands.
+def testflight_distribution
+  groups = ENV.fetch("TESTFLIGHT_GROUPS", "").split(",").map(&:strip).reject(&:empty?)
+  if groups.empty?
+    { skip_waiting_for_build_processing: true }
+  else
+    {
+      skip_waiting_for_build_processing: false,
+      distribute_external: false,
+      groups: groups,
+      notify_external_testers: false
+    }
+  end
+end
+
 platform :ios do
   desc "Build and upload an iOS build to TestFlight"
   lane :beta do
@@ -113,13 +144,10 @@ platform :ios do
       app = Dir["#{dir}/Payload/*.app"].fetch(0)
       assert_push_entitlement!(app, key: "aps-environment")
       assert_minimum_os!("#{app}/Info.plist", plist_key: "MinimumOSVersion")
+      assert_export_compliance_declared!("#{app}/Info.plist")
     end
 
-    upload_to_testflight(
-      app_platform: "ios",
-      # Apple's processing can take many minutes; waiting for it just burns time.
-      skip_waiting_for_build_processing: true
-    )
+    upload_to_testflight(app_platform: "ios", **testflight_distribution)
   end
 end
 
@@ -165,6 +193,7 @@ platform :mac do
     exported_app = File.expand_path("../Stower.app", __dir__)
     assert_push_entitlement!(exported_app, key: "com.apple.developer.aps-environment")
     assert_minimum_os!("#{exported_app}/Contents/Info.plist", plist_key: "LSMinimumSystemVersion")
+    assert_export_compliance_declared!("#{exported_app}/Contents/Info.plist")
     if Dir.exist?(exported_app)
       sh("/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -u #{exported_app.shellescape} || true")
       FileUtils.rm_rf(exported_app)
@@ -173,7 +202,7 @@ platform :mac do
     upload_to_testflight(
       app_platform: "osx",
       pkg: lane_context[SharedValues::PKG_OUTPUT_PATH],
-      skip_waiting_for_build_processing: true
+      **testflight_distribution
     )
   end
 end
