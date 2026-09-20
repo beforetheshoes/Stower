@@ -152,7 +152,6 @@ struct EPUBIngestionTests {
                     sourceURL: marker,
                     localURL: imagePath,
                     mimeType: "image/png",
-                    caption: "A map",
                     altText: "A map"
                 )),
                 // Chapter two has no heading of its own, so it takes the
@@ -222,6 +221,79 @@ struct EPUBIngestionTests {
         defer { AssetArchiver.deleteArchive(for: StowerRepository.stableItemID(from: result.canonicalURL)) }
 
         #expect(result.document.blocks.first == .paragraph([.text("First chapter text.")]))
+    }
+
+    @Test
+    func ingest_makesFootnotesAndCrossReferencesTappable() async throws {
+        var entries = EPUBFixture.bookEntries()
+        entries["OEBPS/text/chapter1.xhtml"] = Data(EPUBFixture.chapter("""
+        <h1>Arrival</h1>
+        <p>A claim.<sup><a id="ref1" href="chapter%202.xhtml#note1">1</a></sup> See <a href="chapter%202.xhtml">the next chapter</a>.</p>
+        <p>An <a href="https://example.com/out">outside link</a> and a <a href="missing.xhtml">dead one</a>.</p>
+        """).utf8)
+        entries["OEBPS/text/chapter 2.xhtml"] = Data(EPUBFixture.chapter("""
+        <h1>Departure</h1>
+        <p>Body.</p>
+        <aside id="note1"><p>The note text. <a href="chapter1.xhtml#ref1">Back</a></p></aside>
+        """).utf8)
+        let url = try EPUBFixture.write(entries)
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+
+        let result = try await EPUBIngestor.ingest(url: url)
+        defer { AssetArchiver.deleteArchive(for: StowerRepository.stableItemID(from: result.canonicalURL)) }
+
+        expectNoDifference(
+            result.document.blocks,
+            [
+                .heading(level: 1, inlines: [.text("Arrival")]),
+                .paragraph([
+                    .text("A claim."),
+                    // Block 5 is the note; block 3 is chapter two's heading.
+                    .link(label: "1", url: "#stower-block-5"),
+                    .text(" See "),
+                    .link(label: "the next chapter", url: "#stower-block-3"),
+                    .text("."),
+                ]),
+                .heading(level: 1, inlines: [.text("Departure")]),
+                .paragraph([.text("Body.")]),
+                .paragraph([
+                    .text("The note text. "),
+                    .link(label: "Back", url: "#stower-block-1"),
+                ]),
+            ].inserting(
+                .paragraph([
+                    .text("An "),
+                    .link(label: "outside link", url: "https://example.com/out"),
+                    .text(" and a "),
+                    .link(label: "dead one", url: "stower://epub/missing.xhtml"),
+                    .text("."),
+                ]),
+                at: 2
+            )
+        )
+        // No sentinel characters leak into the text.
+        #expect(!result.plainText.unicodeScalars.contains { (0xE000...0xE001).contains($0.value) })
+    }
+
+    @Test
+    func ingest_keepsRealCaptionsAndDropsAltTextCaptions() async throws {
+        var entries = EPUBFixture.bookEntries()
+        entries["OEBPS/text/chapter1.xhtml"] = Data(EPUBFixture.chapter("""
+        <h1>Arrival</h1>
+        <img src="../images/map.png" alt="image"/>
+        <figure><img src="../images/cover.jpg" alt="image"/><figcaption>The harbour at dawn</figcaption></figure>
+        """).utf8)
+        let url = try EPUBFixture.write(entries)
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+
+        let result = try await EPUBIngestor.ingest(url: url)
+        defer { AssetArchiver.deleteArchive(for: StowerRepository.stableItemID(from: result.canonicalURL)) }
+
+        let captions = result.document.blocks.compactMap { block -> String?? in
+            guard case .figure(let media) = block else { return nil }
+            return .some(media.caption)
+        }
+        expectNoDifference(Array(captions.prefix(2)), [nil, "The harbour at dawn"])
     }
 
     @Test
@@ -334,6 +406,12 @@ struct EPUBSampleIngestionTests {
         )
         #expect(!result.document.blocks.isEmpty)
         #expect(!result.plainText.isEmpty)
+        let documentJSON = String(bytes: try JSONEncoder().encode(result.document), encoding: .utf8) ?? ""
+        print(
+            "  internalLinks=\(documentJSON.components(separatedBy: "#stower-block-").count - 1) "
+                + "unresolved=\(documentJSON.components(separatedBy: EPUBInternalLinks.placeholderPrefix).count - 1)"
+        )
+        #expect(!documentJSON.unicodeScalars.contains { (0xE000...0xE001).contains($0.value) })
 
         // With `STOWER_EPUB_SAMPLE_OUTPUT` set, also write the reader page and
         // its images there so the rendering can be looked at in a browser.
@@ -361,6 +439,59 @@ struct EPUBSampleIngestionTests {
                 try FileManager.default.copyItem(at: image, to: copy)
             }
         }
+    }
+}
+
+struct EPUBBookExportTests {
+    private let book = SavedItem(
+        title: "Book",
+        content: "Body",
+        canonicalURL: SavedItem.importedBookURLPrefix + "abc",
+        renderFormat: .structuredV1
+    )
+
+    @Test
+    func exportFindsBookImagesByFilenameNotByTheStoredPath() {
+        let document = ReaderDocument(
+            title: "Book",
+            blocks: [
+                .figure(media: MediaDescriptor(
+                    kind: .image,
+                    sourceURL: EPUBBookArchiver.markerURL(filename: "epub-img-2.png"),
+                    // What an import before a reinstall would have stored.
+                    localURL: "/old/container/StowerArchive/x/epub-img-2.png"
+                )),
+            ]
+        )
+
+        let requests = EPUBImageCollector.requests(item: book, document: document)
+
+        #expect(
+            requests.map(\.localPath)
+                == [EPUBBookArchiver.imageURL(for: book.id, filename: "epub-img-2.png").path]
+        )
+    }
+
+    @Test
+    func exportedInternalLinksPointAtTheExportedBlockIDs() throws {
+        let document = ReaderDocument(
+            title: "Book",
+            blocks: [
+                .paragraph([.link(label: "1", url: EPUBInternalLinks.fragmentURL(blockIndex: 1))]),
+                .paragraph([.text("The note.")]),
+            ]
+        )
+        let package = EPUBBuilder.makePackage(
+            item: book,
+            document: document,
+            images: [:],
+            modified: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        let chapter = try #require(package.entries.first { $0.path == EPUBBuilder.chapterPath })
+        let xhtml = String(bytes: chapter.data, encoding: .utf8) ?? ""
+
+        #expect(xhtml.contains("<a href=\"#block-1\">1</a>"))
+        #expect(xhtml.contains("id=\"block-1\""))
     }
 }
 
@@ -511,5 +642,13 @@ enum EPUBFixture {
         )
         try EPUBBuilder.write(package, to: url)
         return url
+    }
+}
+
+private extension Array {
+    func inserting(_ element: Element, at index: Int) -> [Element] {
+        var copy = self
+        copy.insert(element, at: index)
+        return copy
     }
 }

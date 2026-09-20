@@ -604,7 +604,12 @@ enum EPUBBuilder {
                     out += "<br/>"
 
                 case let .link(label, url):
-                    if ReaderDocumentHTMLBuilder.isSafeLinkURL(url) {
+                    let readerBlockPrefix = "#stower-block-"
+                    if url.hasPrefix(readerBlockPrefix), let index = Int(url.dropFirst(readerBlockPrefix.count)) {
+                        // An imported book's internal links name reader
+                        // block ids; the exported chapter uses `block-N`.
+                        out += "<a href=\"#block-\(index)\">\(escape(label))</a>"
+                    } else if ReaderDocumentHTMLBuilder.isSafeLinkURL(url) {
                         out += "<a href=\"\(escape(url))\">\(escape(label))</a>"
                     } else {
                         out += escape(label)

@@ -108,34 +108,65 @@ enum EPUBIngestor {
         var images = EPUBImageStore(reader: reader, itemID: itemID, maxImageBytes: maxImageBytes)
         let labels = chapterLabels(package: package, reader: reader)
 
-        var blocks = [ReaderBlock]()
+        // Chapters are read up front so every link target is known before
+        // any chapter is parsed; a footnote can point forwards or backwards.
+        var chapters = [(path: String, xhtml: String)]()
         for chapter in package.spine {
             try Task.checkCancellation()
             guard let xhtml = try reader.text(at: chapter.path, limit: maxDocumentBytes) else {
                 kEPUBIngestLog.error("Spine item missing from zip: \(chapter.path, privacy: .public)")
                 continue
             }
-            var chapterBlocks = try parseChapter(xhtml: xhtml, path: chapter.path, images: &images)
+            chapters.append((chapter.path, xhtml))
+        }
+        var links = EPUBLinkTargets(chapters: chapters)
+
+        var blocks = [ReaderBlock]()
+        for chapter in chapters {
+            try Task.checkCancellation()
+            let parsed = try parseChapter(
+                xhtml: chapter.xhtml,
+                path: chapter.path,
+                images: &images,
+                links: links
+            )
+            var chapterBlocks = parsed.blocks
+            var anchors = parsed.anchors
+            var removedTitleHeading = false
             guard !chapterBlocks.isEmpty else { continue }
 
-            if !startsWithHeading(chapterBlocks) {
+            // The reader page already shows the title above the text, so a
+            // title page that only repeats it would print it twice.
+            if blocks.isEmpty,
+               case .heading(_, let inlines)? = chapterBlocks.first,
+               ReaderTextLayoutSupport.inlinePlainText(from: inlines)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .caseInsensitiveCompare(title) == .orderedSame {
+                chapterBlocks.removeFirst()
+                anchors = anchors.mapValues { max($0 - 1, 0) }
+                removedTitleHeading = true
+                guard !chapterBlocks.isEmpty else { continue }
+            }
+
+            var leadingBlocks = 0
+            // A chapter that opened with the book's title had its heading.
+            if !removedTitleHeading, !startsWithHeading(chapterBlocks) {
                 if let label = labels[chapter.path], label.caseInsensitiveCompare(title) != .orderedSame {
                     chapterBlocks.insert(.heading(level: 2, inlines: [.text(label)]), at: 0)
+                    leadingBlocks = 1
                 } else if !blocks.isEmpty {
                     chapterBlocks.insert(.horizontalRule, at: 0)
+                    leadingBlocks = 1
                 }
+            }
+
+            links.recordChapterStart(path: chapter.path, blockIndex: blocks.count)
+            for (key, localIndex) in anchors {
+                links.record(key: key, blockIndex: blocks.count + leadingBlocks + localIndex)
             }
             blocks.append(contentsOf: chapterBlocks)
         }
-
-        // The reader page already shows the title above the text, so a title
-        // page that only repeats it would print it twice.
-        if case .heading(_, let inlines)? = blocks.first,
-           ReaderTextLayoutSupport.inlinePlainText(from: inlines)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .caseInsensitiveCompare(title) == .orderedSame {
-            blocks.removeFirst()
-        }
+        blocks = EPUBInternalLinks.resolveLinks(in: blocks, blockIndexByKey: links.resolvedBlockIndexByKey)
 
         guard !blocks.isEmpty else {
             throw EPUBIngestionError.emptyBook
@@ -194,10 +225,11 @@ enum EPUBIngestor {
     static func parseChapter(
         xhtml: String,
         path: String,
-        images: inout EPUBImageStore
-    ) throws -> [ReaderBlock] {
+        images: inout EPUBImageStore,
+        links: EPUBLinkTargets
+    ) throws -> (blocks: [ReaderBlock], anchors: [Int: Int]) {
         let document = try SwiftSoup.parse(xhtml)
-        guard let body = document.body() else { return [] }
+        guard let body = document.body() else { return ([], [:]) }
 
         // Cover pages usually wrap their image in an `<svg>` so it scales to
         // the viewport. The block parser drops SVG, so lift the image out.
@@ -221,15 +253,78 @@ enum EPUBIngestor {
             try image.removeAttr("srcset")
         }
 
+        try markLinkTargets(in: body, path: path, links: links)
+        try rewriteInternalLinks(in: body, path: path, links: links)
+
         let baseURL = URL(string: "stower://epub/")!
         let parsed = try parseBlocks(root: body, baseURL: baseURL)
         let itemID = images.itemID
-        return parsed.blocks.map { block in
+        let located = parsed.blocks.map { block in
             guard case .figure(var media) = block,
                   let filename = EPUBBookArchiver.imageFilename(fromMarker: media.sourceURL)
             else { return block }
             media.localURL = EPUBBookArchiver.imageURL(for: itemID, filename: filename).path
+            // The block parser falls back to alt text for a caption. Book
+            // images often carry throwaway alt text ("image", "cover") that
+            // reads as noise under every picture; a real `<figcaption>` is
+            // kept.
+            if media.caption == media.altText {
+                media.caption = nil
+            }
             return .figure(media: media)
+        }
+        return EPUBInternalLinks.extractAnchors(from: located)
+    }
+
+    /// Puts a sentinel at every element in this chapter that some link in
+    /// the book points at, so the block it ends up in can be found.
+    private static func markLinkTargets(in body: Element, path: String, links: EPUBLinkTargets) throws {
+        let inlineTags: Set<String> = ["a", "span", "sup", "sub", "em", "i", "strong", "b", "small", "cite"]
+        for element in try body.select("[id], a[name]").array() {
+            let identifiers = [try element.attr("id"), try element.attr("name")].filter { !$0.isEmpty }
+            for identifier in identifiers {
+                guard let key = links.key(path: path, fragment: identifier) else { continue }
+                let sentinel = EPUBInternalLinks.sentinel(key)
+                if inlineTags.contains(element.tagName().lowercased()) {
+                    // Kept outside inline elements so it does not become part
+                    // of a link label or an emphasis run.
+                    try element.before(TextNode(sentinel, nil))
+                } else if let text = firstTextNode(in: element) {
+                    // Loose text directly inside a container (`<aside>`,
+                    // `<section>`, `<div>`) does not survive block parsing,
+                    // so the sentinel rides on the first real run of text.
+                    text.text(sentinel + text.getWholeText())
+                } else {
+                    try element.prependText(sentinel)
+                }
+            }
+        }
+    }
+
+    private static func firstTextNode(in element: Element) -> TextNode? {
+        for node in element.getChildNodes() {
+            if let text = node as? TextNode {
+                if !text.isBlank() {
+                    return text
+                }
+            } else if let child = node as? Element, let text = firstTextNode(in: child) {
+                return text
+            }
+        }
+        return nil
+    }
+
+    /// Gives every link that points inside the book a placeholder URL. The
+    /// block parser drops short fragment-only links as permalink clutter,
+    /// which is exactly what a footnote marker looks like, so the
+    /// placeholder is an absolute URL.
+    private static func rewriteInternalLinks(in body: Element, path: String, links: EPUBLinkTargets) throws {
+        for link in try body.select("a[href]").array() {
+            guard let target = EPUBPath.resolveTarget(try link.attr("href"), relativeTo: path),
+                  let key = links.key(path: target.path, fragment: target.fragment)
+            else { continue }
+            try link.attr("href", EPUBInternalLinks.placeholderURL(key))
+            try link.removeAttr("class")
         }
     }
 
@@ -256,6 +351,61 @@ enum EPUBIngestor {
             return labels
         }
         return [:]
+    }
+}
+
+// MARK: - Link targets
+
+/// The places inside a book that its own links point at, each with a small
+/// integer key, and — once chapters are parsed — the block each one is in.
+struct EPUBLinkTargets {
+    private var keysByName = [String: Int]()
+    private var chapterPaths = Set<String>()
+    private(set) var blockIndexByKey = [Int: Int]()
+    private var chapterStartByPath = [String: Int]()
+
+    init(chapters: [(path: String, xhtml: String)]) {
+        chapterPaths = Set(chapters.map(\.path))
+        for chapter in chapters {
+            for href in EPUBInternalLinks.hrefs(in: chapter.xhtml) {
+                guard let target = EPUBPath.resolveTarget(href, relativeTo: chapter.path),
+                      chapterPaths.contains(target.path)
+                else { continue }
+                let name = EPUBInternalLinks.targetName(path: target.path, fragment: target.fragment)
+                if keysByName[name] == nil {
+                    keysByName[name] = keysByName.count
+                }
+            }
+        }
+    }
+
+    func key(path: String, fragment: String?) -> Int? {
+        keysByName[EPUBInternalLinks.targetName(path: path, fragment: fragment)]
+    }
+
+    mutating func record(key: Int, blockIndex: Int) {
+        if blockIndexByKey[key] == nil {
+            blockIndexByKey[key] = blockIndex
+        }
+    }
+
+    /// A link to a chapter with no fragment lands on the chapter's first block.
+    mutating func recordChapterStart(path: String, blockIndex: Int) {
+        chapterStartByPath[path] = blockIndex
+        if let key = key(path: path, fragment: nil) {
+            record(key: key, blockIndex: blockIndex)
+        }
+    }
+
+    /// Block indices for every key that can be placed. A link to an element
+    /// id that does not exist in its chapter lands on the chapter's start.
+    var resolvedBlockIndexByKey: [Int: Int] {
+        var resolved = blockIndexByKey
+        for (name, key) in keysByName where resolved[key] == nil {
+            let path = name.split(separator: "#", maxSplits: 1).first.map(String.init) ?? name
+            resolved[key] = chapterStartByPath[path]
+        }
+        return resolved
     }
 }
 

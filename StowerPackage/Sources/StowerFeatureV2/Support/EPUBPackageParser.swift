@@ -211,6 +211,25 @@ enum EPUBPath {
     /// and returns a normalized zip path with no fragment, query, or
     /// percent-encoding. Returns nil for absolute URLs (`https:`, `data:`)
     /// and for hrefs that escape the archive root.
+    /// Like `resolve`, but also returns the href's fragment, and resolves a
+    /// fragment-only href (`#note-3`) to the containing document itself.
+    static func resolveTarget(
+        _ href: String,
+        relativeTo documentPath: String
+    ) -> (path: String, fragment: String?)? {
+        let reference = href.trimmingCharacters(in: .whitespacesAndNewlines)
+        let parts = reference.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false)
+        let fragment = parts.count > 1
+            ? (String(parts[1]).removingPercentEncoding ?? String(parts[1]))
+            : nil
+        if reference.hasPrefix("#") {
+            guard let fragment, !fragment.isEmpty else { return nil }
+            return (documentPath, fragment)
+        }
+        guard let path = resolve(reference, relativeTo: documentPath) else { return nil }
+        return (path, fragment.flatMap { $0.isEmpty ? nil : $0 })
+    }
+
     static func resolve(_ href: String, relativeTo documentPath: String) -> String? {
         var reference = href.trimmingCharacters(in: .whitespacesAndNewlines)
         if let fragment = reference.firstIndex(of: "#") {

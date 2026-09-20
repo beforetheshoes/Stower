@@ -121,6 +121,8 @@ public struct AppFeature {
         case onAppear
         case sceneDidBecomeActive
         case browserExtensionURLReceived(URL)
+        /// Another app handed Stower a file ("Open in Stower").
+        case fileOpened(URL)
         case startupFinished
         case startupFailed(String)
         /// Cloud sync start has settled (started, or unavailable) and the
@@ -467,6 +469,21 @@ public struct AppFeature {
 
             case .browserExtensionURLReceived(let url):
                 return .send(.library(.saveExternalURL(url)))
+
+            case .fileOpened(let url):
+                return .run { send in
+                    do {
+                        let file = try IncomingFile.stage(url)
+                        switch file.kind {
+                        case .epub:
+                            await send(.library(.importEPUBSelected(file.url)))
+                        case .pdf:
+                            await send(.library(.importPDFSelected(file.url)))
+                        }
+                    } catch {
+                        await send(.library(.saveURLFailed(error.localizedDescription)))
+                    }
+                }
 
             case .readerAppearanceLoaded(let appearance):
                 state.cachedAppearance = appearance

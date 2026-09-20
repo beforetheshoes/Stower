@@ -274,6 +274,19 @@ enum ReaderWebPageFactory {
         _ = try? await page.callJavaScript(script)
     }
 
+    /// Jumps to a block the reader chose from the table of contents. Unlike
+    /// `scrollToBlock` this honors block 0, and it leaves reporting on so the
+    /// new position is saved as reading progress.
+    @MainActor
+    static func jumpToBlock(_ index: Int, on page: WebPage) async {
+        let script = """
+        if (typeof window.stowerScrollToBlock === 'function') {
+            window.stowerScrollToBlock(\(max(index, 0)));
+        }
+        """
+        _ = try? await page.callJavaScript(script)
+    }
+
     /// Returns the data-block-index of the topmost visible block, or nil on failure.
     ///
     /// Guards the call with `typeof` so pages that don't expose
