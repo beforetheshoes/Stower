@@ -166,7 +166,7 @@ enum EPUBIngestor {
             return descriptor
         }
 
-        var result = IngestionResult(
+        let result = IngestionResult(
             title: title,
             sourceURL: nil,
             canonicalURL: canonicalURL,
@@ -186,10 +186,6 @@ enum EPUBIngestor {
             embeds: [],
             sourceHTML: ""
         )
-        // Other devices rebuild the book from this Markdown rendering, which
-        // is what the text sync table carries for items with no source URL.
-        result.rawSourceText = ReaderDocumentMarkdownWriter.markdown(from: document)
-        result.rawSourceMode = .markdown
         return result
     }
 

@@ -68,6 +68,17 @@ enum EPUBBookArchiver {
         return entries.filter { $0.lastPathComponent.hasPrefix(imagePrefix) }
     }
 
+    /// Moves every chapter image from one item's archive directory to
+    /// another's, replacing files of the same name.
+    static func relocateImages(from sourceItemID: UUID, to destinationItemID: UUID) throws {
+        try ensureArchiveDirectoryExists(for: destinationItemID)
+        for source in imageURLs(for: sourceItemID) {
+            let destination = imageURL(for: destinationItemID, filename: source.lastPathComponent)
+            try? FileManager.default.removeItem(at: destination)
+            try FileManager.default.moveItem(at: source, to: destination)
+        }
+    }
+
     /// Symlinks the item's chapter images into `targetDir` so the reader's
     /// local server can serve them next to `index.html`. Returns the number
     /// of links created.

@@ -136,8 +136,8 @@ struct EPUBIngestionTests {
         #expect(result.sourceURL == nil)
         #expect(result.canonicalURL?.hasPrefix(SavedItem.importedBookURLPrefix) == true)
         #expect(result.renderFormat == .structuredV1)
-        #expect(result.rawSourceMode == .markdown)
-        #expect(result.rawSourceText?.contains("Second chapter text.") == true)
+        // Books sync as their original file, not through the text sync table.
+        #expect(result.rawSourceText == nil)
         #expect(result.heroImageURL == "\(WebsiteArchiveUnpacker.heroArchiveURLScheme):epub-img-cover.jpg")
 
         let marker = EPUBBookArchiver.markerURL(filename: "epub-img-0.png")
@@ -179,8 +179,9 @@ struct EPUBIngestionTests {
 
     @Test
     func ingest_sameFileYieldsSameItem() async throws {
-        let first = try EPUBFixture.write(EPUBFixture.bookEntries())
-        let second = try EPUBFixture.write(EPUBFixture.bookEntries())
+        let salt = UUID().uuidString
+        let first = try EPUBFixture.write(EPUBFixture.bookEntries(salt: salt))
+        let second = try EPUBFixture.write(EPUBFixture.bookEntries(salt: salt))
         defer {
             try? FileManager.default.removeItem(at: first.deletingLastPathComponent())
             try? FileManager.default.removeItem(at: second.deletingLastPathComponent())
@@ -328,7 +329,7 @@ struct EPUBSampleIngestionTests {
             EPUB sample: \(result.title) — \(result.author ?? "no author")
               blocks=\(result.document.blocks.count) headings=\(headings.count) \
             images=\(result.media.count) words=\(result.plainText.split(separator: " ").count) \
-            cover=\(result.heroImageURL ?? "none") syncBytes=\(result.rawSourceText?.utf8.count ?? 0)
+            cover=\(result.heroImageURL ?? "none")
             """
         )
         #expect(!result.document.blocks.isEmpty)
@@ -468,8 +469,12 @@ enum EPUBFixture {
         """
     }
 
-    static func bookEntries() -> [String: Data] {
+    /// Tests run in parallel and share this machine's archive directory,
+    /// which is keyed by the file's hash. The salt makes each test's book a
+    /// different file, so one test's cleanup cannot remove another's images.
+    static func bookEntries(salt: String = UUID().uuidString) -> [String: Data] {
         var entries = [String: Data]()
+        entries["OEBPS/salt.txt"] = Data(salt.utf8)
         entries["mimetype"] = Data("application/epub+zip".utf8)
         entries["META-INF/container.xml"] = Data(container.utf8)
         entries["OEBPS/content.opf"] = Data(opf.utf8)

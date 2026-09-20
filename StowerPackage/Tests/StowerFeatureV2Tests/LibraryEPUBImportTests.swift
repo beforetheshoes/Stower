@@ -21,11 +21,16 @@ struct LibraryEPUBImportTests {
         let book = SavedItem(title: "Novel", content: "Body", processingState: .ready)
         defer { AssetArchiver.deleteArchive(for: book.id) }
 
+        let uploads = LockIsolated<[(IngestionJob.Kind, String)]>([])
+
         let store = TestStore(initialState: LibraryFeature.State()) {
             LibraryFeature()
         } withDependencies: {
             $0.epubIngestionClient.ingest = { _ in .sharedText("Body") }
             $0.stowerRepository.createItemFromIngestion = { _ in book }
+            $0.stowerRepository.enqueueIngestionJob = { kind, payload in
+                uploads.withValue { $0.append((kind, payload)) }
+            }
         }
         store.exhaustivity = .off(showSkippedAssertions: false)
 
@@ -42,6 +47,11 @@ struct LibraryEPUBImportTests {
 
         #expect(try Data(contentsOf: EPUBBookArchiver.bookURL(for: book.id)) == Data("epub".utf8))
         #expect(!FileManager.default.fileExists(atPath: scratchDir.path))
+        // The original file is queued for upload so other devices get it.
+        let upload = try #require(uploads.value.first)
+        #expect(upload.0 == .uploadAsset)
+        let payload = try AssetJobPayload.decoded(from: upload.1)
+        #expect(payload == AssetJobPayload(itemID: book.id, kind: .epub, originalFilename: "Novel.epub"))
     }
 
     @Test

@@ -492,6 +492,9 @@ public enum CloudAssetKind: String, Codable, CaseIterable, Sendable {
     /// `chunkCount == 0` store their bytes here instead of in the chunk
     /// sync table.
     case capture = "capture"
+    /// The original `.epub` file of an imported book. Other devices download
+    /// it and import it locally, so they get the same text and images.
+    case epub = "epub"
 }
 
 /// Payload for `uploadAsset` / `downloadAsset` / `migrateWebsiteAsset` jobs.

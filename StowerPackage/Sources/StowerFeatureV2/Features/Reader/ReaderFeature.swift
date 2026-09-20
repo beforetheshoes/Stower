@@ -232,7 +232,10 @@ public struct ReaderFeature {
             }
             return !AssetArchiver.archiveExists(for: item.id)
         default:
-            return false
+            // A book that synced from another device has no file here until
+            // it is downloaded; opening it fetches it right away.
+            return item.isImportedBook
+                && !FileManager.default.fileExists(atPath: EPUBBookArchiver.bookURL(for: item.id).path)
         }
     }
 

@@ -805,6 +805,7 @@ public struct AppFeature {
             _ = try? await repository.hydratePDFItemsFromSyncedContent()
             _ = try? await repository.hydrateTextItemsFromSyncedContent()
             _ = try? await repository.hydrateWebsiteItemsFromSyncedContent()
+            _ = try? await repository.hydrateBookItemsFromSyncedContent()
             _ = try? await repository.reconcileOrphanedTagAssignments()
             try? await ingestionCoordinator.run {
                 try await processIngestionJobs(
@@ -934,6 +935,13 @@ private func processIngestionJob(
                 let result = try await epubIngestionClient.ingest(epubURL)
                 let item = try await repository.createItemFromIngestion(result)
                 try? EPUBBookArchiver.archiveBook(from: epubURL, itemID: item.id)
+                if let payload = try? AssetJobPayload(
+                    itemID: item.id,
+                    kind: .epub,
+                    originalFilename: epubURL.lastPathComponent
+                ).encoded() {
+                    try? await repository.enqueueIngestionJob(.uploadAsset, payload)
+                }
                 try? FileManager.default.removeItem(at: scratchDir)
             } catch let error as EPUBIngestionError {
                 // The file itself is the problem, so a retry cannot succeed.

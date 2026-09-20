@@ -344,8 +344,10 @@ extension StowerRepository {
                     // first launch is none. The old version loaded the whole
                     // library's content on every launch just to skip it, and
                     // held the lock for the duration.
+                    // Imported books sync as their EPUB file instead.
                     let textItemIDs = SavedItemSyncTable
                         .where { $0.sourceURL.is(nil) || $0.sourceURL.eq("") }
+                        .where { !($0.canonicalURL ?? "").like("\(SavedItem.importedBookURLPrefix)%") }
                         .select(\.id)
                     let alreadySynced = SavedTextContentSyncTable
                         .where { $0.rawSourceText.neq("") }

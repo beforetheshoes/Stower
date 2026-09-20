@@ -67,6 +67,8 @@ public enum CloudAssetService {
         switch payload.kind {
         case .pdf:
             fileURL = PDFArchiver.pdfURL(for: payload.itemID)
+        case .epub:
+            fileURL = EPUBBookArchiver.bookURL(for: payload.itemID)
         case .websiteZip:
             fileURL = pendingUploadZipURL(for: payload.itemID)
             cleanupAfterUpload = fileURL
@@ -270,6 +272,8 @@ public enum CloudAssetService {
         do {
             if let manifest = try await itemStorageClient.manifest(itemID, .pdf) {
                 try await restorePDF(manifest: manifest, repository: repository)
+            } else if let manifest = try await itemStorageClient.manifest(itemID, .epub) {
+                try await restoreBook(manifest: manifest, repository: repository)
             } else if let manifest = try await itemStorageClient.manifest(itemID, .websiteZip) {
                 try await restoreWebsiteZip(manifest: manifest, repository: repository)
             } else if let archive = try await repository.loadWebsiteArchive(itemID) {
@@ -314,6 +318,46 @@ public enum CloudAssetService {
 
         try PDFArchiver.archivePDF(from: scratch, itemID: manifest.itemID)
         try rerasterizePages(itemID: manifest.itemID, pdfURL: scratch)
+        try await repository.updateLocalContentStatus(manifest.itemID, "available", nil)
+    }
+
+    /// Downloads a book's original EPUB and imports it on this device, which
+    /// produces the same document and images the importing device has.
+    private static func restoreBook(manifest: AssetManifest, repository: StowerRepository) async throws {
+        @Dependency(\.cloudAssetClient)
+        var cloudAssetClient
+        @Dependency(\.epubIngestionClient)
+        var epubIngestionClient
+        @Dependency(\.uuid)
+        var uuid
+
+        // The filename is the title fallback for books with no title of
+        // their own, so the scratch copy keeps it.
+        let scratchDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("StowerAssetDownload-\(uuid().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: scratchDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: scratchDir) }
+        let filename = manifest.originalFilename.isEmpty
+            ? EPUBBookArchiver.bookFilename
+            : URL(fileURLWithPath: manifest.originalFilename).lastPathComponent
+        let scratch = scratchDir.appendingPathComponent(filename)
+
+        try await cloudAssetClient.download(manifest.recordName, scratch)
+        let data = try Data(contentsOf: scratch, options: .mappedIfSafe)
+        guard ArticleCapturePackage.sha256(data) == manifest.sha256 else {
+            throw CloudAssetServiceError.integrityFailure
+        }
+
+        let result = try await epubIngestionClient.ingest(scratch)
+        // Ingestion files images under the ID derived from the file's hash.
+        // That is the item's ID for every book imported by this app, but the
+        // manifest is the authority on which item the file belongs to.
+        let ingestedID = StowerRepository.stableItemID(from: result.canonicalURL)
+        if ingestedID != manifest.itemID {
+            try EPUBBookArchiver.relocateImages(from: ingestedID, to: manifest.itemID)
+        }
+        try EPUBBookArchiver.archiveBook(from: scratch, itemID: manifest.itemID)
+        try await repository.hydrateItemContent(manifest.itemID, result)
         try await repository.updateLocalContentStatus(manifest.itemID, "available", nil)
     }
 
@@ -400,6 +444,16 @@ public enum CloudAssetService {
         for itemID in try await itemStorageClient.pdfItemIDsWithoutManifest() {
             guard PDFArchiver.pdfExists(for: itemID) else { continue }
             let payload = try AssetJobPayload(itemID: itemID, kind: .pdf).encoded()
+            try await repository.enqueueIngestionJob(.uploadAsset, payload)
+            enqueued += 1
+        }
+        // Books keep their EPUB on disk, so one with no manifest yet is an
+        // upload that has not succeeded.
+        for itemID in try await itemStorageClient.bookItemIDsWithoutManifest() {
+            guard FileManager.default.fileExists(atPath: EPUBBookArchiver.bookURL(for: itemID).path) else {
+                continue
+            }
+            let payload = try AssetJobPayload(itemID: itemID, kind: .epub).encoded()
             try await repository.enqueueIngestionJob(.uploadAsset, payload)
             enqueued += 1
         }

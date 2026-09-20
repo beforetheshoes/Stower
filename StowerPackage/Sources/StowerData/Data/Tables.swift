@@ -289,7 +289,7 @@ nonisolated public struct IngestionJobLocalTable: Hashable, Identifiable, Sendab
 nonisolated public struct SavedAssetManifestSyncTable: Hashable, Identifiable, Sendable {
     public let id: UUID
     public var itemID: UUID
-    /// `CloudAssetKind` raw value: `pdf` or `websiteZip`.
+    /// `CloudAssetKind` raw value, e.g. `pdf`, `websiteZip`, `epub`.
     public var kind: String = ""
     /// CKRecord name in the asset zone, derived from itemID + sha256.
     public var recordName: String = ""

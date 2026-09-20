@@ -558,6 +558,13 @@ public struct LibraryFeature {
                         let result = try await epubIngestionClient.ingest(pickedURL)
                         let item = try await repository.createItemFromIngestion(result)
                         try? EPUBBookArchiver.archiveBook(from: pickedURL, itemID: item.id)
+                        if let payload = try? AssetJobPayload(
+                            itemID: item.id,
+                            kind: .epub,
+                            originalFilename: pickedURL.lastPathComponent
+                        ).encoded() {
+                            try? await repository.enqueueIngestionJob(.uploadAsset, payload)
+                        }
                         await send(.saveURLFinished(item))
                         await send(.openItem(item))
                     } catch {

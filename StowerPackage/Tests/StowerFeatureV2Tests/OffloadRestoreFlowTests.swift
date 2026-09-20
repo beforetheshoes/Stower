@@ -20,6 +20,14 @@ struct OffloadRestoreFlowTests {
         #expect(ReaderFeature.needsOffloadRestore(Self.makePDFItem()))
         let article = SavedItem(title: "Article", content: "text", renderFormat: .structuredV1)
         #expect(!ReaderFeature.needsOffloadRestore(article))
+        // A book that synced from another device has no EPUB file here yet.
+        let book = SavedItem(
+            title: "Book",
+            content: "",
+            canonicalURL: SavedItem.importedBookURLPrefix + "abc",
+            renderFormat: .structuredV1
+        )
+        #expect(ReaderFeature.needsOffloadRestore(book))
     }
 
     @Test

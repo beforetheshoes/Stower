@@ -111,6 +111,9 @@ public struct StowerRepository: Sendable {
     /// Enqueues `hydrateWebsite` jobs for synced website rows whose local
     /// archive directory is missing. Returns the number of jobs enqueued.
     public var hydrateWebsiteItemsFromSyncedContent: @Sendable () async throws -> Int
+    /// Enqueues `downloadAsset` jobs for synced books that have nothing to
+    /// render on this device yet. Returns the number of jobs enqueued.
+    public var hydrateBookItemsFromSyncedContent: @Sendable () async throws -> Int
 }
 
 private enum StowerRepositoryKey: DependencyKey {
@@ -188,7 +191,8 @@ extension StowerRepository {
             backfillTextSyncTable: { 0 },
             saveWebsiteArchive: { _, _, _, _ in },
             loadWebsiteArchive: { _ in nil },
-            hydrateWebsiteItemsFromSyncedContent: { 0 }
+            hydrateWebsiteItemsFromSyncedContent: { 0 },
+            hydrateBookItemsFromSyncedContent: { 0 }
         )
     }()
 }
@@ -328,7 +332,8 @@ extension StowerRepository {
             hydrateWebsiteItemsFromSyncedContent: _hydrateWebsiteItemsFromSyncedContent(
                 database: database,
                 archiveExists: websiteArchiveExists(itemID:)
-            )
+            ),
+            hydrateBookItemsFromSyncedContent: _hydrateBookItemsFromSyncedContent(database: database)
         )
     }
 }

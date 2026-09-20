@@ -456,6 +456,7 @@ struct AppFeatureTests {
         let ingested = LockIsolated<[URL]>([])
         let created = LockIsolated<[String]>([])
         let completed = LockIsolated(0)
+        let uploads = LockIsolated<[IngestionJob.Kind]>([])
         let book = SavedItem(title: "Novel", content: "Body")
         defer { AssetArchiver.deleteArchive(for: book.id) }
 
@@ -469,6 +470,9 @@ struct AppFeatureTests {
             $0.stowerRepository.createItemFromIngestion = { result in
                 created.withValue { $0.append(result.plainText) }
                 return book
+            }
+            $0.stowerRepository.enqueueIngestionJob = { kind, _ in
+                uploads.withValue { $0.append(kind) }
             }
             $0.stowerRepository.claimNextIngestionJob = { _ in
                 queuedJobs.withValue { jobs in jobs.isEmpty ? nil : jobs.removeFirst() }
@@ -485,6 +489,7 @@ struct AppFeatureTests {
         #expect(ingested.value == [staged])
         #expect(created.value.count == 1)
         #expect(completed.value == 1)
+        #expect(uploads.value == [.uploadAsset])
         // The original file is kept with the item; the staged copy is gone.
         #expect(try Data(contentsOf: EPUBBookArchiver.bookURL(for: book.id)) == Data("epub".utf8))
         #expect(!FileManager.default.fileExists(atPath: scratchDir.path))
