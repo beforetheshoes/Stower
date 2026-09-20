@@ -59,8 +59,24 @@ extension StowerRepository {
                         .where { $0.kind.eq(IngestionJob.Kind.downloadAsset.rawValue) }
                         .where { $0.payload.like("%\(itemID.uuidString)%") }
                         .where { $0.processedAt.is(nil) }
-                        .fetchCount(db)
-                    guard existingJob == 0 else { continue }
+                        .fetchOne(db)
+                    if let existingJob {
+                        // A download that ran out of attempts (no network,
+                        // iCloud signed out) is not shown as a failed import,
+                        // so nothing else would ever try it again. Give it a
+                        // fresh set of attempts on this pass.
+                        if existingJob.status == IngestionJob.Status.failed.rawValue {
+                            try IngestionJobLocalTable
+                                .find(existingJob.id)
+                                .update {
+                                    $0.status = IngestionJob.Status.queued.rawValue
+                                    $0.attemptCount = 0
+                                }
+                                .execute(db)
+                            enqueued += 1
+                        }
+                        continue
+                    }
 
                     let hasContentRow = try SavedItemContentLocalTable
                         .where { $0.itemID.eq(itemID) }

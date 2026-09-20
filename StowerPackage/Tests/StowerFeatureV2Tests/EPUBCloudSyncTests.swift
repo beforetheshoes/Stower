@@ -174,6 +174,37 @@ struct EPUBCloudSyncTests {
     }
 
     @Test
+    func downloadThatRanOutOfAttemptsIsRetriedOnTheNextPass() async throws {
+        let store = InMemoryCloudAssetStore()
+        let first = try Device()
+        let (item, manifest) = try await importAndUpload(on: first, store: store)
+        defer { AssetArchiver.deleteArchive(for: item.id) }
+
+        let second = try Device()
+        try await deliverSyncedRows(to: second, item: item, manifest: manifest)
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+
+        try await onDevice(second, store: store) {
+            #expect(try await second.repository.hydrateBookItemsFromSyncedContent() == 1)
+            // Three failed attempts park the job as failed.
+            for _ in 0..<3 {
+                let claimed = try await second.repository.claimNextIngestionJob(now)
+                let job = try #require(claimed)
+                try await second.repository.failIngestionJob(job.id, "offline", now)
+            }
+            #expect(try await second.repository.claimNextIngestionJob(now) == nil)
+
+            #expect(try await second.repository.hydrateBookItemsFromSyncedContent() == 1)
+            let retried = try await second.repository.claimNextIngestionJob(now)
+            #expect(retried?.kind == .downloadAsset)
+        }
+        let jobCount = try await second.database.read { db in
+            try IngestionJobLocalTable.fetchCount(db)
+        }
+        #expect(jobCount == 1)
+    }
+
+    @Test
     func deletedBooksAreNotDownloaded() async throws {
         let store = InMemoryCloudAssetStore()
         let first = try Device()
