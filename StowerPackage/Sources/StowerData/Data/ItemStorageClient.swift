@@ -70,6 +70,8 @@ public struct ItemStorageClient: Sendable {
     public var replaceWebsiteArchiveWithManifest: @Sendable (AssetManifest) async throws -> Void
     /// Live PDF items with no `pdf` asset manifest — upload backfill targets.
     public var pdfItemIDsWithoutManifest: @Sendable () async throws -> [UUID]
+    /// Live imported books with no `epub` manifest — upload-backfill targets.
+    public var bookItemIDsWithoutManifest: @Sendable () async throws -> [UUID]
     /// Items still carrying a legacy `zipData` sync row — migration targets.
     public var websiteZipItemIDsWithoutManifest: @Sendable () async throws -> [UUID]
     /// Live items whose capture still stores its bytes as chunk rows —
@@ -95,6 +97,7 @@ public struct ItemStorageClient: Sendable {
         setBudgetBytes: { _ in },
         replaceWebsiteArchiveWithManifest: { _ in },
         pdfItemIDsWithoutManifest: { [] },
+        bookItemIDsWithoutManifest: { [] },
         websiteZipItemIDsWithoutManifest: { [] },
         captureItemIDsWithChunks: { [] },
         markCaptureMigrated: { _ in }
@@ -115,6 +118,7 @@ public struct ItemStorageClient: Sendable {
         setBudgetBytes: @escaping @Sendable (Int?) async throws -> Void,
         replaceWebsiteArchiveWithManifest: @escaping @Sendable (AssetManifest) async throws -> Void,
         pdfItemIDsWithoutManifest: @escaping @Sendable () async throws -> [UUID],
+        bookItemIDsWithoutManifest: @escaping @Sendable () async throws -> [UUID],
         websiteZipItemIDsWithoutManifest: @escaping @Sendable () async throws -> [UUID],
         captureItemIDsWithChunks: @escaping @Sendable () async throws -> [UUID],
         markCaptureMigrated: @escaping @Sendable (UUID) async throws -> Void
@@ -133,6 +137,7 @@ public struct ItemStorageClient: Sendable {
         self.setBudgetBytes = setBudgetBytes
         self.replaceWebsiteArchiveWithManifest = replaceWebsiteArchiveWithManifest
         self.pdfItemIDsWithoutManifest = pdfItemIDsWithoutManifest
+        self.bookItemIDsWithoutManifest = bookItemIDsWithoutManifest
         self.websiteZipItemIDsWithoutManifest = websiteZipItemIDsWithoutManifest
         self.captureItemIDsWithChunks = captureItemIDsWithChunks
         self.markCaptureMigrated = markCaptureMigrated
@@ -317,6 +322,23 @@ extension ItemStorageClient {
                             .fetchAll(db)
                     )
                     return pdfItemIDs.filter { liveIDs.contains($0) && !manifested.contains($0) }
+                }
+            },
+            bookItemIDsWithoutManifest: {
+                try await database.read { db in
+                    let bookItemIDs = try SavedItemSyncTable
+                        .where { ($0.canonicalURL ?? "").like("\(SavedItem.importedBookURLPrefix)%") }
+                        .where { $0.deletedAt.is(nil) }
+                        .select(\.id)
+                        .fetchAll(db)
+                    guard !bookItemIDs.isEmpty else { return [] }
+                    let manifested = Set(
+                        try SavedAssetManifestSyncTable
+                            .where { $0.kind.eq(CloudAssetKind.epub.rawValue) }
+                            .select(\.itemID)
+                            .fetchAll(db)
+                    )
+                    return bookItemIDs.filter { !manifested.contains($0) }
                 }
             },
             websiteZipItemIDsWithoutManifest: {

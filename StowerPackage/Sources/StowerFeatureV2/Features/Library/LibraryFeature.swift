@@ -118,6 +118,7 @@ public struct LibraryFeature {
         case cancelURLSaveTapped
         case saveURLFinished(SavedItem)
         case saveURLFailed(String)
+        case importEPUBSelected(URL)
         case importPDFSelected(URL)
         case importWebsiteSelected(URL)
 
@@ -166,6 +167,8 @@ public struct LibraryFeature {
     var ingestionClient
     @Dependency(\.articleSaveClient)
     var articleSaveClient
+    @Dependency(\.epubIngestionClient)
+    var epubIngestionClient
     @Dependency(\.pdfIngestionClient)
     var pdfIngestionClient
     @Dependency(\.textIngestionClient)
@@ -522,6 +525,42 @@ public struct LibraryFeature {
                         if let payload = try? AssetJobPayload(
                             itemID: item.id,
                             kind: .pdf,
+                            originalFilename: pickedURL.lastPathComponent
+                        ).encoded() {
+                            try? await repository.enqueueIngestionJob(.uploadAsset, payload)
+                        }
+                        await send(.saveURLFinished(item))
+                        await send(.openItem(item))
+                    } catch {
+                        await send(.saveURLFailed(error.localizedDescription))
+                    }
+                }
+
+            case .importEPUBSelected(let pickedURL):
+                // Foreground import from the file picker. Runs inline rather
+                // than through the ingestion queue so the book opens as soon
+                // as it is parsed. The caller hands over a scratch copy.
+                state.isSaving = true
+                state.saveState = .extracting
+                state.errorMessage = nil
+                let repository = self.repository
+                let epubIngestionClient = self.epubIngestionClient
+                return .run { send in
+                    defer {
+                        let parent = pickedURL.deletingLastPathComponent()
+                        if parent.path != FileManager.default.temporaryDirectory.path {
+                            try? FileManager.default.removeItem(at: parent)
+                        } else {
+                            try? FileManager.default.removeItem(at: pickedURL)
+                        }
+                    }
+                    do {
+                        let result = try await epubIngestionClient.ingest(pickedURL)
+                        let item = try await repository.createItemFromIngestion(result)
+                        try? EPUBBookArchiver.archiveBook(from: pickedURL, itemID: item.id)
+                        if let payload = try? AssetJobPayload(
+                            itemID: item.id,
+                            kind: .epub,
                             originalFilename: pickedURL.lastPathComponent
                         ).encoded() {
                             try? await repository.enqueueIngestionJob(.uploadAsset, payload)

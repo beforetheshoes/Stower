@@ -121,6 +121,8 @@ public struct AppFeature {
         case onAppear
         case sceneDidBecomeActive
         case browserExtensionURLReceived(URL)
+        /// Another app handed Stower a file ("Open in Stower").
+        case fileOpened(URL)
         case startupFinished
         case startupFailed(String)
         /// Cloud sync start has settled (started, or unavailable) and the
@@ -468,6 +470,21 @@ public struct AppFeature {
             case .browserExtensionURLReceived(let url):
                 return .send(.library(.saveExternalURL(url)))
 
+            case .fileOpened(let url):
+                return .run { send in
+                    do {
+                        let file = try IncomingFile.stage(url)
+                        switch file.kind {
+                        case .epub:
+                            await send(.library(.importEPUBSelected(file.url)))
+                        case .pdf:
+                            await send(.library(.importPDFSelected(file.url)))
+                        }
+                    } catch {
+                        await send(.library(.saveURLFailed(error.localizedDescription)))
+                    }
+                }
+
             case .readerAppearanceLoaded(let appearance):
                 state.cachedAppearance = appearance
                 AppearanceCache.save(appearance)
@@ -805,6 +822,7 @@ public struct AppFeature {
             _ = try? await repository.hydratePDFItemsFromSyncedContent()
             _ = try? await repository.hydrateTextItemsFromSyncedContent()
             _ = try? await repository.hydrateWebsiteItemsFromSyncedContent()
+            _ = try? await repository.hydrateBookItemsFromSyncedContent()
             _ = try? await repository.reconcileOrphanedTagAssignments()
             try? await ingestionCoordinator.run {
                 try await processIngestionJobs(
@@ -920,6 +938,33 @@ private func processIngestionJob(
                     .sharedText("Failed to ingest PDF: \(fallback)\n\n\(error.localizedDescription)")
                 )
                 try? FileManager.default.removeItem(at: scratchDir)
+            }
+        case .epub:
+            // Payload is the absolute path of an EPUB the share extension
+            // copied into the shared App Group container, inside a UUID-named
+            // subdirectory that keeps the original filename for the title
+            // fallback.
+            @Dependency(\.epubIngestionClient)
+            var epubIngestionClient
+            let epubURL = URL(fileURLWithPath: job.payload)
+            let scratchDir = epubURL.deletingLastPathComponent()
+            do {
+                let result = try await epubIngestionClient.ingest(epubURL)
+                let item = try await repository.createItemFromIngestion(result)
+                try? EPUBBookArchiver.archiveBook(from: epubURL, itemID: item.id)
+                if let payload = try? AssetJobPayload(
+                    itemID: item.id,
+                    kind: .epub,
+                    originalFilename: epubURL.lastPathComponent
+                ).encoded() {
+                    try? await repository.enqueueIngestionJob(.uploadAsset, payload)
+                }
+                try? FileManager.default.removeItem(at: scratchDir)
+            } catch let error as EPUBIngestionError {
+                // The file itself is the problem, so a retry cannot succeed.
+                // Drop the staged copy and report the import as failed.
+                try? FileManager.default.removeItem(at: scratchDir)
+                throw error
             }
         case .text:
             let payload = QueuedTextPayloadCodec.decode(job.payload, defaultMode: .auto)

@@ -41,7 +41,7 @@ enum EPUBImageCollector {
         for block in document.blocks {
             switch block {
             case .figure(let media):
-                append(figureRequest(media))
+                append(figureRequest(media, itemID: item.id))
 
             case .video(let media):
                 if let poster = posterRequest(media) {
@@ -72,10 +72,15 @@ enum EPUBImageCollector {
         )
     }
 
-    private static func figureRequest(_ media: MediaDescriptor) -> EPUBImageRequest {
-        EPUBImageRequest(
+    private static func figureRequest(_ media: MediaDescriptor, itemID: UUID) -> EPUBImageRequest {
+        // An imported book's images are found by filename in the item's
+        // archive directory. The path stored at import time goes stale when
+        // the app's container moves (reinstall, device restore).
+        let bookImagePath = EPUBBookArchiver.imageFilename(fromMarker: media.sourceURL)
+            .map { EPUBBookArchiver.imageURL(for: itemID, filename: $0).path }
+        return EPUBImageRequest(
             key: media.sourceURL,
-            localPath: media.localURL.flatMap { $0.isEmpty ? nil : $0 },
+            localPath: bookImagePath ?? media.localURL.flatMap { $0.isEmpty ? nil : $0 },
             remoteURL: ReaderDocumentHTMLBuilder.isSafeHTTPURL(media.sourceURL) ? URL(string: media.sourceURL) : nil,
             declaredMIMEType: media.mimeType,
             role: .figure

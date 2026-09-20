@@ -20,6 +20,11 @@ public struct ReaderFeature {
         /// marks the item read, once per open.
         var hasReachedEnd = false
         var isChromeHidden = false
+        /// The document's headings, rebuilt whenever the document changes.
+        public var contents = [ReaderContentsEntry]()
+        public var isContentsPresented = false
+        /// The latest jump requested from the table of contents.
+        public var scrollRequest: ReaderScrollRequest?
         var speech = ReaderSpeechFeature.State()
         var ai = ReaderAIFeature.State()
         public var isLoading = false
@@ -60,7 +65,7 @@ public struct ReaderFeature {
 
         public var canEditTextSource: Bool {
             guard let item else { return false }
-            return item.sourceURL == nil && item.renderFormat != .pdf
+            return item.sourceURL == nil && item.renderFormat != .pdf && !item.isImportedBook
         }
 
         var lineWidthPolicy: ReaderLineWidthPolicy {
@@ -196,6 +201,9 @@ public struct ReaderFeature {
         case scrollProgressChanged(ReaderProgressReport)
         case saveReadingProgress(Int)
         case contentAreaTapped
+        case contentsButtonTapped
+        case contentsDismissed
+        case contentsEntryTapped(ReaderContentsEntry)
 
         /// User tapped the toolbar mark-read/unread button.
         case toggleReadTapped
@@ -232,7 +240,10 @@ public struct ReaderFeature {
             }
             return !AssetArchiver.archiveExists(for: item.id)
         default:
-            return false
+            // A book that synced from another device has no file here until
+            // it is downloaded; opening it fetches it right away.
+            return item.isImportedBook
+                && !FileManager.default.fileExists(atPath: EPUBBookArchiver.bookURL(for: item.id).path)
         }
     }
 
@@ -308,6 +319,7 @@ public struct ReaderFeature {
                 state.isLoading = false
                 if let item { state.item = item }
                 state.document = document
+                state.contents = ReaderContentsEntry.entries(for: document)
                 state.sourceHTML = sourceHTML
                 state.currentBlockIndex = state.item?.lastReadBlockIndex ?? 0
                 state.scrollFraction = nil
@@ -345,6 +357,7 @@ public struct ReaderFeature {
                 state.offloadRestore = .idle
                 // Force a clean reload so the restored files are picked up.
                 state.document = nil
+                state.contents = []
                 state.sourceHTML = nil
                 return .send(.load)
 
@@ -433,6 +446,7 @@ public struct ReaderFeature {
             case let .textEditSaved(item, document):
                 state.item = item
                 state.document = document
+                state.contents = ReaderContentsEntry.entries(for: document)
                 state.sourceHTML = nil
                 state.textEditor = nil
                 return .none
@@ -721,6 +735,22 @@ public struct ReaderFeature {
 
             case .contentAreaTapped:
                 state.isChromeHidden.toggle()
+                return .none
+
+            case .contentsButtonTapped:
+                state.isContentsPresented = true
+                return .none
+
+            case .contentsDismissed:
+                state.isContentsPresented = false
+                return .none
+
+            case .contentsEntryTapped(let entry):
+                state.isContentsPresented = false
+                state.scrollRequest = ReaderScrollRequest(
+                    sequence: (state.scrollRequest?.sequence ?? 0) + 1,
+                    blockIndex: entry.blockIndex
+                )
                 return .none
 
             case .toggleReadTapped:

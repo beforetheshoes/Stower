@@ -253,7 +253,12 @@ extension StowerRepository {
         // imported `.zip`) have their own sync tables — mirroring them here
         // would write empty rows every time the item updates, and the
         // resulting CloudKit echo floods the sync engine.
+        //
+        // Imported books are left out as well: they sync as their original
+        // EPUB file through the asset store, images included.
+        let isImportedBook = result.canonicalURL?.hasPrefix(SavedItem.importedBookURLPrefix) ?? false
         let isTextAuthoredItem = result.sourceURL == nil
+            && !isImportedBook
             && (
                 result.renderFormat == .plainText
                 || result.renderFormat == .structuredV1

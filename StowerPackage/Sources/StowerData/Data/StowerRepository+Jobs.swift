@@ -344,8 +344,10 @@ extension StowerRepository {
                     // first launch is none. The old version loaded the whole
                     // library's content on every launch just to skip it, and
                     // held the lock for the duration.
+                    // Imported books sync as their EPUB file instead.
                     let textItemIDs = SavedItemSyncTable
                         .where { $0.sourceURL.is(nil) || $0.sourceURL.eq("") }
+                        .where { !($0.canonicalURL ?? "").like("\(SavedItem.importedBookURLPrefix)%") }
                         .select(\.id)
                     let alreadySynced = SavedTextContentSyncTable
                         .where { $0.rawSourceText.neq("") }
@@ -595,7 +597,7 @@ private extension IngestionJob.Kind {
     /// 3 attempts of a 30s WebKit capture, all of them head-of-line blocking
     /// every other pending import.
     ///
-    /// `.pdf`/`.website` payloads are unique staging paths and `.text`/
+    /// `.pdf`/`.epub`/`.website` payloads are unique staging paths and `.text`/
     /// `.markdown` payloads are user content that can legitimately repeat, so
     /// those still enqueue unconditionally.
     var isDeduplicated: Bool {
@@ -603,7 +605,7 @@ private extension IngestionJob.Kind {
         case .hydrate, .hydrateText, .hydrateWebsite, .url,
              .uploadAsset, .downloadAsset, .migrateWebsiteAsset, .migrateCaptureAsset:
             true
-        case .pdf, .website, .text, .markdown:
+        case .pdf, .epub, .website, .text, .markdown:
             false
         }
     }

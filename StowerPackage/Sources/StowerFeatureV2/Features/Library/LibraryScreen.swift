@@ -253,6 +253,11 @@ public struct LibraryScreen: View {
                         Label("Import PDF…", systemImage: "doc.richtext")
                     }
                     Button {
+                        presentEPUBImporter()
+                    } label: {
+                        Label("Import EPUB…", systemImage: "book")
+                    }
+                    Button {
                         presentWebsiteImporter()
                     } label: {
                         Label("Import Website Archive…", systemImage: "globe")
@@ -300,6 +305,8 @@ public struct LibraryScreen: View {
                     handleTextImport(result)
                 case .pdf:
                     handlePDFImport(result)
+                case .epub:
+                    handleEPUBImport(result)
                 case .website:
                     handleWebsiteImport(result)
                 }
@@ -397,6 +404,21 @@ public struct LibraryScreen: View {
         #endif
     }
 
+    private func presentEPUBImporter() {
+        #if os(macOS)
+        presentOpenPanel(
+            allowedContentTypes: [.epub],
+            title: "Import EPUB"
+        ) { url in
+            handleEPUBImport(.success(url))
+        }
+        #else
+        DispatchQueue.main.async {
+            activeImportPicker = .epub
+        }
+        #endif
+    }
+
     private func presentWebsiteImporter() {
         #if os(macOS)
         presentOpenPanel(
@@ -474,6 +496,37 @@ public struct LibraryScreen: View {
         }
     }
 
+    /// Same security-scoped + scratch-copy handling as `handlePDFImport`. The
+    /// original filename is kept: it is the title fallback for books whose
+    /// package document has no title.
+    private func handleEPUBImport(_ result: Result<URL, Error>) {
+        switch result {
+        case .success(let pickedURL):
+            let accessed = pickedURL.startAccessingSecurityScopedResource()
+            defer {
+                if accessed { pickedURL.stopAccessingSecurityScopedResource() }
+            }
+            do {
+                let scratchDir = FileManager.default.temporaryDirectory
+                    .appendingPathComponent(UUID().uuidString, isDirectory: true)
+                try FileManager.default.createDirectory(
+                    at: scratchDir,
+                    withIntermediateDirectories: true
+                )
+                let scratch = scratchDir.appendingPathComponent(pickedURL.lastPathComponent)
+                try FileManager.default.copyItem(at: pickedURL, to: scratch)
+                store.send(.importEPUBSelected(scratch))
+            } catch {
+                store.send(.saveURLFailed("Couldn't read EPUB: \(error.localizedDescription)"))
+            }
+        case .failure(let error):
+            let ns = error as NSError
+            if ns.code != NSUserCancelledError {
+                store.send(.saveURLFailed("EPUB import failed: \(error.localizedDescription)"))
+            }
+        }
+    }
+
     private func handlePDFImport(_ result: Result<URL, Error>) {
         switch result {
         case .success(let pickedURL):
@@ -542,6 +595,7 @@ public struct LibraryScreen: View {
     private enum IOSImportPicker: String, Identifiable {
         case text = "text"
         case pdf = "pdf"
+        case epub = "epub"
         case website = "website"
 
         var id: String { rawValue }
@@ -553,6 +607,8 @@ public struct LibraryScreen: View {
             return textImportContentTypes
         case .pdf:
             return [.pdf]
+        case .epub:
+            return [.epub]
         case .website:
             return [.zip]
         }
@@ -942,6 +998,12 @@ public struct LibraryScreen: View {
                         presentPDFImporter()
                     } label: {
                         Label("Import PDF…", systemImage: "doc.richtext")
+                    }
+
+                    Button {
+                        presentEPUBImporter()
+                    } label: {
+                        Label("Import EPUB…", systemImage: "book")
                     }
 
                     Button {

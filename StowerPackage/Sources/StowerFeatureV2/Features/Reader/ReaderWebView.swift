@@ -79,6 +79,7 @@ public struct ReaderWebView: View {
     let usesNativeCapture: Bool
     let highlightedBlockIndex: Int?
     let restoreBlockIndex: Int?
+    let scrollRequest: ReaderScrollRequest?
     let onOpenInlineEmbed: ((String) -> Void)?
     let onContentTap: (() -> Void)?
 
@@ -99,6 +100,7 @@ public struct ReaderWebView: View {
         usesNativeCapture: Bool = false,
         highlightedBlockIndex: Int? = nil,
         restoreBlockIndex: Int? = nil,
+        scrollRequest: ReaderScrollRequest? = nil,
         onOpenInlineEmbed: ((String) -> Void)? = nil,
         onContentTap: (() -> Void)? = nil
     ) {
@@ -114,6 +116,7 @@ public struct ReaderWebView: View {
         self.usesNativeCapture = usesNativeCapture
         self.highlightedBlockIndex = highlightedBlockIndex
         self.restoreBlockIndex = restoreBlockIndex
+        self.scrollRequest = scrollRequest
         self.onOpenInlineEmbed = onOpenInlineEmbed
         self.onContentTap = onContentTap
     }
@@ -173,6 +176,12 @@ public struct ReaderWebView: View {
         }
         .onChange(of: highlightedBlockIndex) { _, newValue in
             runHighlight(newValue)
+        }
+        .onChange(of: scrollRequest) { _, request in
+            guard let request, let page = session.page else { return }
+            Task {
+                await ReaderWebPageFactory.jumpToBlock(request.blockIndex, on: page)
+            }
         }
         .onDisappear {
             session.reset()
@@ -364,6 +373,7 @@ public struct ReaderWebView: View {
         // Skips any source file that doesn't exist on disk to prevent
         // dangling symlinks (which would cause the local server to 404).
         PDFArchiver.symlinkPageImages(for: itemID, into: scratchDir)
+        EPUBBookArchiver.symlinkImages(for: itemID, into: scratchDir)
 
         let server = LocalArchiveServer(archiveDir: scratchDir, articlePath: "/", originURL: nil)
         guard let port = try? await server.start() else { return nil }

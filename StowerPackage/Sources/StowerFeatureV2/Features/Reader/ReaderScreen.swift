@@ -93,6 +93,20 @@ public struct ReaderScreen: View {
                     InlineEmbedScreen(store: embedStore)
                 }
             }
+            .sheet(
+                isPresented: Binding(
+                    get: { store.isContentsPresented },
+                    set: { if !$0 { store.send(.contentsDismissed) } }
+                )
+            ) {
+                ReaderContentsSheet(
+                    entries: store.contents,
+                    currentBlockIndex: store.currentBlockIndex,
+                    onSelect: { store.send(.contentsEntryTapped($0)) },
+                    onDone: { store.send(.contentsDismissed) }
+                )
+                .presentationDetents([.medium, .large])
+            }
             .sheet(isPresented: $session.isPDFViewerPresented) {
                 PDFReaderSheet(
                     itemID: store.itemID,
@@ -249,7 +263,19 @@ public struct ReaderScreen: View {
             ToolbarSpacer(.fixed, placement: .automatic)
         }
 
-        // Group 2: content-level actions — Find and (for PDFs) Original PDF.
+        // Group 2: content-level actions — Contents, Find and (for PDFs)
+        // Original PDF.
+        if !store.contents.isEmpty {
+            ToolbarItem(placement: .automatic) {
+                Button {
+                    store.send(.contentsButtonTapped)
+                } label: {
+                    Label("Contents", systemImage: "list.bullet.indent")
+                }
+                .help("Table of contents")
+            }
+            .visibilityPriority(.low)
+        }
         ToolbarItem(placement: .automatic) {
             Button {
                 session.isFindNavigatorPresented.toggle()
@@ -343,6 +369,12 @@ public struct ReaderScreen: View {
         Menu("More", systemImage: "ellipsis.circle") {
             if (store.item?.captureVersion ?? 0) > 0 || store.sourceHTML != nil {
                 switchModeButton
+            }
+
+            if !store.contents.isEmpty {
+                Button("Contents", systemImage: "list.bullet.indent") {
+                    store.send(.contentsButtonTapped)
+                }
             }
 
             Button("Find in Article", systemImage: "magnifyingglass") {
@@ -456,6 +488,7 @@ public struct ReaderScreen: View {
                     usesNativeCapture: item.captureVersion > 0,
                     highlightedBlockIndex: store.speech.currentBlockIndex,
                     restoreBlockIndex: item.lastReadBlockIndex,
+                    scrollRequest: store.scrollRequest,
                     onOpenInlineEmbed: { urlString in
                         store.send(.openInlineWebEmbed(urlString))
                     },

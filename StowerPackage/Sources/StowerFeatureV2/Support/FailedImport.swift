@@ -39,7 +39,7 @@ public struct FailedImport: Equatable, Identifiable, Sendable {
 
     static func isUserImport(_ kind: IngestionJob.Kind) -> Bool {
         switch kind {
-        case .url, .pdf, .website, .text, .markdown, .hydrate, .hydrateText, .hydrateWebsite:
+        case .url, .pdf, .epub, .website, .text, .markdown, .hydrate, .hydrateText, .hydrateWebsite:
             return true
         case .uploadAsset, .downloadAsset, .migrateWebsiteAsset, .migrateCaptureAsset:
             return false
@@ -76,7 +76,7 @@ public struct FailedImport: Equatable, Identifiable, Sendable {
         switch job.kind {
         case .url, .hydrate:
             return displayURL(job.payload)
-        case .pdf, .website, .hydrateWebsite:
+        case .pdf, .epub, .website, .hydrateWebsite:
             // Payloads are staging paths inside the App Group container.
             let name = URL(fileURLWithPath: job.payload).lastPathComponent
             return name.isEmpty ? "Imported file" : name

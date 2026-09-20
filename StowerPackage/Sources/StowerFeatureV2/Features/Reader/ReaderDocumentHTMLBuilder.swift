@@ -187,13 +187,7 @@ public enum ReaderDocumentHTMLBuilder {
             return "<h\(clamped) \(idAttr)>\(renderInlines(inlines))</h\(clamped)>"
 
         case let .list(ordered, items):
-            let tag = ordered ? "ol" : "ul"
-            var out = "<\(tag) \(idAttr)>"
-            for item in items {
-                out += "<li>\(renderInlines(item))</li>"
-            }
-            out += "</\(tag)>"
-            return out
+            return renderList(ordered: ordered, items: items, idAttr: idAttr)
 
         case .blockquote(let inlines):
             return "<blockquote \(idAttr)><p>\(renderInlines(inlines))</p></blockquote>"
@@ -290,6 +284,61 @@ public enum ReaderDocumentHTMLBuilder {
         }
         html += "</tbody></table>"
         return html
+    }
+
+    /// The block parser flattens nested lists into one item array and marks
+    /// each nested item with a leading "— " per level. This rebuilds real
+    /// nested lists from those markers so sub-items indent under their parent
+    /// and nested numbering restarts.
+    private static func renderList(ordered: Bool, items: [[ReaderInline]], idAttr: String) -> String {
+        let tag = ordered ? "ol" : "ul"
+        var out = "<\(tag) \(idAttr)>"
+        var depth = 0
+        for (offset, item) in items.enumerated() {
+            let nested = nestedListItem(item)
+            // An item can only be one level deeper than the one before it.
+            let itemDepth = offset == 0 ? 0 : min(nested.depth, depth + 1)
+            if itemDepth > depth {
+                out += "<\(tag)>"
+                depth = itemDepth
+            } else if offset > 0 {
+                out += "</li>"
+                while depth > itemDepth {
+                    out += "</\(tag)></li>"
+                    depth -= 1
+                }
+            }
+            // The first item cannot be nested, so a leading dash there is
+            // the author's own text.
+            out += "<li>\(renderInlines(offset == 0 ? item : nested.inlines))"
+        }
+        if !items.isEmpty {
+            out += "</li>"
+        }
+        while depth > 0 {
+            out += "</\(tag)></li>"
+            depth -= 1
+        }
+        out += "</\(tag)>"
+        return out
+    }
+
+    static let nestedListMarker = "— "
+
+    /// Splits the nesting markers off the front of a list item.
+    static func nestedListItem(_ item: [ReaderInline]) -> (depth: Int, inlines: [ReaderInline]) {
+        var inlines = item
+        var depth = 0
+        while case .text(let text)? = inlines.first, text.hasPrefix(nestedListMarker) {
+            depth += 1
+            let rest = String(text.dropFirst(nestedListMarker.count))
+            if rest.isEmpty {
+                inlines.removeFirst()
+            } else {
+                inlines[0] = .text(rest)
+            }
+        }
+        return (depth, inlines)
     }
 
     private static func renderFigure(media: MediaDescriptor, idAttr: String) -> String {
@@ -420,7 +469,11 @@ public enum ReaderDocumentHTMLBuilder {
                 out += "<br>"
 
             case let .link(label, url):
-                if isSafeLinkURL(url) {
+                if url.hasPrefix("#") {
+                    // A link within the document (a book's footnotes and
+                    // cross-references) scrolls the page in place.
+                    out += "<a href=\"\(attrEscape(url))\">\(escapeHTML(label))</a>"
+                } else if isSafeLinkURL(url) {
                     out += "<a href=\"\(attrEscape(url))\" target=\"_blank\" rel=\"noopener noreferrer\">\(escapeHTML(label))</a>"
                 } else {
                     // Unsafe scheme — fall back to plain text to avoid
@@ -464,6 +517,12 @@ public enum ReaderDocumentHTMLBuilder {
         if media.sourceURL.hasPrefix("stower://pdf-page/"),
            let local = media.localURL, !local.isEmpty {
             return URL(fileURLWithPath: local).lastPathComponent
+        }
+        // EPUB chapter images are served next to index.html, like PDF pages.
+        // The marker carries the filename, so this holds even when the
+        // document was rebuilt on a device that has no `localURL` for it.
+        if let filename = EPUBBookArchiver.imageFilename(fromMarker: media.sourceURL) {
+            return filename
         }
         if let local = media.localURL, !local.isEmpty, FileManager.default.fileExists(atPath: local) {
             return URL(fileURLWithPath: local).absoluteString

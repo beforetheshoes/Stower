@@ -104,6 +104,42 @@ public enum ShareIngestionClient {
         try await repository.enqueueIngestionJob(.pdf, path)
     }
 
+    /// Copies an EPUB at `sourceURL` into the shared App Group container under
+    /// `PendingEPUBs/{uuid}/` and enqueues an `.epub` ingestion job whose
+    /// payload is the absolute destination path. Mirrors `enqueuePDF`: the
+    /// original filename is kept because it is the title fallback for books
+    /// whose package document has no title.
+    public static func enqueueEPUB(_ sourceURL: URL) async throws {
+        try prepareDependencies {
+            try $0.bootstrapStowerDatabase(enableSync: false)
+        }
+
+        guard let container = FileManager.default
+            .containerURL(forSecurityApplicationGroupIdentifier: StowerDatabase.appGroupID)
+        else {
+            throw Error.appGroupUnavailable
+        }
+        @Dependency(\.uuid)
+        var uuid
+
+        let pendingRoot = container.appendingPathComponent("PendingEPUBs", isDirectory: true)
+        let pendingDir = pendingRoot.appendingPathComponent(uuid().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: pendingDir,
+            withIntermediateDirectories: true
+        )
+        let filename = sourceURL.lastPathComponent.isEmpty
+            ? "book.epub"
+            : sourceURL.lastPathComponent
+        let destination = pendingDir.appendingPathComponent(filename)
+        try FileManager.default.copyItem(at: sourceURL, to: destination)
+
+        @Dependency(\.stowerRepository)
+        var repository
+        let path = destination.path
+        try await repository.enqueueIngestionJob(.epub, path)
+    }
+
     /// Copies a `.zip` website archive at `sourceURL` into the shared App
     /// Group container under `PendingWebsites/{uuid}/` and enqueues a
     /// `.website` ingestion job whose payload is the absolute destination
