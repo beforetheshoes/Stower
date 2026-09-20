@@ -34,6 +34,16 @@ public struct SavedItem: Equatable, Identifiable, Sendable {
     /// batched junction-table query (never N+1).
     public var tagIDs = [UUID]()
 
+    /// Whether this item was imported from an EPUB file. Books have no source
+    /// URL, like user-authored text, but their text is not the user's to edit.
+    public var isImportedBook: Bool {
+        canonicalURL?.hasPrefix(Self.importedBookURLPrefix) ?? false
+    }
+
+    /// Canonical URLs of imported books are this prefix plus the SHA-256 of
+    /// the EPUB file, which makes re-importing the same file an update.
+    public static let importedBookURLPrefix = "epub-sha256:"
+
     /// Whether the article can be packaged as an EPUB. Website archives
     /// render from unpacked files rather than a block document, so they are
     /// excluded; so are items still extracting or sitting in the trash.
@@ -401,6 +411,7 @@ public struct IngestionJob: Equatable, Identifiable, Sendable {
         case hydrate = "hydrate"
         case hydrateText = "hydrateText"
         case pdf = "pdf"
+        case epub = "epub"
         case website = "website"
         case hydrateWebsite = "hydrateWebsite"
         case uploadAsset = "uploadAsset"

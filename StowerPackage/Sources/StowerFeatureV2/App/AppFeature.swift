@@ -921,6 +921,26 @@ private func processIngestionJob(
                 )
                 try? FileManager.default.removeItem(at: scratchDir)
             }
+        case .epub:
+            // Payload is the absolute path of an EPUB the share extension
+            // copied into the shared App Group container, inside a UUID-named
+            // subdirectory that keeps the original filename for the title
+            // fallback.
+            @Dependency(\.epubIngestionClient)
+            var epubIngestionClient
+            let epubURL = URL(fileURLWithPath: job.payload)
+            let scratchDir = epubURL.deletingLastPathComponent()
+            do {
+                let result = try await epubIngestionClient.ingest(epubURL)
+                let item = try await repository.createItemFromIngestion(result)
+                try? EPUBBookArchiver.archiveBook(from: epubURL, itemID: item.id)
+                try? FileManager.default.removeItem(at: scratchDir)
+            } catch let error as EPUBIngestionError {
+                // The file itself is the problem, so a retry cannot succeed.
+                // Drop the staged copy and report the import as failed.
+                try? FileManager.default.removeItem(at: scratchDir)
+                throw error
+            }
         case .text:
             let payload = QueuedTextPayloadCodec.decode(job.payload, defaultMode: .auto)
             let result = try await textIngestionClient.ingest(

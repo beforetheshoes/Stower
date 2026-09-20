@@ -595,7 +595,7 @@ private extension IngestionJob.Kind {
     /// 3 attempts of a 30s WebKit capture, all of them head-of-line blocking
     /// every other pending import.
     ///
-    /// `.pdf`/`.website` payloads are unique staging paths and `.text`/
+    /// `.pdf`/`.epub`/`.website` payloads are unique staging paths and `.text`/
     /// `.markdown` payloads are user content that can legitimately repeat, so
     /// those still enqueue unconditionally.
     var isDeduplicated: Bool {
@@ -603,7 +603,7 @@ private extension IngestionJob.Kind {
         case .hydrate, .hydrateText, .hydrateWebsite, .url,
              .uploadAsset, .downloadAsset, .migrateWebsiteAsset, .migrateCaptureAsset:
             true
-        case .pdf, .website, .text, .markdown:
+        case .pdf, .epub, .website, .text, .markdown:
             false
         }
     }

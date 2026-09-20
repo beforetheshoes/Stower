@@ -145,6 +145,10 @@ final class ShareViewController: UIViewController {
                     processPDFAttachment(attachment)
                     return
                 }
+                if attachment.hasItemConformingToTypeIdentifier(UTType.epub.identifier) {
+                    processEPUBAttachment(attachment)
+                    return
+                }
                 if attachment.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
                     processPotentialTextFileAttachment(attachment)
                     return
@@ -160,7 +164,7 @@ final class ShareViewController: UIViewController {
             }
         }
 
-        finish(with: .failure("No URL, text, markdown, or PDF in the share."))
+        finish(with: .failure("No URL, text, markdown, PDF, or EPUB in the share."))
     }
 
     /// Share extensions have a ~120 MB memory ceiling. `loadItem` can return
@@ -198,6 +202,49 @@ final class ShareViewController: UIViewController {
             } catch {
                 Task { @MainActor [weak self] in
                     self?.reportFailureOnMain("Couldn't copy PDF: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    /// Same copy-before-returning handling as `processPDFAttachment`. The
+    /// scratch copy keeps the shared file's name inside a UUID-named
+    /// directory, because the name is the title fallback for books whose
+    /// package document has no title.
+    private func processEPUBAttachment(_ attachment: NSItemProvider) {
+        let suggestedName = attachment.suggestedName
+        attachment.loadFileRepresentation(forTypeIdentifier: UTType.epub.identifier) { [weak self] url, error in
+            if let error {
+                Task { @MainActor [weak self] in
+                    self?.reportFailureOnMain("Share load failed: \(error.localizedDescription)")
+                }
+                return
+            }
+            guard let url else {
+                Task { @MainActor [weak self] in
+                    self?.reportFailureOnMain("Shared item isn't an EPUB file.")
+                }
+                return
+            }
+            do {
+                let scratchDir = FileManager.default.temporaryDirectory
+                    .appendingPathComponent(UUID().uuidString, isDirectory: true)
+                try FileManager.default.createDirectory(at: scratchDir, withIntermediateDirectories: true)
+                var filename = url.lastPathComponent.isEmpty ? (suggestedName ?? "book") : url.lastPathComponent
+                if !filename.lowercased().hasSuffix(".epub") {
+                    filename += ".epub"
+                }
+                let scratch = scratchDir.appendingPathComponent(filename)
+                try FileManager.default.copyItem(at: url, to: scratch)
+                Task { @MainActor [weak self] in
+                    self?.enqueueOnBackground {
+                        defer { try? FileManager.default.removeItem(at: scratchDir) }
+                        try await ShareIngestionClient.enqueueEPUB(scratch)
+                    }
+                }
+            } catch {
+                Task { @MainActor [weak self] in
+                    self?.reportFailureOnMain("Couldn't copy EPUB: \(error.localizedDescription)")
                 }
             }
         }

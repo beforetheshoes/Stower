@@ -364,6 +364,7 @@ public struct ReaderWebView: View {
         // Skips any source file that doesn't exist on disk to prevent
         // dangling symlinks (which would cause the local server to 404).
         PDFArchiver.symlinkPageImages(for: itemID, into: scratchDir)
+        EPUBBookArchiver.symlinkImages(for: itemID, into: scratchDir)
 
         let server = LocalArchiveServer(archiveDir: scratchDir, articlePath: "/", originURL: nil)
         guard let port = try? await server.start() else { return nil }

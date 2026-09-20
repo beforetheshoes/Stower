@@ -60,4 +60,33 @@ struct ReaderDocumentHTMLBuilderTests {
         #expect(source < meta)
         #expect(meta < hero)
     }
+
+    @Test
+    func bookImagesAreServedByFilenameEvenWithoutALocalPath() {
+        let item = SavedItem(
+            title: "Book",
+            content: "Body",
+            canonicalURL: SavedItem.importedBookURLPrefix + "abc",
+            renderFormat: .structuredV1
+        )
+        let document = ReaderDocument(
+            title: "Book",
+            blocks: [
+                // As rebuilt on a second device: the marker survives, the
+                // local path does not.
+                .figure(media: MediaDescriptor(kind: .image, sourceURL: "stower://epub-image/epub-img-4.png")),
+                .figure(media: MediaDescriptor(kind: .image, sourceURL: "stower://epub-image/../document.pdf")),
+            ]
+        )
+
+        let html = ReaderDocumentHTMLBuilder.buildReaderHTML(
+            item: item,
+            document: document,
+            appearance: ReaderAppearanceSettings(),
+            pageWidth: 375
+        )
+
+        #expect(html.contains("<img src=\"epub-img-4.png\""))
+        #expect(!html.contains("document.pdf"))
+    }
 }

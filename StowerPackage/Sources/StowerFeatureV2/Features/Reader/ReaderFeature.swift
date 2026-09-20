@@ -60,7 +60,7 @@ public struct ReaderFeature {
 
         public var canEditTextSource: Bool {
             guard let item else { return false }
-            return item.sourceURL == nil && item.renderFormat != .pdf
+            return item.sourceURL == nil && item.renderFormat != .pdf && !item.isImportedBook
         }
 
         var lineWidthPolicy: ReaderLineWidthPolicy {

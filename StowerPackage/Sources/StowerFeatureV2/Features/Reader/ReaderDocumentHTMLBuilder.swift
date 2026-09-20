@@ -465,6 +465,12 @@ public enum ReaderDocumentHTMLBuilder {
            let local = media.localURL, !local.isEmpty {
             return URL(fileURLWithPath: local).lastPathComponent
         }
+        // EPUB chapter images are served next to index.html, like PDF pages.
+        // The marker carries the filename, so this holds even when the
+        // document was rebuilt on a device that has no `localURL` for it.
+        if let filename = EPUBBookArchiver.imageFilename(fromMarker: media.sourceURL) {
+            return filename
+        }
         if let local = media.localURL, !local.isEmpty, FileManager.default.fileExists(atPath: local) {
             return URL(fileURLWithPath: local).absoluteString
         }

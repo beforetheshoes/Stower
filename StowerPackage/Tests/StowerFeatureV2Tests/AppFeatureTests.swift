@@ -444,6 +444,87 @@ struct AppFeatureTests {
     }
 
     @Test
+    func queuedEPUBIsImportedAndItsStagedCopyRemoved() async throws {
+        let scratchDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: scratchDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: scratchDir) }
+        let staged = scratchDir.appendingPathComponent("Novel.epub")
+        try Data("epub".utf8).write(to: staged)
+
+        let queuedJobs = LockIsolated([IngestionJob(kind: .epub, payload: staged.path)])
+        let ingested = LockIsolated<[URL]>([])
+        let created = LockIsolated<[String]>([])
+        let completed = LockIsolated(0)
+        let book = SavedItem(title: "Novel", content: "Body")
+        defer { AssetArchiver.deleteArchive(for: book.id) }
+
+        let store = TestStore(initialState: AppFeature.State()) {
+            AppFeature()
+        } withDependencies: {
+            $0.epubIngestionClient.ingest = { url in
+                ingested.withValue { $0.append(url) }
+                return .sharedText("Body")
+            }
+            $0.stowerRepository.createItemFromIngestion = { result in
+                created.withValue { $0.append(result.plainText) }
+                return book
+            }
+            $0.stowerRepository.claimNextIngestionJob = { _ in
+                queuedJobs.withValue { jobs in jobs.isEmpty ? nil : jobs.removeFirst() }
+            }
+            $0.stowerRepository.completeIngestionJob = { _, _ in completed.withValue { $0 += 1 } }
+            $0.stowerRepository.fetchFailedIngestionJobs = { [] }
+            $0.date.now = Date(timeIntervalSince1970: 1000)
+        }
+        store.exhaustivity = .off(showSkippedAssertions: false)
+
+        await store.send(.library(.urlQueued(try #require(URL(string: "https://example.com/x")))))
+        await store.receive(.queuedSaveFinished)
+
+        #expect(ingested.value == [staged])
+        #expect(created.value.count == 1)
+        #expect(completed.value == 1)
+        // The original file is kept with the item; the staged copy is gone.
+        #expect(try Data(contentsOf: EPUBBookArchiver.bookURL(for: book.id)) == Data("epub".utf8))
+        #expect(!FileManager.default.fileExists(atPath: scratchDir.path))
+    }
+
+    @Test
+    func unreadableQueuedEPUBIsReportedAsAFailedImport() async throws {
+        let scratchDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: scratchDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: scratchDir) }
+        let staged = scratchDir.appendingPathComponent("Locked.epub")
+        try Data("epub".utf8).write(to: staged)
+
+        let queuedJobs = LockIsolated([IngestionJob(kind: .epub, payload: staged.path)])
+        let failures = LockIsolated<[String]>([])
+
+        let store = TestStore(initialState: AppFeature.State()) {
+            AppFeature()
+        } withDependencies: {
+            $0.epubIngestionClient.ingest = { _ in throw EPUBIngestionError.protectedContent }
+            $0.stowerRepository.claimNextIngestionJob = { _ in
+                queuedJobs.withValue { jobs in jobs.isEmpty ? nil : jobs.removeFirst() }
+            }
+            $0.stowerRepository.failIngestionJob = { _, message, _ in
+                failures.withValue { $0.append(message) }
+            }
+            $0.stowerRepository.fetchFailedIngestionJobs = { [] }
+            $0.date.now = Date(timeIntervalSince1970: 1000)
+        }
+        store.exhaustivity = .off(showSkippedAssertions: false)
+
+        await store.send(.library(.urlQueued(try #require(URL(string: "https://example.com/x")))))
+        await store.receive(.queuedSaveFinished)
+
+        #expect(failures.value == [EPUBIngestionError.protectedContent.localizedDescription])
+        #expect(!FileManager.default.fileExists(atPath: scratchDir.path))
+    }
+
+    @Test
     func syncStartFailureDoesNotBlockStartup() async {
         struct SyncError: Error, LocalizedError {
             var errorDescription: String? { "Could not determine iCloud account status" }
