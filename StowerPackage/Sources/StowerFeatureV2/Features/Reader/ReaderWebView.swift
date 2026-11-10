@@ -105,21 +105,23 @@ public struct ReaderWebView: View {
         onOpenInlineEmbed: ((String) -> Void)? = nil,
         onContentTap: (() -> Void)? = nil
     ) {
-        self.htmlSourceProvider = { .ready(html()) }
-        self.sourceURL = sourceURL
-        self.itemID = itemID
-        self.contentVersion = contentVersion
-        self.appearance = appearance
-        self.fontScale = fontScale
-        self.viewportWidth = viewportWidth
-        self.insets = insets
-        self.isWebViewFormat = isWebViewFormat
-        self.usesNativeCapture = usesNativeCapture
-        self.highlightedBlockIndex = highlightedBlockIndex
-        self.restoreBlockIndex = restoreBlockIndex
-        self.scrollRequest = scrollRequest
-        self.onOpenInlineEmbed = onOpenInlineEmbed
-        self.onContentTap = onContentTap
+        self.init(
+            source: { .ready(html()) },
+            sourceURL: sourceURL,
+            itemID: itemID,
+            contentVersion: contentVersion,
+            appearance: appearance,
+            fontScale: fontScale,
+            viewportWidth: viewportWidth,
+            insets: insets,
+            isWebViewFormat: isWebViewFormat,
+            usesNativeCapture: usesNativeCapture,
+            highlightedBlockIndex: highlightedBlockIndex,
+            restoreBlockIndex: restoreBlockIndex,
+            scrollRequest: scrollRequest,
+            onOpenInlineEmbed: onOpenInlineEmbed,
+            onContentTap: onContentTap
+        )
     }
 
     /// Takes a description of the page. The document is turned into HTML
