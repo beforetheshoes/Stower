@@ -372,11 +372,14 @@ public struct AppView: View {
                     .navigationDestination(
                         item: $store.scope(\.$reader, action: \.reader)
                     ) { readerStore in
-                        // The session must outlive body passes. Left to the
-                        // default argument, each pass of this view built a
-                        // new one, dropping the loaded page and closing any
-                        // open reader panel.
-                        ReaderScreen(store: readerStore, session: readerSession)
+                        // Deliberately not handed the shared `readerSession`.
+                        // Doing so was tried and made a pushed article first
+                        // appear in a stale layout (wrong font, title under
+                        // the bar) until the next interaction: the pushed
+                        // reader's first page is built before its insets and
+                        // appearance settle, and only a fresh session per
+                        // pass reloads it. Covered by ReaderChromeUITests.
+                        ReaderScreen(store: readerStore)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .background(palette.bg)
                     }
