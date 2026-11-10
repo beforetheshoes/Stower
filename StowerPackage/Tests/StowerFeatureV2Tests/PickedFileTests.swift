@@ -87,6 +87,100 @@ struct PickedFileReducerTests {
     }
 }
 
+@MainActor
+@Suite
+struct LibraryCommandTests {
+    private func makeStore(_ state: LibraryFeature.State = .init()) -> TestStoreOf<LibraryFeature> {
+        let store = TestStore(initialState: state) {
+            LibraryFeature()
+        } withDependencies: {
+            $0.stowerRepository.deleteItem = { _ in }
+            $0.stowerRepository.enqueueIngestionJob = { _, _ in }
+            $0.pickedFileClient.stage = { $0 }
+            $0.pickedFileClient.readText = { _ in "text" }
+        }
+        store.exhaustivity = .off(showSkippedAssertions: false)
+        return store
+    }
+
+    @Test
+    func droppedLinksAreSavedAndDroppedFilesGoToTheirImporter() async throws {
+        let store = makeStore()
+        let link = try #require(URL(string: "https://example.com/post"))
+        let pdf = URL(fileURLWithPath: "/dropped/Paper.PDF")
+        let book = URL(fileURLWithPath: "/dropped/Novel.epub")
+        let notes = URL(fileURLWithPath: "/dropped/notes.md")
+
+        await store.send(.itemsDropped([link, pdf, book, notes]))
+        await store.receive(.saveExternalURL(link))
+        await store.receive(.filePicked(.pdf, pdf))
+        await store.receive(.filePicked(.epub, book))
+        await store.receive(.filePicked(.text, notes))
+    }
+
+    @Test
+    func aDroppedFileOfAnUnknownKindIsRefusedByName() async {
+        let store = makeStore()
+
+        await store.send(.itemsDropped([URL(fileURLWithPath: "/dropped/photo.heic")]))
+        await store.receive(.saveURLFailed("Stower can't import “photo.heic”."))
+    }
+
+    @Test
+    func droppedFileKindsAreReadFromTheExtension() {
+        #expect(LibraryImportPicker(droppedFile: URL(fileURLWithPath: "/a/b.pdf")) == .pdf)
+        #expect(LibraryImportPicker(droppedFile: URL(fileURLWithPath: "/a/b.EPUB")) == .epub)
+        #expect(LibraryImportPicker(droppedFile: URL(fileURLWithPath: "/a/site.zip")) == .website)
+        #expect(LibraryImportPicker(droppedFile: URL(fileURLWithPath: "/a/b.txt")) == .text)
+        #expect(LibraryImportPicker(droppedFile: URL(fileURLWithPath: "/a/b.markdown")) == .text)
+        #expect(LibraryImportPicker(droppedFile: URL(fileURLWithPath: "/a/b")) == nil)
+    }
+
+    @Test
+    func theDeleteKeyTrashesTheSelectedItem() async {
+        let id = UUID(1)
+        var state = LibraryFeature.State()
+        state.openItemID = id
+        let store = makeStore(state)
+
+        await store.send(.deleteSelectedItemCommand)
+        await store.receive(.deleteItem(id))
+    }
+
+    @Test
+    func theDeleteKeyInRecentlyDeletedAsksBeforeDeletingForever() async {
+        let id = UUID(1)
+        var state = LibraryFeature.State()
+        state.openItemID = id
+        state.filter = .recentlyDeleted
+        let store = makeStore(state)
+
+        await store.send(.deleteSelectedItemCommand)
+        await store.receive(.permanentlyDeleteTapped(id))
+        #expect(store.state.deleteConfirmation != nil)
+    }
+
+    @Test
+    func theDeleteKeyWithNothingSelectedDoesNothing() async {
+        let store = makeStore()
+        store.exhaustivity = .on
+
+        await store.send(.deleteSelectedItemCommand)
+    }
+
+    #if os(macOS)
+    @Test
+    func newLinkMovesFocusToTheComposerOnTheMac() async {
+        let store = makeStore()
+
+        await store.send(.newURLCommand) {
+            $0.composerFocusRequest = 1
+        }
+        #expect(!store.state.isAddURLPresented)
+    }
+    #endif
+}
+
 @Suite
 struct PickedFileClientTests {
     private func makeScratchDirectory() throws -> URL {

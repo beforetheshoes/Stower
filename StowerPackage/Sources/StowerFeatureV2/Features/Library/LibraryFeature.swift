@@ -47,6 +47,8 @@ public struct LibraryFeature {
         /// The iOS document picker being shown, if any. macOS uses an open
         /// panel instead.
         public var importPicker: LibraryImportPicker?
+        /// Bumped to move keyboard focus to the Mac's inline URL field.
+        public var composerFocusRequest = 0
 
         public var showsTextImportSheet: Bool {
             isTextImportPresented && textImportDraft != nil
@@ -167,6 +169,12 @@ public struct LibraryFeature {
         case filePicked(LibraryImportPicker, URL)
         /// The picker itself failed (not a cancel).
         case filePickFailed(LibraryImportPicker, String)
+        /// File ▸ New Link (Cmd-N).
+        case newURLCommand
+        /// The Delete key, on the selected row.
+        case deleteSelectedItemCommand
+        /// Links or files dragged onto the library.
+        case itemsDropped([URL])
         case textImportTitleChanged(String)
         case textImportTextChanged(String)
         case textImportModeChanged(TextImportMode)
@@ -509,6 +517,31 @@ public struct LibraryFeature {
                         }
                     }
                 }
+
+            case .newURLCommand:
+                #if os(macOS)
+                // The Mac composer is always on screen; go to it.
+                state.composerFocusRequest += 1
+                return .none
+                #else
+                return .send(.addURLButtonTapped)
+                #endif
+
+            case .deleteSelectedItemCommand:
+                guard let id = state.openItemID else { return .none }
+                // In Recently Deleted the key means "forever", which asks first.
+                return .send(state.filter == .recentlyDeleted ? .permanentlyDeleteTapped(id) : .deleteItem(id))
+
+            case .itemsDropped(let urls):
+                return .merge(urls.map { url in
+                    if !url.isFileURL {
+                        return .send(.saveExternalURL(url))
+                    }
+                    guard let kind = LibraryImportPicker(droppedFile: url) else {
+                        return .send(.saveURLFailed("Stower can't import “\(url.lastPathComponent)”."))
+                    }
+                    return .send(.filePicked(kind, url))
+                })
 
             case let .filePickFailed(kind, message):
                 return .send(.saveURLFailed("\(kind.importNoun) import failed: \(message)"))

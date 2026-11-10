@@ -20,6 +20,10 @@ public struct ReaderScreen: View {
     /// The safe-area insets measured while chrome is visible. Held steady
     /// while chrome is hidden so the page never reflows under the bar.
     @State private var readerInsets: ReaderInsets = .zero
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass)
+    private var horizontalSizeClass
+    #endif
 
     /// Shorthand for the current palette tokens. Computed on the fly since
     /// `FlexokiPalette` is a cheap value type and tracking it through
@@ -218,6 +222,39 @@ public struct ReaderScreen: View {
                 .frame(minWidth: 280, idealWidth: 400, maxWidth: 400)
                 .padding(12)
                 .presentationCompactAdaptation(.popover)
+            }
+        }
+
+        // A wide reader — an iPad in landscape, or in focus mode — has room
+        // for the tools the More menu holds. A narrow one does not: there
+        // the system folds extra items into a second "…" menu beside ours.
+        if horizontalSizeClass == .regular, (store.viewportWidth ?? 0) >= 760 {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                if !store.contents.isEmpty {
+                    Button("Contents", systemImage: "list.bullet.indent") {
+                        store.send(.contentsButtonTapped)
+                    }
+                }
+                Button("Find", systemImage: "magnifyingglass") {
+                    session.isFindNavigatorPresented.toggle()
+                }
+                .keyboardShortcut("f", modifiers: .command)
+                Button("Listen", systemImage: "speaker.wave.2") {
+                    session.isListenPanelPresented = true
+                }
+                Button("Article Tools", systemImage: "sparkles") {
+                    store.send(.ai(.panelOpened))
+                    session.isAIPanelPresented = true
+                }
+                if let onToggleReaderFocus {
+                    Button(
+                        isReaderFocused ? "Exit Focus" : "Focus Reader",
+                        systemImage: isReaderFocused
+                            ? "arrow.down.right.and.arrow.up.left"
+                            : "arrow.up.left.and.arrow.down.right",
+                        action: onToggleReaderFocus
+                    )
+                }
             }
         }
 

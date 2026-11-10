@@ -27,6 +27,8 @@ public struct LibraryScreen: View {
     let usesSelection: Bool
     #if os(iOS)
     @FocusState var isURLFieldFocused: Bool
+    #else
+    @FocusState var isComposerFocused: Bool
     #endif
 
     public init(
@@ -178,7 +180,18 @@ public struct LibraryScreen: View {
                 // of `.scrollContentBackground(.hidden)` on the List itself.
                 // Clearing the row background lets the parent's theme color
                 // show through for Sepia/Dark/White reader themes.
-                .listRowBackground(Color.clear)
+                //
+                // Clearing it also removes the system's selection highlight,
+                // so the open article gets the theme's own selected-row
+                // color. Without one the selected row was unmarked, and on
+                // iPad its secondary text turned white against the page.
+                .listRowBackground(
+                    usesSelection && store.openItemID == item.id
+                        ? RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(palette.ui2)
+                            .padding(.horizontal, 6)
+                        : nil
+                )
             }
         }
         .scrollContentBackground(.hidden)
@@ -188,6 +201,18 @@ public struct LibraryScreen: View {
         .navigationTitle(navigationTitle)
         .searchable(text: $store.query.sending(\.queryChanged), prompt: "Search")
         .confirmationDialog($store.scope(state: \.deleteConfirmation, action: \.deleteConfirmation))
+        // Links from a browser, or PDF, EPUB, zip and text files from Finder
+        // or Files, dragged onto the list.
+        .dropDestination(for: URL.self) { urls, _ in
+            store.send(.itemsDropped(urls))
+            return !urls.isEmpty
+        }
+        #if os(macOS)
+        .onDeleteCommand { store.send(.deleteSelectedItemCommand) }
+        .onChange(of: store.composerFocusRequest) { _, _ in
+            isComposerFocused = true
+        }
+        #endif
         .overlay {
             // Only after the first observation has delivered: a populated
             // list must never be covered by a spinner, and the empty state

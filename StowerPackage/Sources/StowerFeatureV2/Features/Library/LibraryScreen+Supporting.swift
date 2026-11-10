@@ -143,6 +143,9 @@ extension LibraryScreen {
     @ViewBuilder var urlComposer: some View {
         HStack(spacing: 10) {
             TextField("Paste article URL", text: $store.sourceURL.sending(\.sourceURLChanged))
+                #if os(macOS)
+                .focused($isComposerFocused)
+                #endif
                 .autocorrectionDisabled()
                 #if os(iOS)
                 // iOS TextField defaults to `.sentences` which capitalizes

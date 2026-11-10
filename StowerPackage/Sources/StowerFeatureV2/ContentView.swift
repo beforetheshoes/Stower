@@ -60,11 +60,20 @@ public struct ReaderCommands: Commands {
     }
 
     public var body: some Commands {
+        #if os(iOS)
+        // The Mac gets this item, and its shortcut, from the Settings scene.
         CommandGroup(replacing: .appSettings) {
             Button("Settings…") {
                 store.send(.openSettings)
             }
             .keyboardShortcut(",", modifiers: .command)
+        }
+        #endif
+        CommandGroup(replacing: .newItem) {
+            Button("New Link…") {
+                store.send(.library(.newURLCommand))
+            }
+            .keyboardShortcut("n", modifiers: .command)
         }
         CommandMenu("Reader") {
             Button(store.isReaderFocused ? "Exit Reader Focus" : "Focus Reader") {
@@ -112,11 +121,37 @@ public struct ReaderCommands: Commands {
     }
 }
 
+#if os(macOS)
+/// The contents of the Mac's Settings window.
+public struct SettingsWindow: View {
+    let store: StoreOf<AppFeature>
+
+    public init(store: StoreOf<AppFeature>) {
+        self.store = store
+    }
+
+    public var body: some View {
+        let palette = store.palette
+        NavigationStack {
+            SettingsScreen(store: store.scope(state: \.settings, action: \.settings))
+        }
+        .frame(minWidth: 520, idealWidth: 560, minHeight: 480, idealHeight: 640)
+        .tint(palette.primary)
+        .environment(\.flexokiPalette, palette)
+        .preferredColorScheme(palette.colorScheme)
+    }
+}
+#endif
+
 public struct AppView: View {
     @Bindable var store: StoreOf<AppFeature>
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var previousColumnVisibility: NavigationSplitViewVisibility = .all
     @State private var readerSession = ReaderWebSession()
+    #if os(macOS)
+    @Environment(\.openSettings)
+    private var openSettingsWindow
+    #endif
     #if os(iOS)
     @Environment(\.horizontalSizeClass)
     private var horizontalSizeClass
@@ -456,7 +491,11 @@ public struct AppView: View {
             SidebarScreen(
                 store: store.scope(\.sidebar, action: \.sidebar)
             ) {
+                #if os(macOS)
+                openSettingsWindow()
+                #else
                 store.send(.openSettings)
+                #endif
             }
             .scrollContentBackground(.hidden)
             .background(palette.bg2)

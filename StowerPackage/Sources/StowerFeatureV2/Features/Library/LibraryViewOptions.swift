@@ -68,3 +68,21 @@ extension LibraryImportPicker {
         }
     }
 }
+
+extension LibraryImportPicker {
+    /// The import a dropped file should go through, by its extension.
+    init?(droppedFile url: URL) {
+        switch url.pathExtension.lowercased() {
+        case "pdf":
+            self = .pdf
+        case "epub":
+            self = .epub
+        case "zip":
+            self = .website
+        case "md", "markdown", "txt":
+            self = .text
+        default:
+            return nil
+        }
+    }
+}
