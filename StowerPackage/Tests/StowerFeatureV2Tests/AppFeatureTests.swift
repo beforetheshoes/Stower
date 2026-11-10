@@ -211,7 +211,6 @@ struct AppFeatureTests {
             $0.stowerRepository.fetchLibrary = { _ in [item] }
             $0.stowerRepository.fetchListCounts = { .zero }
             $0.stowerRepository.fetchTags = { [] }
-            $0.stowerRepository.observeLibraryChanges = { AsyncStream { $0.finish() } }
             $0.stowerRepository.purgeOldTrash = { [] }
             $0.stowerRepository.loadSettings = { settings }
             $0.stowerRepository.loadReaderAppearanceSettings = { appearance }
@@ -278,7 +277,6 @@ struct AppFeatureTests {
             $0.stowerRepository.fetchLibrary = { _ in [] }
             $0.stowerRepository.fetchListCounts = { .zero }
             $0.stowerRepository.fetchTags = { [] }
-            $0.stowerRepository.observeLibraryChanges = { AsyncStream { $0.finish() } }
             $0.stowerRepository.purgeOldTrash = { [] }
             $0.stowerRepository.enqueueHydrationJobsForMissingContent = { 0 }
             $0.continuousClock = ImmediateClock()
@@ -338,7 +336,6 @@ struct AppFeatureTests {
             $0.stowerRepository.fetchLibrary = { _ in [] }
             $0.stowerRepository.fetchListCounts = { .zero }
             $0.stowerRepository.fetchTags = { [] }
-            $0.stowerRepository.observeLibraryChanges = { AsyncStream { $0.finish() } }
             $0.stowerRepository.purgeOldTrash = { [] }
             $0.stowerRepository.enqueueHydrationJobsForMissingContent = { 0 }
             $0.continuousClock = ImmediateClock()
@@ -401,7 +398,6 @@ struct AppFeatureTests {
             $0.stowerRepository.fetchLibrary = { _ in [] }
             $0.stowerRepository.fetchListCounts = { .zero }
             $0.stowerRepository.fetchTags = { [] }
-            $0.stowerRepository.observeLibraryChanges = { AsyncStream { $0.finish() } }
             $0.stowerRepository.purgeOldTrash = { [] }
             $0.stowerRepository.enqueueHydrationJobsForMissingContent = { 0 }
             $0.continuousClock = ImmediateClock()

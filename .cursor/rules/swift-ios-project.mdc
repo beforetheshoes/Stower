@@ -278,72 +278,9 @@ struct ItemListView: View {
 
 ## Data Persistence
 
-When data persistence is required, always prefer **SwiftData** over CoreData. However, carefully consider whether persistence is truly necessary - many apps can function well with in-memory state that loads on launch.
+Stower persists with **SQLiteData / StructuredQueries** (on GRDB), synced through CloudKit by SQLiteData's `SyncEngine`. There is no SwiftData or Core Data stack; do not add one.
 
-### When to Use SwiftData
-
-- You have complex relational data that needs to persist across app launches
-- You need advanced querying capabilities with predicates and sorting
-- You're building a data-heavy app (note-taking, inventory, task management)
-- You need CloudKit sync with minimal configuration
-
-### When NOT to Use Data Persistence
-
-- Simple user preferences (use UserDefaults)
-- Temporary state that can be reloaded from network
-- Small configuration data (consider JSON files or plist)
-- Apps that primarily display remote data
-
-### SwiftData Best Practices
-
-```swift
-import SwiftData
-
-@Model
-final class Task {
-    var title: String
-    var isCompleted: Bool
-    var createdAt: Date
-    
-    init(title: String) {
-        self.title = title
-        self.isCompleted = false
-        self.createdAt = Date()
-    }
-}
-
-// In your app
-@main
-struct MyProjectApp: App {
-    var body: some Scene {
-        WindowGroup {
-            ContentView()
-                .modelContainer(for: Task.self)
-        }
-    }
-}
-
-// In your views
-struct TaskListView: View {
-    @Query private var tasks: [Task]
-    @Environment(\.modelContext) private var context
-    
-    var body: some View {
-        List(tasks) { task in
-            Text(task.title)
-        }
-        .toolbar {
-            Button("Add") {
-                let newTask = Task(title: "New Task")
-                context.insert(newTask)
-            }
-        }
-    }
-}
-```
-
-**Important:** Never use CoreData for new projects. SwiftData provides a modern, type-safe API that's easier to work with and integrates seamlessly with SwiftUI.
-
----
-
-Remember: This project prioritizes clean, simple SwiftUI code using the platform's native state management. Keep the app shell minimal and implement all features in the Swift Package.
+- Tables are `@Table` structs in `StowerPackage/Sources/StowerData/Data/Tables.swift`.
+- Schema changes are new, non-destructive `DatabaseMigrator` migrations in `Bootstrap.swift`. Never alter a shipped migration.
+- UI-visible data is observed with `@Fetch` / `@FetchAll`, not reloaded by hand.
+- Database work that can run at startup or in the background follows the rules in `CLAUDE.md`: scan in a read, write only what changed, and make the effect cancellable on background.

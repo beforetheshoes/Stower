@@ -7,11 +7,8 @@ import Testing
 /// Foundation Models availability and wording are device-dependent, so these
 /// do not run in ordinary CI. Set `STOWER_RUN_FOUNDATION_MODEL_TESTS=1` on an
 /// Apple Intelligence-capable Mac to include them in a local `swift test` run.
-@Suite(.serialized)
+@Suite(.serialized, .enabled(if: kFoundationModelTestsEnabled))
 struct FoundationModelsIntegrationTests {
-    private static let shouldRun =
-        ProcessInfo.processInfo.environment["STOWER_RUN_FOUNDATION_MODEL_TESTS"] == "1"
-
     private static let article = """
         The Harbor School installed solar panels and a battery in March. The
         project supplies about sixty percent of the school building's annual
@@ -24,7 +21,6 @@ struct FoundationModelsIntegrationTests {
 
     @Test
     func fixedArticleSummaryRetainsTheCentralFacts() async throws {
-        guard Self.shouldRun else { return }
         let client = try Self.availableClient()
 
         let summary = try await Self.finalSummary(from: client, text: Self.article)
@@ -36,7 +32,6 @@ struct FoundationModelsIntegrationTests {
 
     @Test
     func fixedArticleQuestionAnswerIsGrounded() async throws {
-        guard Self.shouldRun else { return }
         let client = try Self.availableClient()
 
         let answer = try await Self.finalAnswer(
@@ -52,7 +47,6 @@ struct FoundationModelsIntegrationTests {
 
     @Test
     func oversizedArticleUsesChunkingAndStillFinishes() async throws {
-        guard Self.shouldRun else { return }
         let client = try Self.availableClient()
         let oversized = Array(repeating: Self.article, count: 160)
             .joined(separator: "\n\n")
@@ -76,7 +70,6 @@ struct FoundationModelsIntegrationTests {
 
     @Test
     func cancellingGenerationTerminatesTheConsumerTask() async throws {
-        guard Self.shouldRun else { return }
         let client = try Self.availableClient()
         let oversized = Array(repeating: Self.article, count: 160)
             .joined(separator: "\n\n")
@@ -132,3 +125,7 @@ struct FoundationModelsIntegrationTests {
         }
     }
 }
+
+/// Disabled — and reported as skipped, not passed — unless opted in.
+private let kFoundationModelTestsEnabled =
+    ProcessInfo.processInfo.environment["STOWER_RUN_FOUNDATION_MODEL_TESTS"] == "1"

@@ -157,12 +157,6 @@ custom_rules:
     message: "Use NavigationStack instead of deprecated NavigationView (iOS 16+)"
     severity: error
 
-  use_l10n_enum:
-    name: "Use L10n Enum"
-    regex: '\bNSLocalizedString\b'
-    message: "Use L10n enum system instead of NSLocalizedString for consistency"
-    severity: warning
-
   no_hardcoded_strings:
     name: "No Hardcoded UI Strings"
     regex: '(?:Text|Label|Button|Alert)\s*\(\s*"[A-Z][a-zA-Z\s]{20,}"'

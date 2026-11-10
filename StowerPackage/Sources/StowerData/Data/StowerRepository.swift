@@ -63,10 +63,6 @@ public struct StowerRepository: Sendable {
     public var removeTag: @Sendable (UUID, UUID) async throws -> Void
     public var reconcileOrphanedTagAssignments: @Sendable () async throws -> Int
 
-    /// Database-backed stream fired whenever library, tag, or assignment rows
-    /// change locally or through CloudKit.
-    public var observeLibraryChanges: @Sendable () -> AsyncStream<Void>
-
     public var loadSettings: @Sendable () async throws -> ImageDownloadSettings
     public var saveSettings: @Sendable (ImageDownloadSettings) async throws -> Void
     public var loadReaderAppearanceSettings: @Sendable () async throws -> ReaderAppearanceSettings
@@ -180,7 +176,6 @@ extension StowerRepository {
             addTag: { _, _ in },
             removeTag: { _, _ in },
             reconcileOrphanedTagAssignments: { 0 },
-            observeLibraryChanges: { AsyncStream { _ in } },
             loadSettings: { ImageDownloadSettings() },
             saveSettings: { _ in },
             loadReaderAppearanceSettings: { ReaderAppearanceSettings() },
@@ -324,7 +319,6 @@ extension StowerRepository {
                 database: database,
                 scheduleSync: scheduleSync
             ),
-            observeLibraryChanges: _observeLibraryChanges(database: database),
             loadSettings: _loadSettings(database: database),
             saveSettings: _saveSettings(database: database),
             loadReaderAppearanceSettings: _loadReaderAppearanceSettings(database: database),

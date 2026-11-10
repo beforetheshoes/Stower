@@ -141,7 +141,9 @@ extension EPUBExportClient {
             includingPropertiesForKeys: [.contentModificationDateKey],
             options: [.skipsHiddenFiles]
         ) else { return }
-        let cutoff = Date().addingTimeInterval(-24 * 60 * 60)
+        @Dependency(\.date.now)
+        var now
+        let cutoff = now.addingTimeInterval(-24 * 60 * 60)
         for child in children {
             let modified = (try? child.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
             if let modified, modified < cutoff {
