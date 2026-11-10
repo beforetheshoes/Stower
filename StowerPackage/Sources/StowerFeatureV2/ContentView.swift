@@ -50,7 +50,8 @@ public struct ContentView: View {
     }
 }
 
-#if os(macOS)
+/// Menu commands and their keyboard shortcuts. On iPadOS these are what a
+/// hardware keyboard gets; the reader had no shortcuts there at all.
 public struct ReaderCommands: Commands {
     let store: StoreOf<AppFeature>
 
@@ -110,7 +111,6 @@ public struct ReaderCommands: Commands {
         }
     }
 }
-#endif
 
 public struct AppView: View {
     @Bindable var store: StoreOf<AppFeature>

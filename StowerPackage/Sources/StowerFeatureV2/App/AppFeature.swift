@@ -45,6 +45,10 @@ public struct AppFeature {
         /// removes it from Inbox) does not strand navigation.
         public var readerQueue = [UUID]()
         @Presents public var resetAlert: AlertState<Action.ResetAlert>?
+        /// The list that was showing when the app was last used, so a launch
+        /// returns to it instead of always opening Inbox.
+        @Shared(.appStorage("selectedLibraryList"))
+        var storedList = LibraryFilter.unread.storageKey
 
         public var failedImportCount: Int { failedImports.count }
 
@@ -82,6 +86,12 @@ public struct AppFeature {
             // — must be synchronously available or the entire app flashes
             // blue/white on every launch before the SQLite read completes.
             self.cachedAppearance = AppearanceCache.loadAppearance()
+            // A remembered tag that has since been deleted is corrected by
+            // the sidebar on its first load, and the list follows.
+            if let list = LibraryFilter(storageKey: storedList) {
+                sidebar.selection = list
+                library.filter = list
+            }
         }
     }
 
@@ -559,6 +569,7 @@ public struct AppFeature {
                 return .none
 
             case .sidebar(.selectList(let filter)):
+                state.$storedList.withLock { $0 = filter.storageKey }
                 return .send(.library(.filterChanged(filter)))
 
             case .sidebar:
@@ -567,6 +578,7 @@ public struct AppFeature {
                 // device. The list has to follow, or it keeps showing the
                 // deleted tag's (now empty) filter under a "Library" title.
                 guard state.library.filter != state.sidebar.selection else { return .none }
+                state.$storedList.withLock { [list = state.sidebar.selection] in $0 = list.storageKey }
                 return .send(.library(.filterChanged(state.sidebar.selection)))
 
             case .cloudSyncStatusChanged(let status):

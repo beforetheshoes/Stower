@@ -685,6 +685,49 @@ struct AppFeatureTests {
         #expect(deleted.value == [id])
     }
 
+    @Test
+    func theSelectedListIsRememberedForTheNextLaunch() async {
+        let tagID = UUID(3)
+        let store = TestStore(initialState: AppFeature.State()) {
+            AppFeature()
+        }
+        store.exhaustivity = .off(showSkippedAssertions: false)
+        #expect(store.state.library.filter == .unread)
+
+        await store.send(.sidebar(.selectList(.tag(tagID)))) {
+            $0.sidebar.selection = .tag(tagID)
+        }
+        await store.receive(\.library.filterChanged)
+
+        // A new state is what the next launch starts from.
+        let relaunched = AppFeature.State()
+        #expect(relaunched.sidebar.selection == .tag(tagID))
+        #expect(relaunched.library.filter == .tag(tagID))
+    }
+
+    @Test
+    func recentlyDeletedIsNotWhereTheNextLaunchOpens() async {
+        let store = TestStore(initialState: AppFeature.State()) {
+            AppFeature()
+        }
+        store.exhaustivity = .off(showSkippedAssertions: false)
+
+        await store.send(.sidebar(.selectList(.recentlyDeleted)))
+        await store.receive(\.library.filterChanged)
+
+        #expect(AppFeature.State().library.filter == .all)
+    }
+
+    @Test
+    func listStorageKeysRoundTrip() {
+        let lists: [LibraryFilter] = [.all, .unread, .read, .starred, .untagged, .tag(UUID(9))]
+        for list in lists {
+            #expect(LibraryFilter(storageKey: list.storageKey) == list)
+        }
+        #expect(LibraryFilter(storageKey: "tag:not-a-uuid") == nil)
+        #expect(LibraryFilter(storageKey: "") == nil)
+    }
+
     // MARK: - Reading position
 
     @Test

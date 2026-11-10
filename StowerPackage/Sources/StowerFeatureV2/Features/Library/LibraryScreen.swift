@@ -284,6 +284,30 @@ public struct LibraryScreen: View {
         .onChange(of: store.queuedSaveCount) { _, _ in
             isAddURLPresented = false
         }
+        #else
+        // Sort and layout were only reachable on iOS.
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Menu("View Options", systemImage: "rectangle.grid.1x2") {
+                    Picker(
+                        "Layout",
+                        selection: $store.displayStyle.sending(\.displayStyleChanged)
+                    ) {
+                        ForEach(LibraryDisplayStyle.allCases, id: \.self) { style in
+                            Text(style.title).tag(style)
+                        }
+                    }
+                    Picker(
+                        "Sort",
+                        selection: $store.sortOrder.sending(\.sortOrderChanged)
+                    ) {
+                        ForEach(LibrarySortOrder.allCases, id: \.self) { order in
+                            Text(order.title).tag(order)
+                        }
+                    }
+                }
+            }
+        }
         #endif
         .sheet(
             isPresented: Binding(

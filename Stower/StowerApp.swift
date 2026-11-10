@@ -19,10 +19,8 @@ struct StowerApp: App {
                     store.send(.browserExtensionURLReceived(url))
                 }
         }
-        #if os(macOS)
         .commands {
             ReaderCommands(store: store)
         }
-        #endif
     }
 }

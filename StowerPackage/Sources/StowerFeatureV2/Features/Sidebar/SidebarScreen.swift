@@ -29,6 +29,14 @@ public struct SidebarScreen: View {
                 if let newValue { store.send(.selectList(newValue)) }
             }
         )) {
+            if let error = store.errorMessage {
+                // Tag and list failures were recorded and never shown.
+                Section {
+                    Label(error, systemImage: "exclamationmark.triangle")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            }
             Section("Lists") {
                 listRow(.unread, label: "Inbox", systemImage: "tray", count: store.counts.unread)
                 listRow(.all, label: "Library", systemImage: "books.vertical", count: store.counts.all)
