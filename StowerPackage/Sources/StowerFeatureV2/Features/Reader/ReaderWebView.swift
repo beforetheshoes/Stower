@@ -15,8 +15,8 @@ private final class ReaderWebViewSession {
     }
 
     var archiveServer: LocalArchiveServer?
-    /// Whether the item has a saved archive on disk, checked once per load.
-    /// The appearance updates that follow ask on every change.
+    /// Whether the item has a saved archive on disk. Set when the page
+    /// loads; a later appearance update re-asks only while it is false.
     var hasArchive = false
     var hasRestoredPosition = false
     /// False until the page has loaded and its position is restored. The
@@ -516,8 +516,16 @@ public struct ReaderWebView: View {
 
         // Interactive mode: leave the original page untouched. Appearance
         // settings apply only to Reader View.
-        if isWebViewFormat && (usesNativeCapture || session.hasArchive) {
-            return
+        if isWebViewFormat {
+            // An archive can be written while the reader is open (switching
+            // to web view does it), so a "no" from load time is asked again.
+            // A "yes" is kept: archives are not removed under an open reader.
+            if !session.hasArchive, !usesNativeCapture {
+                session.hasArchive = AssetArchiver.archiveExists(for: itemID)
+            }
+            if usesNativeCapture || session.hasArchive {
+                return
+            }
         }
 
         let css = appearance.readerCSS(
