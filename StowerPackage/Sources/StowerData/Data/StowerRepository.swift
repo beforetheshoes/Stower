@@ -279,6 +279,12 @@ extension StowerRepository {
             try await rawPermanentDelete(id)
         }
 
+        let rawResetLocalData = _resetLocalData(database: database)
+        let resetLocalData: @Sendable () async throws -> Void = {
+            documentCache.removeAll()
+            try await rawResetLocalData()
+        }
+
         return Self(
             fetchLibrary: _fetchLibraryFiltered(database: database),
             fetchReextractableItems: _fetchReextractableItems(database: database),
@@ -347,10 +353,7 @@ extension StowerRepository {
                 archiveExists: websiteArchiveExists(itemID:)
             ),
             hydrateBookItemsFromSyncedContent: _hydrateBookItemsFromSyncedContent(database: database),
-            resetLocalData: {
-                documentCache.removeAll()
-                try await _resetLocalData(database: database)()
-            }
+            resetLocalData: resetLocalData
         )
     }
 }

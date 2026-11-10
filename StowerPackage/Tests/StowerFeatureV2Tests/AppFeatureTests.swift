@@ -220,6 +220,9 @@ struct AppFeatureTests {
             $0.stowerRepository.claimNextIngestionJobOfKind = { _, _ in nil }
             $0.continuousClock = ImmediateClock()
             $0.date.now = Date(timeIntervalSince1970: 1000)
+            // Startup's storage tail can enqueue backfill jobs when other
+            // tests have left archives in the shared container.
+            $0.uuid = .incrementing
             $0.syncDiagnosticsClient = .noop
         }
 
@@ -280,6 +283,9 @@ struct AppFeatureTests {
             $0.stowerRepository.enqueueHydrationJobsForMissingContent = { 0 }
             $0.continuousClock = ImmediateClock()
             $0.date.now = Date(timeIntervalSince1970: 1000)
+            // Startup's storage tail can enqueue backfill jobs when other
+            // tests have left archives in the shared container.
+            $0.uuid = .incrementing
             $0.syncDiagnosticsClient = .noop
         }
 
@@ -337,6 +343,9 @@ struct AppFeatureTests {
             $0.stowerRepository.enqueueHydrationJobsForMissingContent = { 0 }
             $0.continuousClock = ImmediateClock()
             $0.date.now = Date(timeIntervalSince1970: 1000)
+            // Startup's storage tail can enqueue backfill jobs when other
+            // tests have left archives in the shared container.
+            $0.uuid = .incrementing
             $0.syncDiagnosticsClient = .noop
         }
 
@@ -397,6 +406,9 @@ struct AppFeatureTests {
             $0.stowerRepository.enqueueHydrationJobsForMissingContent = { 0 }
             $0.continuousClock = ImmediateClock()
             $0.date.now = Date(timeIntervalSince1970: 1000)
+            // Startup's storage tail can enqueue backfill jobs when other
+            // tests have left archives in the shared container.
+            $0.uuid = .incrementing
             $0.syncDiagnosticsClient = .noop
         }
 

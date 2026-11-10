@@ -263,8 +263,13 @@ struct LocalDataResetTests {
             try SavedItemContentLocalTable.insert { SavedItemContentLocalTable(itemID: id) }.execute(db)
             try ArticleSummaryLocalTable.insert {
                 ArticleSummaryLocalTable(
-                    id: "a", itemID: id, quality: "q", promptVersion: 1,
-                    contentHash: "h", text: "t", generatedAt: now
+                    id: "a",
+                    itemID: id,
+                    quality: "q",
+                    promptVersion: 1,
+                    contentHash: "h",
+                    text: "t",
+                    generatedAt: now
                 )
             }
             .execute(db)
