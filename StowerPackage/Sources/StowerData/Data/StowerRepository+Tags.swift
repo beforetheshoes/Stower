@@ -54,18 +54,33 @@ extension StowerRepository {
         scheduleSync: @escaping @Sendable () -> Void
     ) -> @Sendable () async throws -> Int {
         {
-            let removed = try await database.write { db in
-                let itemIDs = Set(try SavedItemSyncTable.fetchAll(db).map(\.id))
-                let tagIDs = Set(try TagSyncTable.fetchAll(db).map(\.id))
-                let assignments = try ItemTagSyncTable.fetchAll(db)
-                var removed = 0
+            // Find orphans in a read, ids only. This runs at startup and
+            // after every CloudKit sync, and there is almost never anything
+            // to remove — the old version took the write lock and loaded
+            // every item row in full each time.
+            let orphans: [UUID] = try await database.read { db in
+                try ItemTagSyncTable
+                    .where {
+                        !$0.itemID.in(SavedItemSyncTable.select(\.id))
+                            || !$0.tagID.in(TagSyncTable.select(\.id))
+                    }
+                    .select(\.id)
+                    .fetchAll(db)
+            }
+            guard !orphans.isEmpty else { return 0 }
 
-                for assignment in assignments
-                where !itemIDs.contains(assignment.itemID) || !tagIDs.contains(assignment.tagID) {
-                    try ItemTagSyncTable.find(assignment.id).delete().execute(db)
-                    removed += 1
-                }
-                return removed
+            let removed = try await database.write { db in
+                // The orphan test is repeated so an assignment whose item or
+                // tag arrived since the read is left alone.
+                try ItemTagSyncTable
+                    .where { $0.id.in(orphans) }
+                    .where {
+                        !$0.itemID.in(SavedItemSyncTable.select(\.id))
+                            || !$0.tagID.in(TagSyncTable.select(\.id))
+                    }
+                    .delete()
+                    .execute(db)
+                return orphans.count
             }
             if removed > 0 { scheduleSync() }
             return removed

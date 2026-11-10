@@ -135,6 +135,9 @@ public struct AppFeature {
         /// it re-runs on the next activation instead of reporting an error.
         case startupMaintenanceInterrupted
         case syncFollowUpFinished
+        /// The post-sync pass hit a suspended database; it re-runs on the
+        /// next activation.
+        case syncFollowUpInterrupted
         case sceneDidEnterBackground
         case failedImportsLoaded([FailedImport])
         case ingestionDrainFinished
@@ -321,6 +324,11 @@ public struct AppFeature {
 
             case .syncFollowUpFinished:
                 state.isSyncFollowUpRunning = false
+                return .none
+
+            case .syncFollowUpInterrupted:
+                state.isSyncFollowUpRunning = false
+                state.syncFollowUpPending = true
                 return .none
 
             case .sceneDidEnterBackground:
@@ -780,12 +788,29 @@ public struct AppFeature {
         let date = self.date
         let ingestionCoordinator = self.ingestionCoordinator
         return .run { send in
-            _ = try? await repository.enqueueHydrationJobsForMissingContent()
-            _ = try? await repository.hydratePDFItemsFromSyncedContent()
-            _ = try? await repository.hydrateTextItemsFromSyncedContent()
-            _ = try? await repository.hydrateWebsiteItemsFromSyncedContent()
-            _ = try? await repository.hydrateBookItemsFromSyncedContent()
-            _ = try? await repository.reconcileOrphanedTagAssignments()
+            // Each scan is independent: one failing must not stop the rest.
+            // A scan refused because the database is suspended is different —
+            // the whole pass is repeated on the next activation.
+            let scans: [@Sendable () async throws -> Int] = [
+                repository.enqueueHydrationJobsForMissingContent,
+                repository.hydratePDFItemsFromSyncedContent,
+                repository.hydrateTextItemsFromSyncedContent,
+                repository.hydrateWebsiteItemsFromSyncedContent,
+                repository.hydrateBookItemsFromSyncedContent,
+                repository.reconcileOrphanedTagAssignments,
+            ]
+            for scan in scans {
+                do {
+                    _ = try await scan()
+                } catch where error.isDatabaseSuspension {
+                    await send(.syncFollowUpInterrupted)
+                    return
+                } catch is CancellationError {
+                    return
+                } catch {
+                    reportIssue(error)
+                }
+            }
             try? await ingestionCoordinator.run {
                 try await processIngestionJobs(
                     repository: repository,
