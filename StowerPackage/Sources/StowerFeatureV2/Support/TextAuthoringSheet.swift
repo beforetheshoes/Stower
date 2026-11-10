@@ -176,7 +176,13 @@ public struct TextAuthoringSheet: View {
         TextEditor(text: $text)
             .font(mode == .markdown ? .body.monospaced() : .body)
             .padding(12)
-            .glassEffect(.regular, in: .rect(cornerRadius: 12))
+            // The text being written is content, inside a sheet that is
+            // already glass: a filled field, not glass on glass.
+            .scrollContentBackground(.hidden)
+            .background(palette.bg2, in: .rect(cornerRadius: 12))
+            .overlay {
+                RoundedRectangle(cornerRadius: 12).strokeBorder(palette.ui, lineWidth: 1)
+            }
     }
 
     private var preview: some View {

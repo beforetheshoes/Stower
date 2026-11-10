@@ -302,9 +302,12 @@ struct ReaderAIControls: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(10)
-        // Liquid Glass chat-bubble. Refracts the popover's background
-        // so the transcript feels like floating cards instead of the
-        // old flat grey fill.
-        .glassEffect(.regular, in: .rect(cornerRadius: 10))
+        // A filled card, not glass: this is content, and it sits inside a
+        // panel that is already glass. Glass belongs to the navigation
+        // layer, and glass on glass is muddy.
+        .background(palette.bg2, in: .rect(cornerRadius: 10))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10).strokeBorder(palette.ui, lineWidth: 1)
+        }
     }
 }

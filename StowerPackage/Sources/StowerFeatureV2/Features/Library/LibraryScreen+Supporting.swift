@@ -157,10 +157,13 @@ extension LibraryScreen {
                 .textFieldStyle(.plain)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 7)
-                // Liquid Glass input chip — the composer floats above the
-                // library list as frosted glass, refracting whatever rows
-                // sit beneath it instead of the old flat 6% opacity fill.
-                .glassEffect(.regular, in: .rect(cornerRadius: 6))
+                // A filled field with a hairline border, not glass: it is a
+                // row in the list — content — and glass is for the controls
+                // that float above content.
+                .background(palette.bg, in: .rect(cornerRadius: 6))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 6).strokeBorder(palette.ui, lineWidth: 1)
+                }
                 .onSubmit { store.send(.saveURLTapped) }
 
             #if os(macOS)
