@@ -31,6 +31,9 @@ public struct LibraryScreen: View {
     @FocusState var isComposerFocused: Bool
     #endif
 
+    @Dependency(\.pickedFileClient)
+    var pickedFileClient
+
     public init(
         store: StoreOf<LibraryFeature>,
         usesSelection: Bool = false,
@@ -185,12 +188,12 @@ public struct LibraryScreen: View {
                 // so the open article gets the theme's own selected-row
                 // color. Without one the selected row was unmarked, and on
                 // iPad its secondary text turned white against the page.
+                // Every other row stays clear. Passing no background at all
+                // would hand the row back to the system's opaque platter.
                 .listRowBackground(
-                    usesSelection && store.openItemID == item.id
-                        ? RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .fill(palette.ui2)
-                            .padding(.horizontal, 6)
-                        : nil
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(usesSelection && store.openItemID == item.id ? palette.ui2 : Color.clear)
+                        .padding(.horizontal, 6)
                 )
             }
         }
@@ -204,7 +207,7 @@ public struct LibraryScreen: View {
         // Links from a browser, or PDF, EPUB, zip and text files from Finder
         // or Files, dragged onto the list.
         .dropDestination(for: URL.self) { urls, _ in
-            store.send(.itemsDropped(urls))
+            store.send(.itemsDropped(urls.map(droppedItem)))
             return !urls.isEmpty
         }
         #if os(macOS)

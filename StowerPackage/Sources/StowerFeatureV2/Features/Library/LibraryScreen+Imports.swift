@@ -98,6 +98,23 @@ extension LibraryScreen {
         return [.plainText] + markdownTypes
     }
 
+    /// Describes one dropped URL for the reducer.
+    ///
+    /// A dropped file is copied here, before the drop handler returns: the
+    /// access the system grants for a drop is not promised to outlive the
+    /// handler, and the reducer's effects run after it.
+    func droppedItem(_ url: URL) -> LibraryDroppedItem {
+        guard url.isFileURL else { return .link(url) }
+        guard let kind = LibraryImportPicker(droppedFile: url) else {
+            return .unsupported(url.lastPathComponent)
+        }
+        do {
+            return .file(kind, try pickedFileClient.stage(url))
+        } catch {
+            return .unreadable(kind, error.localizedDescription)
+        }
+    }
+
     /// Passes a picker's result to the reducer. Cancelling arrives here as an
     /// error too; it is not one.
     func handlePickedFile(_ picker: LibraryImportPicker, _ result: Result<URL, Error>) {

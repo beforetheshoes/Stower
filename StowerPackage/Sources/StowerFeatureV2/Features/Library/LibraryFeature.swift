@@ -49,6 +49,12 @@ public struct LibraryFeature {
         public var importPicker: LibraryImportPicker?
         /// Bumped to move keyboard focus to the Mac's inline URL field.
         public var composerFocusRequest = 0
+        /// Dropped files waiting their turn. Imports share one progress
+        /// state, so they run one at a time.
+        var queuedFileImports = [QueuedFileImport]()
+        /// The last failure among queued imports, shown once the queue is
+        /// empty; a later import starting would otherwise wipe it.
+        var queuedImportFailure: String?
 
         public var showsTextImportSheet: Bool {
             isTextImportPresented && textImportDraft != nil
@@ -95,6 +101,11 @@ public struct LibraryFeature {
             self.name = name
             self.colorHex = colorHex
         }
+    }
+
+    struct QueuedFileImport: Equatable {
+        var kind: LibraryImportPicker
+        var stagedURL: URL
     }
 
     public struct TextImportDraft: Equatable {
@@ -174,7 +185,7 @@ public struct LibraryFeature {
         /// The Delete key, on the selected row.
         case deleteSelectedItemCommand
         /// Links or files dragged onto the library.
-        case itemsDropped([URL])
+        case itemsDropped([LibraryDroppedItem])
         case textImportTitleChanged(String)
         case textImportTextChanged(String)
         case textImportModeChanged(TextImportMode)
@@ -255,6 +266,34 @@ public struct LibraryFeature {
             case .picker(let picker):
                 await send(.importPickerChanged(picker))
             }
+        }
+    }
+
+    /// Starts the next dropped file, if nothing is importing. When the queue
+    /// has run dry, a failure from earlier in it is put back on screen.
+    private func startNextQueuedImport(_ state: inout State) -> EffectOf<Self> {
+        guard !state.isSaving else { return .none }
+        guard !state.queuedFileImports.isEmpty else {
+            if let failure = state.queuedImportFailure {
+                state.queuedImportFailure = nil
+                state.errorMessage = failure
+                state.saveState = .failed
+            }
+            return .none
+        }
+        let next = state.queuedFileImports.removeFirst()
+        // Marked here, not only when the import action arrives, so a second
+        // call in the same pass does not start another.
+        state.isSaving = true
+        switch next.kind {
+        case .pdf:
+            return .send(.importPDFSelected(next.stagedURL))
+        case .epub:
+            return .send(.importEPUBSelected(next.stagedURL))
+        case .website:
+            return .send(.importWebsiteSelected(next.stagedURL))
+        case .text:
+            return .send(.filePicked(.text, next.stagedURL))
         }
     }
 
@@ -532,16 +571,22 @@ public struct LibraryFeature {
                 // In Recently Deleted the key means "forever", which asks first.
                 return .send(state.filter == .recentlyDeleted ? .permanentlyDeleteTapped(id) : .deleteItem(id))
 
-            case .itemsDropped(let urls):
-                return .merge(urls.map { url in
-                    if !url.isFileURL {
-                        return .send(.saveExternalURL(url))
+            case .itemsDropped(let items):
+                var effects = [EffectOf<Self>]()
+                for item in items {
+                    switch item {
+                    case .link(let url):
+                        effects.append(.send(.saveExternalURL(url)))
+                    case let .file(kind, stagedURL):
+                        state.queuedFileImports.append(QueuedFileImport(kind: kind, stagedURL: stagedURL))
+                    case .unsupported(let name):
+                        effects.append(.send(.saveURLFailed("Stower can't import “\(name)”.")))
+                    case let .unreadable(kind, message):
+                        effects.append(.send(.saveURLFailed("Couldn't read \(kind.fileNoun): \(message)")))
                     }
-                    guard let kind = LibraryImportPicker(droppedFile: url) else {
-                        return .send(.saveURLFailed("Stower can't import “\(url.lastPathComponent)”."))
-                    }
-                    return .send(.filePicked(kind, url))
-                })
+                }
+                effects.append(startNextQueuedImport(&state))
+                return .merge(effects)
 
             case let .filePickFailed(kind, message):
                 return .send(.saveURLFailed("\(kind.importNoun) import failed: \(message)"))
@@ -592,9 +637,9 @@ public struct LibraryFeature {
             case let .importTextResolved(text, titleHint, mode):
                 let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !trimmed.isEmpty else {
-                    state.errorMessage = "The selected file is empty."
-                    state.saveState = .failed
-                    return .none
+                    // Through the one failure path, so a queued drop that
+                    // turns out to be empty does not stall the files after it.
+                    return .send(.saveURLFailed("The selected file is empty."))
                 }
                 state.isSaving = true
                 state.saveState = .extracting
@@ -655,13 +700,16 @@ public struct LibraryFeature {
                 state.sourceURL = ""
                 state.textImportDraft = nil
                 state.isTextImportPresented = false
-                return .none
+                return startNextQueuedImport(&state)
 
             case .saveURLFailed(let error):
                 state.isSaving = false
                 state.saveState = .failed
                 state.errorMessage = error
-                return .none
+                if !state.queuedFileImports.isEmpty {
+                    state.queuedImportFailure = error
+                }
+                return startNextQueuedImport(&state)
 
             case .importPDFSelected(let pickedURL):
                 // Foreground import via `UIDocumentPicker` / SwiftUI
@@ -924,56 +972,4 @@ public struct LibraryFeature {
         }
         .cancellable(id: CancelID.load, cancelInFlight: true)
     }
-}
-
-private struct TextImportRequest {
-    var text: String
-    var explicitTitle: String?
-    var titleHint: String?
-    var mode: TextImportMode
-    var openAfterSave: Bool
-}
-
-private func runTextImport(
-    _ request: TextImportRequest,
-    repository: StowerRepository,
-    textIngestionClient: TextIngestionClient
-) -> EffectOf<LibraryFeature> {
-    .run { send in
-        do {
-            let result = try await textIngestionClient.ingest(
-                request.text,
-                request.explicitTitle,
-                request.titleHint,
-                request.mode
-            )
-            let item = try await repository.createItemFromIngestion(result)
-            await send(.saveURLFinished(item))
-            if request.openAfterSave {
-                await send(.openItem(item))
-            }
-        } catch {
-            await send(.saveURLFailed(error.localizedDescription))
-        }
-    }
-}
-
-private func normalizeSourceURL(_ value: String) -> String? {
-    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !trimmed.isEmpty else { return nil }
-
-    // If the user typed a scheme (or pasted one), lowercase it so we don't
-    // end up with "Https://…" from iOS autocapitalization. URL schemes are
-    // case-insensitive per RFC 3986, but `URL(string:)` and third-party
-    // parsers have a habit of being picky about the canonical form.
-    if let schemeRange = trimmed.range(of: "://") {
-        let scheme = trimmed[trimmed.startIndex..<schemeRange.lowerBound].lowercased()
-        let rest = trimmed[schemeRange.lowerBound...]
-        return scheme + rest
-    }
-
-    if trimmed.contains(".") {
-        return "https://\(trimmed)"
-    }
-    return nil
 }

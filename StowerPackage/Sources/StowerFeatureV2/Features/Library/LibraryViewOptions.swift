@@ -86,3 +86,14 @@ extension LibraryImportPicker {
         }
     }
 }
+
+/// One thing dragged onto the library.
+public enum LibraryDroppedItem: Equatable, Sendable {
+    case link(URL)
+    /// A supported file, already copied somewhere the app owns.
+    case file(LibraryImportPicker, URL)
+    /// A file of a kind Stower cannot import, by name.
+    case unsupported(String)
+    /// A supported file that could not be copied.
+    case unreadable(LibraryImportPicker, String)
+}

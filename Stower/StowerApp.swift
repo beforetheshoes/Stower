@@ -17,6 +17,10 @@ struct StowerApp: App {
         .commands {
             ReaderCommands(store: store)
         }
+        // A save link from the Safari extension, or a file opened in Stower,
+        // can arrive while the window is closed. This scene takes every
+        // external event, so the window comes back to receive it.
+        .handlesExternalEvents(matching: ["*"])
 
         Settings {
             SettingsWindow(store: store)

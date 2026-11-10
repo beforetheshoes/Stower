@@ -104,26 +104,70 @@ struct LibraryCommandTests {
     }
 
     @Test
-    func droppedLinksAreSavedAndDroppedFilesGoToTheirImporter() async throws {
+    func droppedLinksAreSavedAndTheFirstDroppedFileStartsImporting() async throws {
         let store = makeStore()
         let link = try #require(URL(string: "https://example.com/post"))
-        let pdf = URL(fileURLWithPath: "/dropped/Paper.PDF")
-        let book = URL(fileURLWithPath: "/dropped/Novel.epub")
-        let notes = URL(fileURLWithPath: "/dropped/notes.md")
+        let pdf = URL(fileURLWithPath: "/staged/1/Paper.pdf")
+        let book = URL(fileURLWithPath: "/staged/2/Novel.epub")
 
-        await store.send(.itemsDropped([link, pdf, book, notes]))
+        await store.send(.itemsDropped([.link(link), .file(.pdf, pdf), .file(.epub, book)])) {
+            // One import at a time: the book waits for the PDF.
+            $0.isSaving = true
+            $0.queuedFileImports = [LibraryFeature.QueuedFileImport(kind: .epub, stagedURL: book)]
+        }
         await store.receive(.saveExternalURL(link))
-        await store.receive(.filePicked(.pdf, pdf))
-        await store.receive(.filePicked(.epub, book))
-        await store.receive(.filePicked(.text, notes))
+        await store.receive(.importPDFSelected(pdf))
     }
 
     @Test
-    func aDroppedFileOfAnUnknownKindIsRefusedByName() async {
+    func theNextDroppedFileStartsWhenTheCurrentOneFinishes() async {
+        let book = URL(fileURLWithPath: "/staged/2/Novel.epub")
+        var state = LibraryFeature.State()
+        state.isSaving = true
+        state.queuedFileImports = [LibraryFeature.QueuedFileImport(kind: .epub, stagedURL: book)]
+        let store = makeStore(state)
+
+        await store.send(.saveURLFinished(SavedItem(title: "Paper", content: "Body"))) {
+            $0.queuedFileImports = []
+        }
+        await store.receive(.importEPUBSelected(book))
+    }
+
+    @Test
+    func aFailureAmongDroppedFilesIsStillShownAfterTheRestFinish() async {
+        let book = URL(fileURLWithPath: "/staged/2/Novel.epub")
+        var state = LibraryFeature.State()
+        state.isSaving = true
+        state.queuedFileImports = [LibraryFeature.QueuedFileImport(kind: .epub, stagedURL: book)]
+        let store = makeStore(state)
+
+        await store.send(.saveURLFailed("Couldn't read PDF: damaged")) {
+            $0.queuedImportFailure = "Couldn't read PDF: damaged"
+        }
+        await store.receive(.importEPUBSelected(book))
+
+        // The book imports; its start cleared the message. It comes back.
+        await store.send(.saveURLFinished(SavedItem(title: "Novel", content: "Body")))
+        #expect(store.state.errorMessage == "Couldn't read PDF: damaged")
+        #expect(store.state.queuedImportFailure == nil)
+        #expect(!store.state.isSaving)
+    }
+
+    @Test
+    func droppedFilesThatCannotBeImportedAreRefusedByName() async {
         let store = makeStore()
 
-        await store.send(.itemsDropped([URL(fileURLWithPath: "/dropped/photo.heic")]))
+        await store.send(.itemsDropped([.unsupported("photo.heic"), .unreadable(.pdf, "permission denied")]))
         await store.receive(.saveURLFailed("Stower can't import “photo.heic”."))
+        await store.receive(.saveURLFailed("Couldn't read PDF: permission denied"))
+    }
+
+    @Test
+    func anEmptyTextFileFailsThroughTheSamePathAsAnyOther() async {
+        let store = makeStore()
+
+        await store.send(.importTextResolved("  \n", "Notes", .auto))
+        await store.receive(.saveURLFailed("The selected file is empty."))
     }
 
     @Test
