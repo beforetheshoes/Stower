@@ -14,6 +14,10 @@ public struct ReaderFeature {
         public var appearance: ReaderAppearanceSettings
         var viewportWidth: Double?
         var currentBlockIndex: Int?
+        /// A reading position that has been reported by the page but not yet
+        /// written: the save is debounced, and closing the reader cancels it.
+        /// `AppFeature` writes this out before the reader goes away.
+        var pendingProgressBlockIndex: Int?
         /// Latest scroll fraction reported by the page (0…1), if any.
         var scrollFraction: Double?
         /// Set once the end of the article has been on screen. Reaching it
@@ -717,8 +721,10 @@ public struct ReaderFeature {
                 }
 
                 if blockIndex == 0 {
+                    state.pendingProgressBlockIndex = nil
                     return .merge(.cancel(id: CancelID.readingProgressSave), finishEffect)
                 }
+                state.pendingProgressBlockIndex = blockIndex
                 let clock = self.continuousClock
                 let saveEffect: EffectOf<Self> = .run { send in
                     try? await clock.sleep(for: .seconds(1))
@@ -728,6 +734,9 @@ public struct ReaderFeature {
                 return .merge(saveEffect, finishEffect)
 
             case .saveReadingProgress(let blockIndex):
+                if state.pendingProgressBlockIndex == blockIndex {
+                    state.pendingProgressBlockIndex = nil
+                }
                 let repository = self.repository
                 return .run { [id = state.itemID] _ in
                     try? await repository.saveReadingProgress(id, blockIndex)

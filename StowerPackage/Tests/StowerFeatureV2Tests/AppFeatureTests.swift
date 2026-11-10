@@ -587,6 +587,53 @@ struct AppFeatureTests {
         }
     }
 
+    // MARK: - Reading position
+
+    @Test
+    func closingTheReaderWritesAPositionStillWaitingOnItsDebounce() async {
+        let item = SavedItem(title: "Long read", content: "Body")
+        let saved = LockIsolated<[Int]>([])
+        var state = AppFeature.State()
+        state.reader = ReaderFeature.State(item: item)
+        state.reader?.pendingProgressBlockIndex = 42
+
+        let store = TestStore(initialState: state) {
+            AppFeature()
+        } withDependencies: {
+            $0.stowerRepository.saveReadingProgress = { id, blockIndex in
+                #expect(id == item.id)
+                saved.withValue { $0.append(blockIndex) }
+            }
+        }
+        store.exhaustivity = .off(showSkippedAssertions: false)
+
+        await store.send(.reader(.dismiss)) {
+            $0.reader = nil
+        }
+        await store.finish()
+        #expect(saved.value == [42])
+    }
+
+    @Test
+    func closingTheReaderWithNothingPendingWritesNothing() async {
+        let saved = LockIsolated(0)
+        var state = AppFeature.State()
+        state.reader = ReaderFeature.State(item: SavedItem(title: "Read", content: "Body"))
+
+        let store = TestStore(initialState: state) {
+            AppFeature()
+        } withDependencies: {
+            $0.stowerRepository.saveReadingProgress = { _, _ in saved.withValue { $0 += 1 } }
+        }
+        store.exhaustivity = .off(showSkippedAssertions: false)
+
+        await store.send(.reader(.dismiss)) {
+            $0.reader = nil
+        }
+        await store.finish()
+        #expect(saved.value == 0)
+    }
+
     // MARK: - Background suspension
 
     /// Stubs the startup pipeline so the tests can count and gate its

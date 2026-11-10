@@ -372,7 +372,11 @@ public struct AppView: View {
                     .navigationDestination(
                         item: $store.scope(\.$reader, action: \.reader)
                     ) { readerStore in
-                        ReaderScreen(store: readerStore)
+                        // The session must outlive body passes. Left to the
+                        // default argument, each pass of this view built a
+                        // new one, dropping the loaded page and closing any
+                        // open reader panel.
+                        ReaderScreen(store: readerStore, session: readerSession)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .background(palette.bg)
                     }

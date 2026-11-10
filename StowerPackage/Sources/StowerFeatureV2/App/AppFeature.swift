@@ -204,6 +204,31 @@ public struct AppFeature {
     var context
 
     public var body: some ReducerOf<Self> {
+        // Runs before the reader's own reducer and before anything replaces
+        // or dismisses it. The reader debounces its progress writes by a
+        // second and its effects are cancelled when it goes away, so the
+        // last second of scrolling used to be lost on Done, next/previous,
+        // opening another article, or popping back.
+        Reduce { state, action in
+            switch action {
+            case .reader(.dismiss),
+                 .reader(.presented(.delegate(.done))),
+                 .nextArticleButtonTapped,
+                 .previousArticleButtonTapped,
+                 .library(.openItem):
+                guard let reader = state.reader,
+                      let blockIndex = reader.pendingProgressBlockIndex
+                else { return .none }
+                state.reader?.pendingProgressBlockIndex = nil
+                let repository = self.repository
+                return .run { [itemID = reader.itemID] _ in
+                    try? await repository.saveReadingProgress(itemID, blockIndex)
+                }
+            default:
+                return .none
+            }
+        }
+
         Scope(\.sidebar, action: \.sidebar) {
             SidebarFeature()
         }

@@ -617,7 +617,9 @@ public struct ReaderScreen: View {
         hasher.combine(item.renderFormat.rawValue)
         hasher.combine(item.captureVersion)
         hasher.combine(store.effectiveRenderFormat.rawValue)
-        hasher.combine(store.sourceHTML?.count)
+        // `utf8.count` is constant-time; `count` walks every character of
+        // what can be megabytes of HTML, on each body pass.
+        hasher.combine(store.sourceHTML?.utf8.count)
 
         if let document = store.document {
             hasher.combine(document.version)
