@@ -225,6 +225,13 @@ public enum StowerDatabase {
     }
 
     private static func migrate(database: any DatabaseWriter) throws {
+        try makeMigrator().migrate(database)
+    }
+
+    /// Every migration, in order. Separate from `migrate` so a test can stop
+    /// part-way, add rows, and then run the rest — the path an existing
+    /// install takes.
+    static func makeMigrator() -> DatabaseMigrator {
         var migrator = DatabaseMigrator()
         migrator.eraseDatabaseOnSchemaChange = false
         migrator.registerMigration("create-stower-v2-reader") { db in
@@ -287,7 +294,7 @@ public enum StowerDatabase {
         migrator.registerMigration("add-library-sort-index") { db in
             try migration_v20(db)
         }
-        try migrator.migrate(database)
+        return migrator
     }
 
     private static func migration_v1(_ db: Database) throws {
