@@ -112,6 +112,7 @@ struct AppFeatureTests {
             $0.library.openItemID = item.id
             $0.readerQueue = [item.id]
             $0.reader = ReaderFeature.State(item: item, appearance: $0.cachedAppearance)
+            $0.$lastOpenItemID.withLock { $0 = item.id.uuidString }
         }
         await store.send(.readerFocusButtonTapped) {
             $0.isReaderFocused = true
@@ -144,6 +145,7 @@ struct AppFeatureTests {
         await store.send(.nextArticleButtonTapped) {
             $0.library.openItemID = second.id
             $0.reader = ReaderFeature.State(itemID: second.id, appearance: $0.cachedAppearance)
+            $0.$lastOpenItemID.withLock { $0 = second.id.uuidString }
         }
         #expect(store.state.canNavigateToPreviousArticle)
         #expect(!store.state.canNavigateToNextArticle)
@@ -152,6 +154,7 @@ struct AppFeatureTests {
             $0.isReaderFocused = false
             $0.library.openItemID = nil
             $0.reader = nil
+            $0.$lastOpenItemID.withLock { $0 = "" }
         }
     }
 

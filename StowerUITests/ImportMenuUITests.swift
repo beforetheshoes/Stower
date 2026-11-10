@@ -20,8 +20,7 @@ final class ImportMenuUITests: XCTestCase {
 
     @MainActor
     func testAddTextOpensTheComposerAndCancelCloses() throws {
-        let app = XCUIApplication()
-        app.launch()
+        let app = launchAtLibrary()
 
         openAddMenu(app, choose: "Add Text/Markdown…")
 
@@ -40,8 +39,7 @@ final class ImportMenuUITests: XCTestCase {
 
     @MainActor
     func testImportPDFOpensTheDocumentPicker() throws {
-        let app = XCUIApplication()
-        app.launch()
+        let app = launchAtLibrary()
 
         openAddMenu(app, choose: "Import PDF…")
 

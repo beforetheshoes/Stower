@@ -248,3 +248,81 @@ struct AppPresentationTests {
         }
     }
 }
+
+@MainActor
+@Suite(.dependencies { try $0.bootstrapStowerDatabase(enableSync: false) })
+struct LastArticleTests {
+    private let item = SavedItem(title: "Long read", content: "Body")
+
+    private func makeStore(
+        _ state: AppFeature.State = .init(),
+        loadItem: @escaping @Sendable (UUID) async throws -> SavedItem? = { _ in nil }
+    ) -> TestStoreOf<AppFeature> {
+        let store = TestStore(initialState: state) {
+            AppFeature()
+        } withDependencies: {
+            $0.stowerRepository.loadItem = loadItem
+            $0.stowerRepository.claimNextIngestionJob = { _ in nil }
+            $0.stowerRepository.fetchFailedIngestionJobs = { [] }
+            $0.stowerRepository.purgeOldTrash = { [] }
+            $0.cloudSyncClient = .noop
+            $0.continuousClock = ImmediateClock()
+            $0.date.now = Date(timeIntervalSince1970: 1000)
+            $0.uuid = .incrementing
+            $0.syncDiagnosticsClient = .noop
+        }
+        store.exhaustivity = .off(showSkippedAssertions: false)
+        return store
+    }
+
+    @Test
+    func theOpenArticleIsRememberedAndForgottenWhenClosed() async {
+        let store = makeStore()
+
+        await store.send(.library(.openItem(item)))
+        #expect(store.state.lastOpenItemID == item.id.uuidString)
+
+        await store.send(.reader(.dismiss))
+        #expect(store.state.lastOpenItemID.isEmpty)
+    }
+
+    @Test
+    func aLaunchReopensTheArticleThatWasOpen() async {
+        var state = AppFeature.State()
+        state.$lastOpenItemID.withLock { $0 = item.id.uuidString }
+        let item = self.item
+        let store = makeStore(state) { id in id == item.id ? item : nil }
+
+        await store.send(.onAppear)
+        await store.receive(.lastArticleRestored(item)) {
+            $0.reader = ReaderFeature.State(item: item, appearance: $0.cachedAppearance)
+            $0.library.openItemID = item.id
+        }
+        await store.skipInFlightEffects()
+    }
+
+    @Test
+    func anArticleDeletedSinceIsNotReopened() async {
+        var trashed = item
+        trashed.deletedAt = Date(timeIntervalSince1970: 500)
+        var state = AppFeature.State()
+        state.$lastOpenItemID.withLock { $0 = trashed.id.uuidString }
+        let store = makeStore(state) { [trashed] _ in trashed }
+
+        await store.send(.onAppear)
+        await store.receive(\.startupFinished)
+        #expect(store.state.reader == nil)
+        await store.skipInFlightEffects()
+    }
+
+    @Test
+    func restoringDoesNotReplaceAnArticleOpenedInTheMeantime() async {
+        let other = SavedItem(title: "Opened first", content: "Body")
+        var state = AppFeature.State()
+        state.reader = ReaderFeature.State(item: other)
+        let store = makeStore(state)
+
+        await store.send(.lastArticleRestored(item))
+        #expect(store.state.reader?.itemID == other.id)
+    }
+}

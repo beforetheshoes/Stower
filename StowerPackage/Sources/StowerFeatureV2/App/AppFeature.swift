@@ -36,6 +36,10 @@ public struct AppFeature {
         /// returns to it instead of always opening Inbox.
         @Shared(.appStorage("selectedLibraryList"))
         var storedList = LibraryFilter.unread.storageKey
+        /// The article that was open when the app was last used, so a launch
+        /// returns to it. Empty when none was.
+        @Shared(.appStorage("lastOpenItemID"))
+        var lastOpenItemID = ""
 
         public var cloudSyncStatus: CloudSyncStatus { sync.status }
         /// True from the scene entering the background until its next
@@ -140,6 +144,8 @@ public struct AppFeature {
         case browserExtensionURLReceived(URL)
         /// Another app handed Stower a file ("Open in Stower").
         case fileOpened(URL)
+        /// The article that was open last time still exists; open it again.
+        case lastArticleRestored(SavedItem)
         case startupFinished
         case startupFailed(String)
         /// Cloud sync start has settled (started, or unavailable) and the
@@ -212,6 +218,10 @@ public struct AppFeature {
     }
 
     public var body: some ReducerOf<Self> {
+        // Everything the app does runs inside this group so the observer at
+        // the bottom sees a change to the open article wherever it is made:
+        // by the reducer below, or by the reader being dismissed.
+        CombineReducers {
         // Runs before the reader's own reducer and before anything replaces
         // or dismisses it. The reader debounces its progress writes by a
         // second and its effects are cancelled when it goes away, so the
@@ -273,7 +283,17 @@ public struct AppFeature {
                 let ingestionCoordinator = self.ingestionCoordinator
                 let storageUsageClient = self.storageUsageClient
                 let openReaderItemID = state.reader?.itemID
+                let lastOpenItemID = UUID(uuidString: state.lastOpenItemID)
+                let restoreReader: EffectOf<Self> = .run { [isOpen = state.reader != nil] send in
+                    // Only an article that is still in the library comes
+                    // back, not one deleted since — here or on another device.
+                    guard !isOpen, let lastOpenItemID else { return }
+                    let loaded = await reportingErrors { try await repository.loadItem(lastOpenItemID) }
+                    guard let item = loaded.flatMap(\.self), item.deletedAt == nil else { return }
+                    await send(.lastArticleRestored(item))
+                }
                 return .merge(
+                    restoreReader,
                     // Load appearance immediately — no dependencies, fastest possible.
                     .run { send in
                         if let appearance = try? await repository.loadReaderAppearanceSettings() {
@@ -368,6 +388,14 @@ public struct AppFeature {
                         .reduce(into: &state.ingestion, action: .sceneDidEnterBackground)
                         .map(Action.ingestion)
                 )
+
+            case .lastArticleRestored(let item):
+                // The user may have opened something in the meantime.
+                guard state.reader == nil else { return .none }
+                state.library.openItemID = item.id
+                state.readerQueue = [item.id]
+                state.reader = ReaderFeature.State(item: item, appearance: state.cachedAppearance)
+                return .none
 
             case .startupFinished:
                 state.startupFinished = true
@@ -644,6 +672,13 @@ public struct AppFeature {
                 return .none
 
             case .library, .settings, .reader, .ingestion, .sync:
+                return .none
+            }
+        }
+        }
+        .onChange(of: \.reader?.itemID) { _, itemID in
+            Reduce { state, _ in
+                state.$lastOpenItemID.withLock { $0 = itemID?.uuidString ?? "" }
                 return .none
             }
         }

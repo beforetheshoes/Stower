@@ -9,8 +9,7 @@ final class SaveFlowUITests: XCTestCase {
 
     @MainActor
     func testAddURLReturnsImmediatelyAndRowArrives() throws {
-        let app = XCUIApplication()
-        app.launch()
+        let app = launchAtLibrary()
 
         let add = app.buttons["Add"]
         XCTAssertTrue(add.waitForExistence(timeout: 10), "Add menu not found")

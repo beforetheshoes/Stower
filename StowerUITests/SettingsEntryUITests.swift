@@ -10,8 +10,7 @@ final class SettingsEntryUITests: XCTestCase {
 
     @MainActor
     func testSettingsOpensFromTheToolbarAndFromTheFilterSheet() throws {
-        let app = XCUIApplication()
-        app.launch()
+        let app = launchAtLibrary()
 
         let settingsBar = app.navigationBars["Settings"]
 

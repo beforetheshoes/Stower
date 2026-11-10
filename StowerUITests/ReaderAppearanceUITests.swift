@@ -9,8 +9,7 @@ final class ReaderAppearanceUITests: XCTestCase {
 
     @MainActor
     func testAppearanceControlsFitAndClose() throws {
-        let app = XCUIApplication()
-        app.launch()
+        let app = launchAtLibrary()
 
         let filters = app.buttons["Filters"]
         XCTAssertTrue(filters.waitForExistence(timeout: 10), "Filters button not found")
