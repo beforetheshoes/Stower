@@ -141,10 +141,14 @@ public struct SidebarScreen: View {
                     if store.selection == filter {
                         Image(systemName: "checkmark")
                             .foregroundStyle(palette.primary)
-                            .accessibilityLabel("Selected")
+                            .accessibilityHidden(true)
                     }
                 }
             }
+            // The selected state is a trait, not part of the name: VoiceOver
+            // reads "Library, selected", and the row keeps one name whether
+            // or not it is the current list.
+            .accessibilityAddTraits(store.selection == filter ? .isSelected : [])
             .badge(count)
         } else {
             NavigationLink(value: filter) {
