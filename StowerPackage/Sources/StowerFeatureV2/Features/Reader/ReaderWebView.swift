@@ -66,7 +66,7 @@ private final class ReaderWebViewSession {
 /// `onReadingProgress`. TTS highlighting is driven by the `highlightedBlockIndex`
 /// binding and mapped through `ReaderWebPageFactory.runHighlight`.
 public struct ReaderWebView: View {
-    let htmlProvider: () -> String
+    let htmlSourceProvider: () -> ReaderHTMLSource
     let sourceURL: String?
     let itemID: UUID
     let contentVersion: Int
@@ -87,6 +87,7 @@ public struct ReaderWebView: View {
     @Environment(\.openURL)
     private var openURL
 
+    /// Takes HTML that already exists.
     public init(
         html: @escaping () -> String,
         sourceURL: String?,
@@ -104,7 +105,44 @@ public struct ReaderWebView: View {
         onOpenInlineEmbed: ((String) -> Void)? = nil,
         onContentTap: (() -> Void)? = nil
     ) {
-        self.htmlProvider = html
+        self.htmlSourceProvider = { .ready(html()) }
+        self.sourceURL = sourceURL
+        self.itemID = itemID
+        self.contentVersion = contentVersion
+        self.appearance = appearance
+        self.fontScale = fontScale
+        self.viewportWidth = viewportWidth
+        self.insets = insets
+        self.isWebViewFormat = isWebViewFormat
+        self.usesNativeCapture = usesNativeCapture
+        self.highlightedBlockIndex = highlightedBlockIndex
+        self.restoreBlockIndex = restoreBlockIndex
+        self.scrollRequest = scrollRequest
+        self.onOpenInlineEmbed = onOpenInlineEmbed
+        self.onContentTap = onContentTap
+    }
+
+    /// Takes a description of the page. The document is turned into HTML
+    /// off the main actor when the page loads, which for a long article is
+    /// the most expensive step of opening it.
+    public init(
+        source: @escaping () -> ReaderHTMLSource,
+        sourceURL: String?,
+        itemID: UUID,
+        contentVersion: Int,
+        appearance: ReaderAppearanceSettings,
+        fontScale: Double = 1,
+        viewportWidth: Double? = nil,
+        insets: ReaderInsets = .zero,
+        isWebViewFormat: Bool = false,
+        usesNativeCapture: Bool = false,
+        highlightedBlockIndex: Int? = nil,
+        restoreBlockIndex: Int? = nil,
+        scrollRequest: ReaderScrollRequest? = nil,
+        onOpenInlineEmbed: ((String) -> Void)? = nil,
+        onContentTap: (() -> Void)? = nil
+    ) {
+        self.htmlSourceProvider = source
         self.sourceURL = sourceURL
         self.itemID = itemID
         self.contentVersion = contentVersion
@@ -244,7 +282,10 @@ public struct ReaderWebView: View {
             ? ArticleCapturePackage.archiveURL(for: itemID, original: isWebViewFormat)
             : nil
 
-        let currentHTML = htmlProvider()
+        // The inputs are read here, on the main actor; the HTML is built
+        // off it.
+        let currentHTML = await htmlSourceProvider().build()
+        guard Task.isCancelled == false, session.loadKey == loadKey else { return }
         let currentSourceURL = sourceURL
         let currentItemID = itemID
         let currentAppearance = appearance

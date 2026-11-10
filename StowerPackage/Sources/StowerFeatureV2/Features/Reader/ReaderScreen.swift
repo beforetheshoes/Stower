@@ -478,7 +478,7 @@ public struct ReaderScreen: View {
                     partialCaptureBanner(for: item)
                 }
                 ReaderWebView(
-                    html: { resolvedHTML(for: item) ?? "" },
+                    source: { htmlSource(for: item) },
                     sourceURL: item.sourceURL,
                     itemID: store.itemID,
                     contentVersion: contentReloadToken(for: item),
@@ -595,23 +595,25 @@ public struct ReaderScreen: View {
               : "Show the original saved page with SVGs and interactive content")
     }
 
-    /// Picks the right HTML to show. For interactive articles (`webView`
-    /// format) we hand WKWebView the raw captured `sourceHTML` unchanged.
-    /// For all other articles we generate a clean HTML document from the
-    /// structured `ReaderDocument`.
-    private func resolvedHTML(for item: SavedItem) -> String? {
+    /// Describes the page to show. For interactive articles (`webView`
+    /// format) WKWebView gets the raw captured `sourceHTML` unchanged. For
+    /// all other articles the structured `ReaderDocument` is rendered to
+    /// HTML — by the web view, off the main actor, when it loads.
+    private func htmlSource(for item: SavedItem) -> ReaderHTMLSource {
         if store.effectiveRenderFormat == .webView {
-            return store.sourceHTML
+            return .ready(store.sourceHTML ?? "")
         }
-        guard let document = store.document else { return nil }
-        return ReaderDocumentHTMLBuilder.buildReaderHTML(
-            item: item,
-            document: document,
-            appearance: store.appearance,
-            pageWidth: CGFloat(store.viewportWidth ?? 0),
-            fontScale: readerFontScale,
-            restoreBlockIndex: item.lastReadBlockIndex,
-            insets: readerInsets
+        guard let document = store.document else { return .ready("") }
+        return .document(
+            ReaderDocumentPage(
+                item: item,
+                document: document,
+                appearance: store.appearance,
+                pageWidth: CGFloat(store.viewportWidth ?? 0),
+                fontScale: readerFontScale,
+                restoreBlockIndex: item.lastReadBlockIndex,
+                insets: readerInsets
+            )
         )
     }
 
