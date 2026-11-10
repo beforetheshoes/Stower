@@ -38,3 +38,33 @@ public enum LibraryImportPicker: String, Identifiable, Equatable, Sendable {
 
     public var id: String { rawValue }
 }
+
+extension LibraryImportPicker {
+    /// How the file is named in "Couldn't read …" messages.
+    var fileNoun: String {
+        switch self {
+        case .text:
+            "text file"
+        case .pdf:
+            "PDF"
+        case .epub:
+            "EPUB"
+        case .website:
+            "zip"
+        }
+    }
+
+    /// How the import is named in "… import failed" messages.
+    var importNoun: String {
+        switch self {
+        case .text:
+            "Text"
+        case .pdf:
+            "PDF"
+        case .epub:
+            "EPUB"
+        case .website:
+            "Website"
+        }
+    }
+}

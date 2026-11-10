@@ -156,6 +156,10 @@ public struct LibraryFeature {
         case textImportPresentationChanged(Bool)
         case importPickerRequested(LibraryImportPicker)
         case importPickerChanged(LibraryImportPicker?)
+        /// A file came back from a document picker or open panel.
+        case filePicked(LibraryImportPicker, URL)
+        /// The picker itself failed (not a cancel).
+        case filePickFailed(LibraryImportPicker, String)
         case textImportTitleChanged(String)
         case textImportTextChanged(String)
         case textImportModeChanged(TextImportMode)
@@ -195,6 +199,8 @@ public struct LibraryFeature {
 
     @Dependency(\.stowerRepository)
     var repository
+    @Dependency(\.pickedFileClient)
+    var pickedFileClient
     @Dependency(\.urlIngestionClient)
     var ingestionClient
     @Dependency(\.articleSaveClient)
@@ -460,6 +466,45 @@ public struct LibraryFeature {
             case .importPickerChanged(let picker):
                 state.importPicker = picker
                 return .none
+
+            case let .filePicked(kind, pickedURL):
+                let pickedFileClient = self.pickedFileClient
+                switch kind {
+                case .text:
+                    guard let mode = TextImportDetector.importMode(for: pickedURL) else {
+                        return .send(.saveURLFailed("Unsupported text file type."))
+                    }
+                    let titleHint = TextImportDetector.normalizedTitleHint(from: pickedURL)
+                    return .run { send in
+                        do {
+                            let text = try pickedFileClient.readText(pickedURL)
+                            await send(.importTextResolved(text, titleHint, mode))
+                        } catch {
+                            await send(.saveURLFailed("Couldn't read text file: \(error.localizedDescription)"))
+                        }
+                    }
+                case .pdf, .epub, .website:
+                    return .run { send in
+                        do {
+                            let staged = try pickedFileClient.stage(pickedURL)
+                            switch kind {
+                            case .pdf:
+                                await send(.importPDFSelected(staged))
+                            case .epub:
+                                await send(.importEPUBSelected(staged))
+                            case .website:
+                                await send(.importWebsiteSelected(staged))
+                            case .text:
+                                break
+                            }
+                        } catch {
+                            await send(.saveURLFailed("Couldn't read \(kind.fileNoun): \(error.localizedDescription)"))
+                        }
+                    }
+                }
+
+            case let .filePickFailed(kind, message):
+                return .send(.saveURLFailed("\(kind.importNoun) import failed: \(message)"))
 
             case .textImportTitleChanged(let title):
                 state.textImportDraft?.title = title

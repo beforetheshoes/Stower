@@ -312,16 +312,7 @@ public struct LibraryScreen: View {
                 allowedContentTypes: contentTypes(for: picker)
             ) { result in
                 store.send(.importPickerChanged(nil))
-                switch picker {
-                case .text:
-                    handleTextImport(result)
-                case .pdf:
-                    handlePDFImport(result)
-                case .epub:
-                    handleEPUBImport(result)
-                case .website:
-                    handleWebsiteImport(result)
-                }
+                handlePickedFile(picker, result)
             }
         }
         #endif

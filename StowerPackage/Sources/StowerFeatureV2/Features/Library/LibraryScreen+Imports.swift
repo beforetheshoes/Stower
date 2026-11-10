@@ -25,7 +25,7 @@ extension LibraryScreen {
             allowedContentTypes: textImportContentTypes,
             title: "Import Text or Markdown"
         ) { url in
-            handleTextImport(.success(url))
+            store.send(.filePicked(.text, url))
         }
         #else
         store.send(.importPickerRequested(.text))
@@ -38,7 +38,7 @@ extension LibraryScreen {
             allowedContentTypes: [.pdf],
             title: "Import PDF"
         ) { url in
-            handlePDFImport(.success(url))
+            store.send(.filePicked(.pdf, url))
         }
         #else
         store.send(.importPickerRequested(.pdf))
@@ -51,7 +51,7 @@ extension LibraryScreen {
             allowedContentTypes: [.epub],
             title: "Import EPUB"
         ) { url in
-            handleEPUBImport(.success(url))
+            store.send(.filePicked(.epub, url))
         }
         #else
         store.send(.importPickerRequested(.epub))
@@ -64,7 +64,7 @@ extension LibraryScreen {
             allowedContentTypes: [.zip],
             title: "Import Website Archive"
         ) { url in
-            handleWebsiteImport(.success(url))
+            store.send(.filePicked(.website, url))
         }
         #else
         store.send(.importPickerRequested(.website))
@@ -98,133 +98,15 @@ extension LibraryScreen {
         return [.plainText] + markdownTypes
     }
 
-    /// Handles the result of the SwiftUI `.fileImporter` PDF picker. The
-    /// picked URL is security-scoped — we must start/stop access around the
-    /// copy, and we copy to a plain temp file so the reducer can consume a
-    /// URL with no lifetime restrictions.
-    /// Handles the result of a `.zip` website archive picker. Uses the same
-    /// security-scoped + scratch-copy dance as `handlePDFImport` so the
-    /// reducer consumes a plain temp URL with no lifetime restrictions.
-    func handleWebsiteImport(_ result: Result<URL, Error>) {
+    /// Passes a picker's result to the reducer. Cancelling arrives here as an
+    /// error too; it is not one.
+    func handlePickedFile(_ picker: LibraryImportPicker, _ result: Result<URL, Error>) {
         switch result {
         case .success(let pickedURL):
-            let accessed = pickedURL.startAccessingSecurityScopedResource()
-            defer {
-                if accessed { pickedURL.stopAccessingSecurityScopedResource() }
-            }
-            do {
-                let scratchDir = FileManager.default.temporaryDirectory
-                    .appendingPathComponent(UUID().uuidString, isDirectory: true)
-                try FileManager.default.createDirectory(
-                    at: scratchDir,
-                    withIntermediateDirectories: true
-                )
-                let scratch = scratchDir.appendingPathComponent(pickedURL.lastPathComponent)
-                try FileManager.default.copyItem(at: pickedURL, to: scratch)
-                store.send(.importWebsiteSelected(scratch))
-            } catch {
-                store.send(.saveURLFailed("Couldn't read zip: \(error.localizedDescription)"))
-            }
+            store.send(.filePicked(picker, pickedURL))
         case .failure(let error):
-            let ns = error as NSError
-            if ns.code != NSUserCancelledError {
-                store.send(.saveURLFailed("Website import failed: \(error.localizedDescription)"))
-            }
-        }
-    }
-
-    /// Same security-scoped + scratch-copy handling as `handlePDFImport`. The
-    /// original filename is kept: it is the title fallback for books whose
-    /// package document has no title.
-    func handleEPUBImport(_ result: Result<URL, Error>) {
-        switch result {
-        case .success(let pickedURL):
-            let accessed = pickedURL.startAccessingSecurityScopedResource()
-            defer {
-                if accessed { pickedURL.stopAccessingSecurityScopedResource() }
-            }
-            do {
-                let scratchDir = FileManager.default.temporaryDirectory
-                    .appendingPathComponent(UUID().uuidString, isDirectory: true)
-                try FileManager.default.createDirectory(
-                    at: scratchDir,
-                    withIntermediateDirectories: true
-                )
-                let scratch = scratchDir.appendingPathComponent(pickedURL.lastPathComponent)
-                try FileManager.default.copyItem(at: pickedURL, to: scratch)
-                store.send(.importEPUBSelected(scratch))
-            } catch {
-                store.send(.saveURLFailed("Couldn't read EPUB: \(error.localizedDescription)"))
-            }
-        case .failure(let error):
-            let ns = error as NSError
-            if ns.code != NSUserCancelledError {
-                store.send(.saveURLFailed("EPUB import failed: \(error.localizedDescription)"))
-            }
-        }
-    }
-
-    func handlePDFImport(_ result: Result<URL, Error>) {
-        switch result {
-        case .success(let pickedURL):
-            let accessed = pickedURL.startAccessingSecurityScopedResource()
-            defer {
-                if accessed { pickedURL.stopAccessingSecurityScopedResource() }
-            }
-            do {
-                // Copy into a unique temp subdirectory so we can preserve
-                // the picked file's original name. PDFIngestionClient uses
-                // the URL's `lastPathComponent` as the title fallback — if
-                // we named the scratch file `{uuid}.pdf` the resulting item
-                // would show up in the library titled with a raw UUID.
-                let scratchDir = FileManager.default.temporaryDirectory
-                    .appendingPathComponent(UUID().uuidString, isDirectory: true)
-                try FileManager.default.createDirectory(
-                    at: scratchDir,
-                    withIntermediateDirectories: true
-                )
-                let scratch = scratchDir.appendingPathComponent(pickedURL.lastPathComponent)
-                try FileManager.default.copyItem(at: pickedURL, to: scratch)
-                store.send(.importPDFSelected(scratch))
-            } catch {
-                store.send(.saveURLFailed("Couldn't read PDF: \(error.localizedDescription)"))
-            }
-        case .failure(let error):
-            // User cancellation shows up here as NSError cancelled — treat
-            // anything that isn't a real failure as a silent dismiss. The
-            // fileImporter modifier does not distinguish cancel from error,
-            // so we only surface errors that carry a message.
-            let ns = error as NSError
-            if ns.code != NSUserCancelledError {
-                store.send(.saveURLFailed("PDF import failed: \(error.localizedDescription)"))
-            }
-        }
-    }
-
-    func handleTextImport(_ result: Result<URL, Error>) {
-        switch result {
-        case .success(let pickedURL):
-            let accessed = pickedURL.startAccessingSecurityScopedResource()
-            defer {
-                if accessed { pickedURL.stopAccessingSecurityScopedResource() }
-            }
-            guard let mode = TextImportDetector.importMode(for: pickedURL) else {
-                store.send(.saveURLFailed("Unsupported text file type."))
-                return
-            }
-            do {
-                let data = try Data(contentsOf: pickedURL)
-                let text = decodedImportedText(from: data)
-                let titleHint = TextImportDetector.normalizedTitleHint(from: pickedURL)
-                store.send(.importTextResolved(text, titleHint, mode))
-            } catch {
-                store.send(.saveURLFailed("Couldn't read text file: \(error.localizedDescription)"))
-            }
-        case .failure(let error):
-            let ns = error as NSError
-            if ns.code != NSUserCancelledError {
-                store.send(.saveURLFailed("Text import failed: \(error.localizedDescription)"))
-            }
+            guard (error as NSError).code != NSUserCancelledError else { return }
+            store.send(.filePickFailed(picker, error.localizedDescription))
         }
     }
 
@@ -369,21 +251,5 @@ extension LibraryScreen {
                 store.send(.saveTextImportTapped)
             }
         )
-    }
-
-    func decodedImportedText(from data: Data) -> String {
-        if let text = String(data: data, encoding: .utf8) {
-            return text
-        }
-        if let text = String(data: data, encoding: .utf16) {
-            return text
-        }
-        if let text = String(data: data, encoding: .utf16LittleEndian) {
-            return text
-        }
-        if let text = String(data: data, encoding: .utf16BigEndian) {
-            return text
-        }
-        return String(bytes: data, encoding: .utf8) ?? ""
     }
 }
