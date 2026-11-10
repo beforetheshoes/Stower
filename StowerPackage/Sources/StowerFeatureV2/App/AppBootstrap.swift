@@ -4,6 +4,7 @@ import Dependencies
 public enum StowerAppBootstrap {
     @MainActor
     public static func makeStore() -> StoreOf<AppFeature> {
+        var state = AppFeature.State()
         do {
             try prepareDependencies {
                 // Keep a delegate alive for the lifetime of the sync engine.
@@ -11,10 +12,14 @@ public enum StowerAppBootstrap {
                 try $0.bootstrapStowerDatabase()
             }
         } catch {
-            assertionFailure("Failed to bootstrap database: \(error)")
+            // A release build used to carry on silently with no database:
+            // an empty library and saves that went nowhere. Say so instead.
+            reportIssue(error, "Failed to bootstrap database")
+            state.databaseUnavailableMessage =
+                "Stower could not open its library: \(error.localizedDescription)"
         }
 
-        return Store(initialState: AppFeature.State()) {
+        return Store(initialState: state) {
             AppFeature()
         }
     }

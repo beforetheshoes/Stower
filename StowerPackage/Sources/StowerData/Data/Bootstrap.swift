@@ -132,6 +132,14 @@ public enum StowerDatabase {
         // killed. `DatabaseSuspensionObserver` posts the notifications, and
         // `DatabaseError.isSuspended` identifies the resulting errors.
         configuration.observesSuspensionNotifications = true
+        // The share extension and App Intents open the same file from their
+        // own processes. GRDB's default is to fail a write the instant another
+        // process holds the lock, which turned a brief overlap — the app
+        // draining a job while the extension queues the next — into a lost
+        // save. Waiting briefly lets the overlap resolve itself. Kept short
+        // so a waiter is never parked on the lock for long on the way to
+        // suspension.
+        configuration.busyMode = .timeout(2)
         configuration.prepareDatabase { db in
             do {
                 try db.attachMetadatabase(containerIdentifier: cloudKitContainerID)
@@ -275,6 +283,9 @@ public enum StowerDatabase {
         }
         migrator.registerMigration("add-progress-unit-count") { db in
             try migration_v19(db)
+        }
+        migrator.registerMigration("add-library-sort-index") { db in
+            try migration_v20(db)
         }
         try migrator.migrate(database)
     }
@@ -801,6 +812,19 @@ public enum StowerDatabase {
     /// SyncEngine safety rules.
     /// Stores the reader block count beside `documentJSON` and keeps it
     /// current with triggers, so list queries never decode a document.
+    /// Every live library list is `deletedAt IS NULL ORDER BY createdAt`.
+    /// Only `updatedAt` was indexed for sorting, so each fetch looked rows up
+    /// by `deletedAt` and sorted them in a temp b-tree. With `createdAt` as
+    /// the second column the same lookup returns rows already in order.
+    /// (Checked against SQLite's planner: a plain or partial `createdAt`
+    /// index loses to the existing `deletedAt` one and is never used.)
+    private static func migration_v20(_ db: Database) throws {
+        try db.execute(sql: """
+            CREATE INDEX IF NOT EXISTS "idx_savedItemSyncTables_deletedAt_createdAt"
+            ON "savedItemSyncTables"("deletedAt", "createdAt" DESC)
+            """)
+    }
+
     private static func migration_v19(_ db: Database) throws {
         try db.execute(sql: #"ALTER TABLE "savedItemContentLocalTables" ADD COLUMN "progressUnitCount" INTEGER"#)
         try db.execute(sql: """

@@ -427,9 +427,26 @@ extension ItemStorageClient {
         guard !itemIDs.isEmpty else { return [] }
         let items = try SavedItemSyncTable
             .where { $0.id.in(itemIDs) }
+            .select { ($0.id, $0.isRead) }
             .fetchAll(db)
         // Only the render format is needed here; never pull the text columns.
         let contents = try LibraryQueries.contentMetas(db, itemIDs: itemIDs)
+        return try storageInfos(
+            db,
+            items: items.map { (id: $0.0, isRead: $0.1) },
+            renderFormatByID: Dictionary(uniqueKeysWithValues: contents.map { ($0.itemID, $0.renderFormat) })
+        )
+    }
+
+    /// Storage state for items whose read flag and render format the caller
+    /// already has — the library list does, so it does not fetch them twice.
+    static func storageInfos(
+        _ db: Database,
+        items: [(id: UUID, isRead: Bool)],
+        renderFormatByID: [UUID: String]
+    ) throws -> [ItemStorageInfo] {
+        guard !items.isEmpty else { return [] }
+        let itemIDs = items.map(\.id)
         let storageRows = try ItemStorageLocalTable
             .where { $0.itemID.in(itemIDs) }
             .fetchAll(db)
@@ -449,7 +466,6 @@ extension ItemStorageClient {
                 .fetchAll(db)
         )
 
-        let contentByID = Dictionary(uniqueKeysWithValues: contents.map { ($0.itemID, $0) })
         let storageByID = Dictionary(uniqueKeysWithValues: storageRows.map { ($0.itemID, $0) })
         let manifestsByID = Dictionary(grouping: manifestRows.compactMap(assetManifest(from:)), by: \.itemID)
 
@@ -457,7 +473,7 @@ extension ItemStorageClient {
             let storage = storageByID[item.id]
             return ItemStorageInfo(
                 itemID: item.id,
-                renderFormat: contentByID[item.id]?.renderFormat ?? "structuredV1",
+                renderFormat: renderFormatByID[item.id] ?? "structuredV1",
                 isRead: item.isRead,
                 isPinned: storage?.isPinned ?? false,
                 lastOpenedAt: storage?.lastOpenedAt,

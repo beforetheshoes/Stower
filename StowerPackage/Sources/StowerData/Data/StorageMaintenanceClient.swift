@@ -128,8 +128,22 @@ extension StorageMaintenanceClient {
             activeJobPayloadPaths: {
                 try await database.read { db in
                     let payloads = try IngestionJobLocalTable
-                        .where { $0.kind.in(["pdf", "website"]) }
-                        .where { $0.status.in(["queued", "claimed", "failed"]) }
+                        .where {
+                            $0.kind.in([
+                                IngestionJob.Kind.pdf.rawValue,
+                                IngestionJob.Kind.epub.rawValue,
+                                IngestionJob.Kind.website.rawValue,
+                            ])
+                        }
+                        // `processing` is the in-flight state: a staged file
+                        // must survive the sweep while its job is running.
+                        .where {
+                            $0.status.in([
+                                IngestionJob.Status.queued.rawValue,
+                                IngestionJob.Status.processing.rawValue,
+                                IngestionJob.Status.failed.rawValue,
+                            ])
+                        }
                         .select(\.payload)
                         .fetchAll(db)
                     return Set(payloads)

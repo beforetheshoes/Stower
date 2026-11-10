@@ -189,6 +189,62 @@ extension StowerRepository {
         }
     }
 
+    /// Puts claimed jobs back in the queue without charging them an attempt.
+    ///
+    /// For imports that were cut short by the app being backgrounded or the
+    /// drain being cancelled: nothing is wrong with the job, so it should
+    /// neither wait out the stale-claim timeout nor move towards `failed`.
+    /// Only jobs still in `processing` are touched.
+    static func _releaseIngestionJobs(
+        database: any DatabaseWriter
+    ) -> @Sendable (Set<UUID>) async throws -> Void {
+        { ids in
+            guard !ids.isEmpty else { return }
+            let ids = Array(ids)
+            try await database.write { db in
+                try IngestionJobLocalTable
+                    .where { $0.id.in(ids) }
+                    .where { $0.status.eq(IngestionJob.Status.processing.rawValue) }
+                    .where { $0.attemptCount > 0 }
+                    .update { $0.attemptCount -= 1 }
+                    .execute(db)
+                try IngestionJobLocalTable
+                    .where { $0.id.in(ids) }
+                    .where { $0.status.eq(IngestionJob.Status.processing.rawValue) }
+                    .update {
+                        $0.status = IngestionJob.Status.queued.rawValue
+                        $0.claimedAt = nil as Date?
+                    }
+                    .execute(db)
+            }
+        }
+    }
+
+    /// Deletes jobs that finished (completed or dismissed) before `cutoff`.
+    /// Nothing reads a processed job again, and text hydration payloads
+    /// carry the whole source text, so the table otherwise grows forever.
+    static func _pruneProcessedIngestionJobs(
+        database: any DatabaseWriter
+    ) -> @Sendable (Date) async throws -> Int {
+        { cutoff in
+            let stale = try await database.read { db in
+                try IngestionJobLocalTable
+                    .where { $0.processedAt < #bind(cutoff as Date?) }
+                    .select(\.id)
+                    .fetchAll(db)
+            }
+            guard !stale.isEmpty else { return 0 }
+            try await database.write { db in
+                try IngestionJobLocalTable
+                    .where { $0.id.in(stale) }
+                    .where { $0.processedAt.isNot(nil) }
+                    .delete()
+                    .execute(db)
+            }
+            return stale.count
+        }
+    }
+
     static func _fetchFailedIngestionJobs(
         database: any DatabaseWriter
     ) -> @Sendable () async throws -> [IngestionJob] {
@@ -266,18 +322,39 @@ extension StowerRepository {
         { () async throws -> Int in
             @Dependency(\.date.now)
             var now
-            return try await database.write { db -> Int in
-                let pdfRows: [SavedPDFContentSyncTable] = try SavedPDFContentSyncTable.fetchAll(db)
-                var hydrated = 0
-                for pdfRow in pdfRows {
-                    let existing: SavedItemContentLocalTable? = try SavedItemContentLocalTable
-                        .find(pdfRow.id)
-                        .fetchOne(db)
+            // Scan in a read, selecting ids only, and take the write lock
+            // just for the PDFs that have nothing to render yet — after the
+            // first sync that is none. This runs after every CloudKit sync;
+            // the old version held a write lock while loading every PDF's
+            // document and its full local content row.
+            let pending: [UUID] = try await database.read { db in
+                let pdfIDs = try SavedPDFContentSyncTable.select(\.id).fetchAll(db)
+                guard !pdfIDs.isEmpty else { return [] }
+                let renderable = Set(
+                    try SavedItemContentLocalTable
+                        .where { $0.itemID.in(pdfIDs) }
+                        .where { $0.documentJSON.neq("") }
+                        .select(\.itemID)
+                        .fetchAll(db)
+                )
+                return pdfIDs.filter { !renderable.contains($0) }
+            }
+            guard !pending.isEmpty else { return 0 }
 
-                    // Only populate when there is nothing to render — we do
-                    // not clobber a device's locally-ingested copy if it
-                    // already has one.
-                    if let existing, !existing.documentJSON.isEmpty {
+            return try await database.write { db -> Int in
+                var hydrated = 0
+                for id in pending {
+                    guard let pdfRow = try SavedPDFContentSyncTable.find(id).fetchOne(db) else {
+                        continue
+                    }
+                    // Re-check inside the write: content may have arrived
+                    // since the read. Only populate when there is nothing to
+                    // render — a locally-ingested copy is never clobbered.
+                    let existing = try SavedItemContentLocalTable
+                        .where { $0.itemID.eq(id) }
+                        .select { ($0.itemID, $0.documentJSON.neq("")) }
+                        .fetchOne(db)
+                    if let existing, existing.1 {
                         continue
                     }
 
@@ -409,10 +486,44 @@ extension StowerRepository {
             var now
             @Dependency(\.uuid)
             var uuid
+            // Ids only, in a read; the write lock is taken just for text items
+            // with nothing rendered yet. See `_hydratePDFItemsFromSyncedContent`.
+            let pending: [UUID] = try await database.read { db in
+                let textIDs = try SavedTextContentSyncTable.select(\.id).fetchAll(db)
+                guard !textIDs.isEmpty else { return [] }
+                let renderable = Set(
+                    try SavedItemContentLocalTable
+                        .where { $0.itemID.in(textIDs) }
+                        .where { $0.documentJSON.neq("") }
+                        .select(\.itemID)
+                        .fetchAll(db)
+                )
+                let live = Set(
+                    try SavedItemSyncTable
+                        .where { $0.id.in(textIDs) }
+                        .select(\.id)
+                        .fetchAll(db)
+                )
+                // An item whose hydration job is still unprocessed needs
+                // nothing more from this pass. Only the few items with
+                // nothing rendered get this far.
+                return try textIDs.filter { id in
+                    guard live.contains(id), !renderable.contains(id) else { return false }
+                    return try IngestionJobLocalTable
+                        .where { $0.kind.eq(IngestionJob.Kind.hydrateText.rawValue) }
+                        .where { $0.payload.like("%\(id.uuidString)%") }
+                        .where { $0.processedAt.is(nil) }
+                        .fetchCount(db) == 0
+                }
+            }
+            guard !pending.isEmpty else { return 0 }
+
             return try await database.write { db -> Int in
-                let textRows: [SavedTextContentSyncTable] = try SavedTextContentSyncTable.fetchAll(db)
                 var enqueued = 0
-                for textRow in textRows {
+                for id in pending {
+                    guard let textRow = try SavedTextContentSyncTable.find(id).fetchOne(db) else {
+                        continue
+                    }
                     // Skip if we already have rendered content locally.
                     let existing: SavedItemContentLocalTable? = try SavedItemContentLocalTable
                         .find(textRow.id)

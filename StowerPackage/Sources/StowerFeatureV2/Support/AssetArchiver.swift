@@ -324,6 +324,8 @@ enum AssetArchiver {
 
     // MARK: - Fetch & Save
 
+    private static let maxConcurrentDownloads = 6
+
     private struct ArchivedAsset {
         let relativePath: String
     }
@@ -334,15 +336,22 @@ enum AssetArchiver {
         archiveDir: URL,
         session: URLSession
     ) async -> [ArchivedAsset] {
+        // A page can reference hundreds of assets. Starting them all at once
+        // opened a request per asset; a small window keeps memory and
+        // connections bounded without slowing a typical article.
         await withTaskGroup(of: ArchivedAsset?.self, returning: [ArchivedAsset].self) { group in
-            for url in urls {
+            var remaining = urls.makeIterator()
+            func addNext() {
+                guard let url = remaining.next() else { return }
                 group.addTask {
                     await fetchAndSaveOne(url: url, baseURL: baseURL, archiveDir: archiveDir, session: session)
                 }
             }
+            for _ in 0..<maxConcurrentDownloads { addNext() }
             var results = [ArchivedAsset]()
             for await asset in group {
                 if let asset { results.append(asset) }
+                addNext()
             }
             return results
         }

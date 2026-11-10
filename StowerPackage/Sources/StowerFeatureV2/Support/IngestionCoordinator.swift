@@ -1,16 +1,44 @@
 import Dependencies
+import Foundation
 
 public struct IngestionCoordinator: Sendable {
     public var run: @Sendable (
         _ operation: @escaping @Sendable () async throws -> Void
     ) async throws -> Void
+    /// Records a claimed job whose import was cut short by the app being
+    /// backgrounded or the drain being cancelled. Nothing is wrong with the
+    /// job, so the next drain puts it straight back in the queue instead of
+    /// leaving it claimed until the stale-claim timeout.
+    public var noteInterrupted: @Sendable (UUID) async -> Void
+    /// Returns and clears the jobs recorded by `noteInterrupted`.
+    public var takeInterrupted: @Sendable () async -> Set<UUID>
 
     public init(
         run: @escaping @Sendable (
             _ operation: @escaping @Sendable () async throws -> Void
         ) async throws -> Void
     ) {
+        let interrupted = InterruptedIngestionJobs()
         self.run = run
+        self.noteInterrupted = { await interrupted.insert($0) }
+        self.takeInterrupted = { await interrupted.take() }
+    }
+}
+
+/// Jobs this process claimed and then had to abandon. Kept in memory because
+/// the database refuses writes at the moment an import is interrupted by
+/// suspension; if the process dies first, the stale-claim timeout in
+/// `claimNextIngestionJob` still recovers the job.
+private actor InterruptedIngestionJobs {
+    private var ids = Set<UUID>()
+
+    func insert(_ id: UUID) {
+        ids.insert(id)
+    }
+
+    func take() -> Set<UUID> {
+        defer { ids.removeAll() }
+        return ids
     }
 }
 
@@ -37,13 +65,23 @@ private actor IngestionGate {
             // A failed predecessor must not cancel this drain — each drain
             // reports its own outcome.
             _ = try? await previous?.value
+            try Task.checkCancellation()
             try await operation()
         }
         inFlight = task
         defer {
             if inFlight == task { inFlight = nil }
         }
-        try await task.value
+        // The drain runs in its own task so a later request can wait on it,
+        // which means the caller's cancellation does not reach it by itself.
+        // Without forwarding it, cancelling an effect on the way to the
+        // background left the network fetches and database writes running
+        // into suspension.
+        try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+        }
     }
 }
 
@@ -55,8 +93,10 @@ private enum IngestionCoordinatorKey: DependencyKey {
         }
     }()
 
-    static let testValue = IngestionCoordinator { operation in
-        try await operation()
+    static var testValue: IngestionCoordinator {
+        IngestionCoordinator { operation in
+            try await operation()
+        }
     }
 }
 

@@ -71,25 +71,41 @@ extension StowerRepository {
             var now
             @Dependency(\.uuid)
             var uuid
-            return try await database.write { db -> Int in
-                let archiveRows: [SavedWebsiteArchiveSyncTable] =
-                    try SavedWebsiteArchiveSyncTable.fetchAll(db)
-                var enqueued = 0
-                for row in archiveRows {
-                    guard row.byteCount > 0 else { continue }
-                    // Only enqueue when the item exists and the local archive is missing.
-                    guard try SavedItemSyncTable.find(row.id).fetchOne(db) != nil else { continue }
-                    if archiveExists(row.id) { continue }
-                    // An offloaded item's archive is missing *on purpose* —
-                    // auto-rehydrating it would undo the offload every sync.
-                    let offloaded = try ItemStorageLocalTable
-                        .find(row.id)
-                        .fetchOne(db)?
-                        .offloadedAt != nil
-                    if offloaded { continue }
+            // Ids only, in a read. The old version loaded every archive's
+            // zip bytes and walked the filesystem while holding the write
+            // lock, after every CloudKit sync.
+            let candidates: [UUID] = try await database.read { db in
+                let archiveIDs = try SavedWebsiteArchiveSyncTable
+                    .where { $0.byteCount > 0 }
+                    .select(\.id)
+                    .fetchAll(db)
+                guard !archiveIDs.isEmpty else { return [] }
+                let existingItems = Set(
+                    try SavedItemSyncTable
+                        .where { $0.id.in(archiveIDs) }
+                        .select(\.id)
+                        .fetchAll(db)
+                )
+                // An offloaded item's archive is missing *on purpose* —
+                // auto-rehydrating it would undo the offload every sync.
+                let offloaded = Set(
+                    try ItemStorageLocalTable
+                        .where { $0.itemID.in(archiveIDs) }
+                        .where { $0.offloadedAt.isNot(nil) }
+                        .select(\.itemID)
+                        .fetchAll(db)
+                )
+                return archiveIDs.filter { existingItems.contains($0) && !offloaded.contains($0) }
+            }
+            // The filesystem check runs outside any transaction.
+            let pending = candidates.filter { !archiveExists($0) }
+            guard !pending.isEmpty else { return 0 }
 
+            return try await database.write { db -> Int in
+                var enqueued = 0
+                for id in pending {
                     let payload = try String(
-                        bytes: JSONEncoder().encode(WebsiteHydrationPayload(itemID: row.id)),
+                        bytes: JSONEncoder().encode(WebsiteHydrationPayload(itemID: id)),
                         encoding: .utf8
                     ) ?? ""
                     let existingJob = try IngestionJobLocalTable

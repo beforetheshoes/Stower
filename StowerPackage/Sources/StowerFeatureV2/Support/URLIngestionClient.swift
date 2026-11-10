@@ -166,7 +166,10 @@ public struct MediaResolutionClient: Sendable {
         try? FileManager.default.createDirectory(at: imageDir, withIntermediateDirectories: true)
 
         return await withTaskGroup(of: (Int, MediaDescriptor).self, returning: [MediaDescriptor].self) { group in
-            for (index, descriptor) in media.enumerated() {
+            // At most six downloads at a time; see `AssetArchiver.fetchAndSave`.
+            var remaining = media.enumerated().makeIterator()
+            func addNext() {
+                guard let (index, descriptor) = remaining.next() else { return }
                 group.addTask {
                     var resolved = descriptor
                     guard descriptor.kind == .image,
@@ -199,10 +202,12 @@ public struct MediaResolutionClient: Sendable {
                     return (index, resolved)
                 }
             }
+            for _ in 0..<6 { addNext() }
 
             var results = [(Int, MediaDescriptor)]()
             for await result in group {
                 results.append(result)
+                addNext()
             }
             return results.sorted { $0.0 < $1.0 }.map(\.1)
         }

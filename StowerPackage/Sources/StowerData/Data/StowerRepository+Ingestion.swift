@@ -124,8 +124,19 @@ extension StowerRepository {
     static func existingLiveItemID(_ db: Database, matching url: String?) throws -> UUID? {
         guard let key = normalizedURLKey(url) else { return nil }
         let stableID = stableItemID(from: url)
+        // Runs inside every ingest write, so only the columns the match
+        // needs come off disk. URL normalization is done in Swift, which is
+        // why this cannot be a WHERE clause.
         let candidates = try SavedItemSyncTable
             .where { $0.deletedAt.is(nil) }
+            .select {
+                LiveItemURLRow.Columns(
+                    id: $0.id,
+                    canonicalURL: $0.canonicalURL,
+                    sourceURL: $0.sourceURL,
+                    createdAt: $0.createdAt
+                )
+            }
             .fetchAll(db)
             .filter { normalizedURLKey($0.canonicalURL ?? $0.sourceURL) == key }
         if candidates.contains(where: { $0.id == stableID }) {
@@ -133,4 +144,13 @@ extension StowerRepository {
         }
         return candidates.max { $0.createdAt < $1.createdAt }?.id
     }
+}
+
+/// The columns `existingLiveItemID` matches on.
+@Selection
+struct LiveItemURLRow {
+    var id: UUID
+    var canonicalURL: String?
+    var sourceURL: String?
+    var createdAt: Date
 }

@@ -77,6 +77,10 @@ public struct StowerRepository: Sendable {
     public var claimNextIngestionJobOfKind: @Sendable (IngestionJob.Kind, Date) async throws -> IngestionJob?
     public var completeIngestionJob: @Sendable (UUID, Date) async throws -> Void
     public var failIngestionJob: @Sendable (UUID, String, Date) async throws -> Void
+    /// Returns interrupted jobs to the queue without charging an attempt.
+    public var releaseIngestionJobs: @Sendable (Set<UUID>) async throws -> Void
+    /// Deletes jobs processed before the given date; returns how many.
+    public var pruneProcessedIngestionJobs: @Sendable (Date) async throws -> Int
     public var fetchFailedIngestionJobs: @Sendable () async throws -> [IngestionJob]
     public var retryFailedIngestionJobs: @Sendable () async throws -> Void
     public var dismissFailedIngestionJobs: @Sendable (Date) async throws -> Void
@@ -182,6 +186,8 @@ extension StowerRepository {
             claimNextIngestionJobOfKind: { _, _ in nil },
             completeIngestionJob: { _, _ in },
             failIngestionJob: { _, _, _ in },
+            releaseIngestionJobs: { _ in },
+            pruneProcessedIngestionJobs: { _ in 0 },
             fetchFailedIngestionJobs: { [] },
             retryFailedIngestionJobs: {},
             dismissFailedIngestionJobs: { _ in },
@@ -317,6 +323,8 @@ extension StowerRepository {
             claimNextIngestionJobOfKind: _claimNextIngestionJobOfKind(database: database),
             completeIngestionJob: _completeIngestionJob(database: database),
             failIngestionJob: _failIngestionJob(database: database),
+            releaseIngestionJobs: _releaseIngestionJobs(database: database),
+            pruneProcessedIngestionJobs: _pruneProcessedIngestionJobs(database: database),
             fetchFailedIngestionJobs: _fetchFailedIngestionJobs(database: database),
             retryFailedIngestionJobs: _retryFailedIngestionJobs(database: database),
             dismissFailedIngestionJobs: _dismissFailedIngestionJobs(database: database),

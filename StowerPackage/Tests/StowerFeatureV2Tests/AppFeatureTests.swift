@@ -437,7 +437,7 @@ struct AppFeatureTests {
             $0.library.queuedSaveCount = 1
         }
         await store.receive(.failedImportsLoaded([]))
-        await store.receive(.queuedSaveFinished) {
+        await store.receive(.ingestionDrainFinished) {
             $0.pendingSaveCount = 0
         }
         #expect(saved.value == [url])
@@ -484,7 +484,7 @@ struct AppFeatureTests {
         store.exhaustivity = .off(showSkippedAssertions: false)
 
         await store.send(.library(.urlQueued(try #require(URL(string: "https://example.com/x")))))
-        await store.receive(.queuedSaveFinished)
+        await store.receive(.ingestionDrainFinished)
 
         #expect(ingested.value == [staged])
         #expect(created.value.count == 1)
@@ -523,7 +523,7 @@ struct AppFeatureTests {
         store.exhaustivity = .off(showSkippedAssertions: false)
 
         await store.send(.library(.urlQueued(try #require(URL(string: "https://example.com/x")))))
-        await store.receive(.queuedSaveFinished)
+        await store.receive(.ingestionDrainFinished)
 
         #expect(failures.value == [EPUBIngestionError.protectedContent.localizedDescription])
         #expect(!FileManager.default.fileExists(atPath: scratchDir.path))
@@ -570,6 +570,21 @@ struct AppFeatureTests {
         await store.receive(.settings(.load))
         await store.finish()
         #expect(settingsLoaded.value)
+    }
+
+    @Test
+    func unopenableDatabaseIsReportedInsteadOfShowingAnEmptyLibrary() async {
+        var state = AppFeature.State()
+        state.databaseUnavailableMessage = "Stower could not open its library: disk full"
+        // No dependencies are stubbed: startup must not run at all.
+        let store = TestStore(initialState: state) {
+            AppFeature()
+        }
+
+        await store.send(.onAppear) {
+            $0.startupFinished = true
+            $0.startupErrorMessage = "Stower could not open its library: disk full"
+        }
     }
 
     // MARK: - Background suspension
