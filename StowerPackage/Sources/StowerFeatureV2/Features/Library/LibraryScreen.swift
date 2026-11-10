@@ -71,6 +71,14 @@ public struct LibraryScreen: View {
                 CopyableText(text: error, font: .body, textColor: palette.error)
                     .listRowBackground(Color.clear)
             }
+            #else
+            // The composer is a sheet on iOS, so a failure that arrives
+            // while it is closed — a file import, an "Open in Stower" — had
+            // nowhere to appear.
+            if let error = store.errorMessage, !isAddURLPresented {
+                CopyableText(text: error, font: .body, textColor: palette.error)
+                    .listRowBackground(Color.clear)
+            }
             #endif
 
             ForEach(store.items) { item in
@@ -106,7 +114,7 @@ public struct LibraryScreen: View {
                 .swipeActions(edge: .trailing) {
                     if store.filter == .recentlyDeleted {
                         Button(role: .destructive) {
-                            store.send(.permanentlyDelete(item.id))
+                            store.send(.permanentlyDeleteTapped(item.id))
                         } label: {
                             Label("Delete Forever", systemImage: "trash")
                         }
@@ -143,7 +151,7 @@ public struct LibraryScreen: View {
                             store.send(.restoreFromTrash(item.id))
                         }
                         Button("Delete Forever", role: .destructive) {
-                            store.send(.permanentlyDelete(item.id))
+                            store.send(.permanentlyDeleteTapped(item.id))
                         }
                     } else {
                         Button(item.isStarred ? "Unstar" : "Star") {
@@ -182,6 +190,7 @@ public struct LibraryScreen: View {
         .scrollEdgeEffectStyle(.soft, for: .top)
         .navigationTitle(navigationTitle)
         .searchable(text: $store.query.sending(\.queryChanged), prompt: "Search")
+        .confirmationDialog($store.scope(state: \.deleteConfirmation, action: \.deleteConfirmation))
         .overlay {
             // Only after the first observation has delivered: a populated
             // list must never be covered by a spinner, and the empty state

@@ -564,7 +564,12 @@ public struct AppFeature {
                 return .send(.library(.filterChanged(filter)))
 
             case .sidebar:
-                return .none
+                // The sidebar also moves its own selection — back to Library
+                // when the selected tag is deleted here or on another
+                // device. The list has to follow, or it keeps showing the
+                // deleted tag's (now empty) filter under a "Library" title.
+                guard state.library.filter != state.sidebar.selection else { return .none }
+                return .send(.library(.filterChanged(state.sidebar.selection)))
 
             case .cloudSyncStatusChanged(let status):
                 let previous = state.cloudSyncStatus
@@ -705,6 +710,15 @@ public struct AppFeature {
                 .cancellable(id: CancelID.completedItemNotice, cancelInFlight: true)
 
             case .reader(.dismiss):
+                state.isReaderFocused = false
+                state.library.openItemID = nil
+                return .none
+
+            case .library(.deleteItem(let id)), .library(.permanentlyDelete(let id)):
+                // Deleting the open article closes it; the reader used to
+                // keep showing an item that was no longer in the list.
+                guard state.reader?.itemID == id else { return .none }
+                state.reader = nil
                 state.isReaderFocused = false
                 state.library.openItemID = nil
                 return .none

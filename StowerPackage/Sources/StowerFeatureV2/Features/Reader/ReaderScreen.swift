@@ -213,7 +213,9 @@ public struct ReaderScreen: View {
                     onLineWidthChanged: { store.send(.lineWidthChanged($0)) },
                     onDone: { session.isAppearancePanelPresented = false }
                 )
-                .frame(width: 400)
+                // Up to 400 points, but able to shrink: a fixed 400 is wider
+                // than an iPhone and was clipped at both edges.
+                .frame(minWidth: 280, idealWidth: 400, maxWidth: 400)
                 .padding(12)
                 .presentationCompactAdaptation(.popover)
             }
@@ -511,9 +513,12 @@ public struct ReaderScreen: View {
                 .padding()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            Text("Item not found")
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            ContentUnavailableView(
+                "Article Unavailable",
+                systemImage: "doc.questionmark",
+                description: Text("This article is no longer in your library.")
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
@@ -848,6 +853,13 @@ private struct InlineEmbedScreen: View {
         WebView(page)
             .ignoresSafeArea()
             .navigationTitle("Embed")
+            // The sheet had no way out on the Mac, where a sheet cannot be
+            // swiped away.
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { store.send(.close) }
+                }
+            }
             .task { _ = page.load(URLRequest(url: store.url)) }
     }
 }

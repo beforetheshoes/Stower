@@ -59,6 +59,12 @@ public struct ReaderCommands: Commands {
     }
 
     public var body: some Commands {
+        CommandGroup(replacing: .appSettings) {
+            Button("Settings…") {
+                store.send(.openSettings)
+            }
+            .keyboardShortcut(",", modifiers: .command)
+        }
         CommandMenu("Reader") {
             Button(store.isReaderFocused ? "Exit Reader Focus" : "Focus Reader") {
                 store.send(.readerFocusButtonTapped)

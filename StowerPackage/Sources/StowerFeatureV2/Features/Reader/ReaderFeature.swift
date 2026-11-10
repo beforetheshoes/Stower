@@ -879,11 +879,14 @@ public struct InlineEmbedFeature {
         case close
     }
 
+    @Dependency(\.dismiss)
+    var dismiss
+
     public var body: some ReducerOf<Self> {
         Reduce { _, action in
             switch action {
             case .close:
-                return .none
+                return .run { [dismiss] _ in await dismiss() }
             }
         }
     }

@@ -587,6 +587,92 @@ struct AppFeatureTests {
         }
     }
 
+    // MARK: - Navigation consistency
+
+    @Test
+    func deletingTheSelectedTagReturnsTheLibraryToAllItems() async {
+        let tagID = UUID(7)
+        var state = AppFeature.State()
+        state.sidebar.selection = .tag(tagID)
+        state.library.filter = .tag(tagID)
+
+        let store = TestStore(initialState: state) {
+            AppFeature()
+        } withDependencies: {
+            $0.stowerRepository.deleteTag = { _ in }
+        }
+        store.exhaustivity = .off(showSkippedAssertions: false)
+
+        await store.send(.sidebar(.deleteTagTapped(tagID))) {
+            $0.sidebar.selection = .all
+        }
+        await store.receive(\.library.filterChanged) {
+            $0.library.filter = .all
+        }
+    }
+
+    @Test
+    func deletingTheOpenArticleClosesTheReader() async {
+        let item = SavedItem(title: "Open", content: "Body")
+        var state = AppFeature.State()
+        state.reader = ReaderFeature.State(item: item)
+        state.library.openItemID = item.id
+        state.isReaderFocused = true
+
+        let store = TestStore(initialState: state) {
+            AppFeature()
+        } withDependencies: {
+            $0.stowerRepository.deleteItem = { _ in }
+        }
+        store.exhaustivity = .off(showSkippedAssertions: false)
+
+        await store.send(.library(.deleteItem(item.id))) {
+            $0.reader = nil
+            $0.isReaderFocused = false
+            $0.library.openItemID = nil
+        }
+    }
+
+    @Test
+    func deletingAnotherArticleLeavesTheReaderOpen() async {
+        let item = SavedItem(title: "Open", content: "Body")
+        var state = AppFeature.State()
+        state.reader = ReaderFeature.State(item: item)
+
+        let store = TestStore(initialState: state) {
+            AppFeature()
+        } withDependencies: {
+            $0.stowerRepository.deleteItem = { _ in }
+        }
+        store.exhaustivity = .off(showSkippedAssertions: false)
+
+        await store.send(.library(.deleteItem(UUID(99))))
+        #expect(store.state.reader?.itemID == item.id)
+    }
+
+    @Test
+    func deletingForeverWaitsForConfirmation() async {
+        let id = UUID(5)
+        let deleted = LockIsolated<[UUID]>([])
+        let store = TestStore(initialState: AppFeature.State()) {
+            AppFeature()
+        } withDependencies: {
+            $0.stowerRepository.permanentlyDelete = { id in deleted.withValue { $0.append(id) } }
+        }
+        store.exhaustivity = .off(showSkippedAssertions: false)
+
+        await store.send(.library(.permanentlyDeleteTapped(id)))
+        #expect(store.state.library.deleteConfirmation != nil)
+        #expect(deleted.value.isEmpty)
+
+        await store.send(.library(.deleteConfirmation(.presented(.confirmed(id))))) {
+            $0.library.deleteConfirmation = nil
+        }
+        await store.receive(\.library.permanentlyDelete)
+        await store.finish()
+        #expect(deleted.value == [id])
+    }
+
     // MARK: - Reading position
 
     @Test

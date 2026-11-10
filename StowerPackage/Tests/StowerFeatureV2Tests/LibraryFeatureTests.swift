@@ -128,10 +128,13 @@ struct LibraryFeatureTests {
         #expect(store.state.items.map(\.id) == [second.id, first.id])
 
         await store.send(.sortOrderChanged(.oldestFirst)) {
-            $0.sortOrder = .oldestFirst
+            $0.$sortOrder.withLock { $0 = .oldestFirst }
         }
         await store.receive(.libraryLoaded)
         #expect(store.state.items.map(\.id) == [first.id, second.id])
+        // The choice outlives this screen's state: a fresh state — the next
+        // launch — starts with it.
+        #expect(LibraryFeature.State().sortOrder == .oldestFirst)
     }
 
     @Test

@@ -25,7 +25,11 @@ public struct LibraryFeature {
         public var errorMessage: String?
         /// Which list is currently being viewed. Part of the observed query.
         public var filter: LibraryFilter = .unread
+        // View options are remembered across launches; they used to reset
+        // to compact, newest-first every time.
+        @Shared(.appStorage("libraryDisplayStyle"))
         public var displayStyle: LibraryDisplayStyle = .compact
+        @Shared(.appStorage("librarySortOrder"))
         public var sortOrder: LibrarySortOrder = .newestFirst
         /// The item the reader is currently showing. Drives list selection
         /// on Mac and iPad; kept in sync by the app reducer.
@@ -41,6 +45,8 @@ public struct LibraryFeature {
         /// Shown in an alert; separate from `errorMessage`, which belongs to
         /// the URL composer.
         public var epubExportError: String?
+        /// Asks before an item is removed for good.
+        @Presents public var deleteConfirmation: ConfirmationDialogState<Action.DeleteConfirmation>?
 
         public var items: [SavedItem] { library.items }
         public var availableTags: [Tag] { library.tags }
@@ -100,6 +106,10 @@ public struct LibraryFeature {
         case deleteFinished
         case deleteFailed(String)
         case permanentlyDelete(UUID)
+        /// The user asked to delete an item forever; nothing is removed
+        /// until they confirm.
+        case permanentlyDeleteTapped(UUID)
+        case deleteConfirmation(PresentationAction<DeleteConfirmation>)
         case restoreFromTrash(UUID)
         case toggleStar(UUID)
         case toggleRead(UUID)
@@ -152,6 +162,10 @@ public struct LibraryFeature {
         /// The share sheet or save panel closed, saved or not. Deletes the temp file.
         case epubExportDismissed
         case epubExportErrorDismissed
+
+        public enum DeleteConfirmation: Equatable, Sendable {
+            case confirmed(UUID)
+        }
     }
 
     private enum CancelID: Hashable {
@@ -266,12 +280,12 @@ public struct LibraryFeature {
                 return .send(.openItem(item))
 
             case .displayStyleChanged(let displayStyle):
-                state.displayStyle = displayStyle
+                state.$displayStyle.withLock { $0 = displayStyle }
                 return .none
 
             case .sortOrderChanged(let sortOrder):
                 guard sortOrder != state.sortOrder else { return .none }
-                state.sortOrder = sortOrder
+                state.$sortOrder.withLock { $0 = sortOrder }
                 return loadLibrary(state)
 
             case let .toggleTagOnItem(itemID, tagID):
@@ -609,6 +623,27 @@ public struct LibraryFeature {
                     }
                 }
 
+            case .permanentlyDeleteTapped(let id):
+                state.deleteConfirmation = ConfirmationDialogState {
+                    TextState("Delete Forever?")
+                } actions: {
+                    ButtonState(role: .destructive, action: .confirmed(id)) {
+                        TextState("Delete Forever")
+                    }
+                    ButtonState(role: .cancel) {
+                        TextState("Cancel")
+                    }
+                } message: {
+                    TextState("This removes the item and its saved content from all your devices. It cannot be undone.")
+                }
+                return .none
+
+            case .deleteConfirmation(.presented(.confirmed(let id))):
+                return .send(.permanentlyDelete(id))
+
+            case .deleteConfirmation:
+                return .none
+
             case .permanentlyDelete(let id):
                 let repository = self.repository
                 let itemStorageClient = self.itemStorageClient
@@ -705,6 +740,7 @@ public struct LibraryFeature {
                 return .none
             }
         }
+        .ifLet(\.$deleteConfirmation, action: \.deleteConfirmation)
     }
 
     /// Hands a URL to the ingestion queue. The fetch itself runs in the
