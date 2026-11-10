@@ -12,19 +12,11 @@ import AppKit
 // happens to a picked file.
 extension LibraryScreen {
     func presentAddURLSheet() {
-        if store.saveState == .failed {
-            store.send(.sourceURLChanged(""))
-        }
-        DispatchQueue.main.async {
-            isAddURLPresented = true
-        }
+        store.send(.addURLButtonTapped)
     }
 
     func presentTextImportSheet() {
         store.send(.addTextTapped)
-        DispatchQueue.main.async {
-            isTextImportPresented = true
-        }
     }
 
     func presentTextFileImporter() {
@@ -36,9 +28,7 @@ extension LibraryScreen {
             handleTextImport(.success(url))
         }
         #else
-        DispatchQueue.main.async {
-            activeImportPicker = .text
-        }
+        store.send(.importPickerRequested(.text))
         #endif
     }
 
@@ -51,9 +41,7 @@ extension LibraryScreen {
             handlePDFImport(.success(url))
         }
         #else
-        DispatchQueue.main.async {
-            activeImportPicker = .pdf
-        }
+        store.send(.importPickerRequested(.pdf))
         #endif
     }
 
@@ -66,9 +54,7 @@ extension LibraryScreen {
             handleEPUBImport(.success(url))
         }
         #else
-        DispatchQueue.main.async {
-            activeImportPicker = .epub
-        }
+        store.send(.importPickerRequested(.epub))
         #endif
     }
 
@@ -81,9 +67,7 @@ extension LibraryScreen {
             handleWebsiteImport(.success(url))
         }
         #else
-        DispatchQueue.main.async {
-            activeImportPicker = .website
-        }
+        store.send(.importPickerRequested(.website))
         #endif
     }
 
@@ -245,16 +229,7 @@ extension LibraryScreen {
     }
 
     #if os(iOS)
-    enum IOSImportPicker: String, Identifiable {
-        case text = "text"
-        case pdf = "pdf"
-        case epub = "epub"
-        case website = "website"
-
-        var id: String { rawValue }
-    }
-
-    func contentTypes(for picker: IOSImportPicker) -> [UTType] {
+    func contentTypes(for picker: LibraryImportPicker) -> [UTType] {
         switch picker {
         case .text:
             return textImportContentTypes
@@ -349,7 +324,7 @@ extension LibraryScreen {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
-                        isAddURLPresented = false
+                        store.send(.addURLPresentationChanged(false))
                     }
                     .disabled(store.isSaving)
                 }
@@ -389,10 +364,7 @@ extension LibraryScreen {
             errorMessage: store.saveState == .failed ? store.errorMessage : nil,
             isSaving: store.isSaving,
             navigationTitle: "Add Text",
-            onCancel: {
-                isTextImportPresented = false
-                store.send(.textImportDismissed)
-            },
+            onCancel: { store.send(.textImportDismissed) },
             onSave: {
                 store.send(.saveTextImportTapped)
             }

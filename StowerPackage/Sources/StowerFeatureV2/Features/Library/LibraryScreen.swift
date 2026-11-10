@@ -25,10 +25,7 @@ public struct LibraryScreen: View {
     /// article is a list selection with a highlight and keyboard navigation.
     /// False on iPhone, where rows push the reader.
     let usesSelection: Bool
-    @State var isAddURLPresented = false
-    @State var isTextImportPresented = false
     #if os(iOS)
-    @State var activeImportPicker: IOSImportPicker?
     @FocusState var isURLFieldFocused: Bool
     #endif
 
@@ -75,7 +72,7 @@ public struct LibraryScreen: View {
             // The composer is a sheet on iOS, so a failure that arrives
             // while it is closed — a file import, an "Open in Stower" — had
             // nowhere to appear.
-            if let error = store.errorMessage, !isAddURLPresented {
+            if let error = store.errorMessage, !store.isAddURLPresented {
                 CopyableText(text: error, font: .body, textColor: palette.error)
                     .listRowBackground(Color.clear)
             }
@@ -276,13 +273,10 @@ public struct LibraryScreen: View {
                 }
             }
         }
-        .sheet(isPresented: $isAddURLPresented) {
+        // The reducer closes this the moment the link is queued; the fetch
+        // continues in the background and the row arrives on its own.
+        .sheet(isPresented: $store.isAddURLPresented.sending(\.addURLPresentationChanged)) {
             addURLSheet
-        }
-        // Dismiss the "Add URL" sheet the moment the link is queued; the
-        // fetch continues in the background and the row arrives on its own.
-        .onChange(of: store.queuedSaveCount) { _, _ in
-            isAddURLPresented = false
         }
         #else
         // Sort and layout were only reachable on iOS.
@@ -309,30 +303,15 @@ public struct LibraryScreen: View {
             }
         }
         #endif
-        .sheet(
-            isPresented: Binding(
-                get: { isTextImportPresented && store.textImportDraft != nil },
-                set: {
-                    isTextImportPresented = $0
-                    if !$0 {
-                        store.send(.textImportDismissed)
-                    }
-                }
-            )
-        ) {
+        .sheet(isPresented: $store.showsTextImportSheet.sending(\.textImportPresentationChanged)) {
             textImportSheet
         }
-        .onChange(of: store.saveState) { _, newValue in
-            if isTextImportPresented, newValue == .ready, store.textImportDraft == nil {
-                isTextImportPresented = false
-            }
-        }
         #if os(iOS)
-        .sheet(item: $activeImportPicker) { picker in
+        .sheet(item: $store.importPicker.sending(\.importPickerChanged)) { picker in
             IOSDocumentPicker(
                 allowedContentTypes: contentTypes(for: picker)
             ) { result in
-                activeImportPicker = nil
+                store.send(.importPickerChanged(nil))
                 switch picker {
                 case .text:
                     handleTextImport(result)

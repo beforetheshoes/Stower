@@ -27,3 +27,14 @@ public enum LibrarySortOrder: String, CaseIterable, Equatable, Sendable {
         }
     }
 }
+
+
+/// The kinds of file the library can import through a document picker.
+public enum LibraryImportPicker: String, Identifiable, Equatable, Sendable {
+    case text = "text"
+    case pdf = "pdf"
+    case epub = "epub"
+    case website = "website"
+
+    public var id: String { rawValue }
+}

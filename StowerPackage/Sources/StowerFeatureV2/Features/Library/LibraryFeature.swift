@@ -38,6 +38,19 @@ public struct LibraryFeature {
         public var inlineTagCreation: InlineTagCreation?
         /// Draft for the in-app text/markdown composer.
         public var textImportDraft: TextImportDraft?
+        /// Which of the screen's sheets are up. These were view-local state,
+        /// set a run-loop turn late by hand so a sheet opened from a menu
+        /// was not dropped while the menu was still closing; the reducer
+        /// now owns them and does that hop itself.
+        public var isAddURLPresented = false
+        public var isTextImportPresented = false
+        /// The iOS document picker being shown, if any. macOS uses an open
+        /// panel instead.
+        public var importPicker: LibraryImportPicker?
+
+        public var showsTextImportSheet: Bool {
+            isTextImportPresented && textImportDraft != nil
+        }
         /// The item whose EPUB is being built. Only one export runs at a time.
         public var exportingItemID: UUID?
         /// A finished EPUB waiting for the share sheet (iOS) or save panel (macOS).
@@ -138,6 +151,11 @@ public struct LibraryFeature {
         case downloadNow(UUID)
         case addTextTapped
         case textImportDismissed
+        case addURLButtonTapped
+        case addURLPresentationChanged(Bool)
+        case textImportPresentationChanged(Bool)
+        case importPickerRequested(LibraryImportPicker)
+        case importPickerChanged(LibraryImportPicker?)
         case textImportTitleChanged(String)
         case textImportTextChanged(String)
         case textImportModeChanged(TextImportMode)
@@ -195,6 +213,29 @@ public struct LibraryFeature {
     var clock
     @Dependency(\.epubExportClient)
     var epubExportClient
+
+    private enum Presentation: Sendable {
+        case addURL
+        case textImport
+        case picker(LibraryImportPicker)
+    }
+
+    /// Presents on a later main-actor turn. Every sheet here can be opened
+    /// from a toolbar menu, and a sheet presented in the same turn as the
+    /// menu's dismissal is dropped by SwiftUI.
+    private func presentAfterMenuCloses(_ presentation: Presentation) -> EffectOf<Self> {
+        .run { send in
+            await Task.yield()
+            switch presentation {
+            case .addURL:
+                await send(.addURLPresentationChanged(true))
+            case .textImport:
+                await send(.textImportPresentationChanged(true))
+            case .picker(let picker):
+                await send(.importPickerChanged(picker))
+            }
+        }
+    }
 
     public var body: some ReducerOf<Self> {
         Reduce { state, action in
@@ -391,10 +432,33 @@ public struct LibraryFeature {
                     state.saveState = .queued
                     state.errorMessage = nil
                 }
-                return .none
+                return presentAfterMenuCloses(.textImport)
 
             case .textImportDismissed:
                 state.textImportDraft = nil
+                state.isTextImportPresented = false
+                return .none
+
+            case .addURLButtonTapped:
+                let present = presentAfterMenuCloses(.addURL)
+                // A failed save leaves its URL and error in the composer;
+                // opening it again starts clean.
+                guard state.saveState == .failed else { return present }
+                return .merge(.send(.sourceURLChanged("")), present)
+
+            case .addURLPresentationChanged(let isPresented):
+                state.isAddURLPresented = isPresented
+                return .none
+
+            case .textImportPresentationChanged(let isPresented):
+                state.isTextImportPresented = isPresented
+                return isPresented ? .none : .send(.textImportDismissed)
+
+            case .importPickerRequested(let picker):
+                return presentAfterMenuCloses(.picker(picker))
+
+            case .importPickerChanged(let picker):
+                state.importPicker = picker
                 return .none
 
             case .textImportTitleChanged(let title):
@@ -491,6 +555,7 @@ public struct LibraryFeature {
                 state.saveState = .queued
                 state.sourceURL = ""
                 state.queuedSaveCount += 1
+                state.isAddURLPresented = false
                 return .none
 
             case .cancelURLSaveTapped:
@@ -504,6 +569,7 @@ public struct LibraryFeature {
                 state.saveState = item.processingState
                 state.sourceURL = ""
                 state.textImportDraft = nil
+                state.isTextImportPresented = false
                 return .none
 
             case .saveURLFailed(let error):
