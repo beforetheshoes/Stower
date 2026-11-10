@@ -124,11 +124,34 @@ extension StowerRepository {
     static func existingLiveItemID(_ db: Database, matching url: String?) throws -> UUID? {
         guard let key = normalizedURLKey(url) else { return nil }
         let stableID = stableItemID(from: url)
-        // Runs inside every ingest write, so only the columns the match
-        // needs come off disk. URL normalization is done in Swift, which is
-        // why this cannot be a WHERE clause.
-        let candidates = try SavedItemSyncTable
-            .where { $0.deletedAt.is(nil) }
+        // Runs inside every ingest write.
+        //
+        // Fast path: an item saved from this URL before has the URL's
+        // deterministic ID, so one primary-key lookup settles the common
+        // re-save without looking at any other row.
+        let stable = try SavedItemSyncTable
+            .where { $0.id.eq(stableID) && $0.deletedAt.is(nil) }
+            .select { ($0.canonicalURL, $0.sourceURL) }
+            .fetchOne(db)
+        if let stable, normalizedURLKey(stable.0 ?? stable.1) == key {
+            return stableID
+        }
+
+        // Otherwise look for a row saved under a different ID (an older
+        // build, or a URL that normalizes to the same key). Normalization is
+        // done in Swift, so SQL narrows to rows that mention the same host
+        // and only those come off disk. LIKE is case-insensitive for ASCII,
+        // which covers the host's lowercasing; a URL with no host falls back
+        // to every live row.
+        var live = SavedItemSyncTable.where { $0.deletedAt.is(nil) }
+        if let host = URLComponents(string: key)?.host, !host.isEmpty {
+            let pattern = "%" + LibraryQueries.escapeLikePattern(host) + "%"
+            live = live.where {
+                ($0.canonicalURL ?? "").like(pattern, escape: "\\")
+                    || ($0.sourceURL ?? "").like(pattern, escape: "\\")
+            }
+        }
+        let candidates = try live
             .select {
                 LiveItemURLRow.Columns(
                     id: $0.id,
