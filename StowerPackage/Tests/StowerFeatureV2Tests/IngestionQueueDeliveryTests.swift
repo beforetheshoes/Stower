@@ -1,3 +1,4 @@
+import ComposableArchitecture
 import Dependencies
 import Foundation
 @testable import StowerData
@@ -79,7 +80,150 @@ struct IngestionQueueDeliveryTests {
         #expect(await recorder.entries == ["second"])
     }
 
+    @Test(.timeLimit(.minutes(1)))
+    func cancellingTheCallerCancelsTheDrainItIsWaitingOn() async throws {
+        // Effects are cancelled as the app enters the background. The gate
+        // runs each drain in its own task, and used to leave that task
+        // running — fetching and writing — after its caller was cancelled.
+        let started = AsyncSignal()
+        let coordinator = withDependencies {
+            $0.context = .live
+        } operation: {
+            currentIngestionCoordinator()
+        }
+
+        let caller = Task {
+            try await coordinator.run {
+                await started.signal()
+                try await Task.never()
+            }
+        }
+        await started.wait()
+        caller.cancel()
+
+        await #expect(throws: CancellationError.self) {
+            try await caller.value
+        }
+    }
+
+    @MainActor
+    @Test(.timeLimit(.minutes(1)))
+    func importInterruptedByBackgroundingRunsAgainOnReturn() async throws {
+        // Leaving the app mid-capture used to strand the job in `processing`
+        // for ten minutes and charge it one of its three attempts.
+        let url = try #require(URL(string: "https://example.com/interrupted"))
+        let job = IngestionJob(kind: .url, payload: url.absoluteString)
+        let queue = LockIsolated([job])
+        let released = LockIsolated<[Set<UUID>]>([])
+        let failures = LockIsolated(0)
+        let completed = LockIsolated(0)
+        let saveCalls = LockIsolated(0)
+        let captureStarted = AsyncSignal()
+        let coordinator = withDependencies {
+            $0.context = .live
+        } operation: {
+            currentIngestionCoordinator()
+        }
+
+        let store = TestStore(initialState: AppFeature.State()) {
+            AppFeature()
+        } withDependencies: {
+            $0.ingestionCoordinator = coordinator
+            $0.articleSaveClient.save = { _ in
+                let call = saveCalls.withValue { calls -> Int in
+                    calls += 1
+                    return calls
+                }
+                if call == 1 {
+                    await captureStarted.signal()
+                    try await Task.never()
+                }
+                return ArticleSaveResult(item: SavedItem(title: "Saved", content: "Body"), state: .ready)
+            }
+            $0.stowerRepository.claimNextIngestionJob = { _ in
+                queue.withValue { $0.isEmpty ? nil : $0.removeFirst() }
+            }
+            $0.stowerRepository.releaseIngestionJobs = { ids in
+                released.withValue { $0.append(ids) }
+                queue.withValue { $0.append(job) }
+            }
+            $0.stowerRepository.failIngestionJob = { _, _, _ in failures.withValue { $0 += 1 } }
+            $0.stowerRepository.completeIngestionJob = { _, _ in completed.withValue { $0 += 1 } }
+            $0.stowerRepository.fetchFailedIngestionJobs = { [] }
+            $0.date.now = Date(timeIntervalSince1970: 1000)
+        }
+        store.exhaustivity = .off(showSkippedAssertions: false)
+
+        await store.send(.library(.urlQueued(url))) {
+            $0.pendingSaveCount = 1
+        }
+        await captureStarted.wait()
+
+        await store.send(.sceneDidEnterBackground) {
+            $0.isSceneInBackground = true
+        }
+        // The notice survives the trip to the background.
+        #expect(store.state.pendingSaveCount == 1)
+
+        await store.send(.sceneDidBecomeActive) {
+            $0.isSceneInBackground = false
+        }
+        await store.receive(\.ingestionDrainFinished) {
+            $0.pendingSaveCount = 0
+        }
+
+        #expect(released.value == [[job.id]])
+        #expect(failures.value == 0)
+        #expect(saveCalls.value == 2)
+        #expect(completed.value == 1)
+    }
+
     // MARK: - Queue
+
+    @Test
+    func releasedJobIsClaimableImmediatelyWithoutLosingAnAttempt() async throws {
+        let database = try StowerDatabase.makeDatabase()
+        let repository = StowerRepository.live(database: database, cloudSyncClient: .noop)
+        let now = Date(timeIntervalSince1970: 8000)
+
+        try await withDependencies {
+            $0.date.now = now
+            $0.uuid = .incrementing
+        } operation: {
+            try await repository.enqueueIngestionJob(.url, "https://example.com/post")
+        }
+
+        let first = try #require(try await repository.claimNextIngestionJob(now))
+        #expect(first.attemptCount == 1)
+        // Still claimed: nothing else to hand out.
+        #expect(try await repository.claimNextIngestionJob(now) == nil)
+
+        try await repository.releaseIngestionJobs([first.id])
+
+        let second = try #require(try await repository.claimNextIngestionJob(now))
+        #expect(second.id == first.id)
+        #expect(second.attemptCount == 1)
+    }
+
+    @Test
+    func releasingDoesNotReviveAJobThatAlreadyFinished() async throws {
+        let database = try StowerDatabase.makeDatabase()
+        let repository = StowerRepository.live(database: database, cloudSyncClient: .noop)
+        let now = Date(timeIntervalSince1970: 9000)
+
+        try await withDependencies {
+            $0.date.now = now
+            $0.uuid = .incrementing
+        } operation: {
+            try await repository.enqueueIngestionJob(.url, "https://example.com/post")
+        }
+        let job = try #require(try await repository.claimNextIngestionJob(now))
+        try await repository.completeIngestionJob(job.id, now)
+
+        try await repository.releaseIngestionJobs([job.id])
+
+        #expect(try await repository.claimNextIngestionJob(now) == nil)
+    }
 
     @Test
     func resharingTheSameURLDoesNotQueueASecondCapture() async throws {

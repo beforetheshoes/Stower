@@ -189,6 +189,37 @@ extension StowerRepository {
         }
     }
 
+    /// Puts claimed jobs back in the queue without charging them an attempt.
+    ///
+    /// For imports that were cut short by the app being backgrounded or the
+    /// drain being cancelled: nothing is wrong with the job, so it should
+    /// neither wait out the stale-claim timeout nor move towards `failed`.
+    /// Only jobs still in `processing` are touched.
+    static func _releaseIngestionJobs(
+        database: any DatabaseWriter
+    ) -> @Sendable (Set<UUID>) async throws -> Void {
+        { ids in
+            guard !ids.isEmpty else { return }
+            let ids = Array(ids)
+            try await database.write { db in
+                try IngestionJobLocalTable
+                    .where { $0.id.in(ids) }
+                    .where { $0.status.eq(IngestionJob.Status.processing.rawValue) }
+                    .where { $0.attemptCount > 0 }
+                    .update { $0.attemptCount -= 1 }
+                    .execute(db)
+                try IngestionJobLocalTable
+                    .where { $0.id.in(ids) }
+                    .where { $0.status.eq(IngestionJob.Status.processing.rawValue) }
+                    .update {
+                        $0.status = IngestionJob.Status.queued.rawValue
+                        $0.claimedAt = nil as Date?
+                    }
+                    .execute(db)
+            }
+        }
+    }
+
     static func _fetchFailedIngestionJobs(
         database: any DatabaseWriter
     ) -> @Sendable () async throws -> [IngestionJob] {

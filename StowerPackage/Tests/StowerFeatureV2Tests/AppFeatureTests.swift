@@ -437,7 +437,7 @@ struct AppFeatureTests {
             $0.library.queuedSaveCount = 1
         }
         await store.receive(.failedImportsLoaded([]))
-        await store.receive(.queuedSaveFinished) {
+        await store.receive(.ingestionDrainFinished) {
             $0.pendingSaveCount = 0
         }
         #expect(saved.value == [url])
@@ -484,7 +484,7 @@ struct AppFeatureTests {
         store.exhaustivity = .off(showSkippedAssertions: false)
 
         await store.send(.library(.urlQueued(try #require(URL(string: "https://example.com/x")))))
-        await store.receive(.queuedSaveFinished)
+        await store.receive(.ingestionDrainFinished)
 
         #expect(ingested.value == [staged])
         #expect(created.value.count == 1)
@@ -523,7 +523,7 @@ struct AppFeatureTests {
         store.exhaustivity = .off(showSkippedAssertions: false)
 
         await store.send(.library(.urlQueued(try #require(URL(string: "https://example.com/x")))))
-        await store.receive(.queuedSaveFinished)
+        await store.receive(.ingestionDrainFinished)
 
         #expect(failures.value == [EPUBIngestionError.protectedContent.localizedDescription])
         #expect(!FileManager.default.fileExists(atPath: scratchDir.path))

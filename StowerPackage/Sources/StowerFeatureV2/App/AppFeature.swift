@@ -32,6 +32,9 @@ public struct AppFeature {
         /// Number of URL saves queued from this app that are still being
         /// fetched. Drives the "Saving…" notice.
         public var pendingSaveCount = 0
+        /// Queue drains started from the reducer that have not reported back.
+        /// The "Saving…" notice clears when the last one finishes.
+        var activeDrainCount = 0
         public var recentlyCompletedItem: SavedItem?
         public var cloudSyncStatus: CloudSyncStatus = .starting
         /// The ordered item IDs the reader was opened from. Next/previous
@@ -134,7 +137,7 @@ public struct AppFeature {
         case syncFollowUpFinished
         case sceneDidEnterBackground
         case failedImportsLoaded([FailedImport])
-        case queuedSaveFinished
+        case ingestionDrainFinished
         case retryFailedImportsTapped
         case dismissFailedImportsTapped
         case dismissStartupErrorTapped
@@ -336,9 +339,14 @@ public struct AppFeature {
                     state.isSyncFollowUpRunning = false
                     state.syncFollowUpPending = true
                 }
+                // Cancelled drains never report back. `pendingSaveCount` is
+                // left alone so the "Saving…" notice is still there on return;
+                // the drain that every activation starts clears it.
+                state.activeDrainCount = 0
                 return .merge(
                     .cancel(id: CancelID.startupMaintenance),
-                    .cancel(id: CancelID.syncFollowUp)
+                    .cancel(id: CancelID.syncFollowUp),
+                    .cancel(id: CancelID.ingestionDrain)
                 )
 
             case .startupFinished:
@@ -355,8 +363,13 @@ public struct AppFeature {
                 state.failedImports = imports
                 return .none
 
-            case .queuedSaveFinished:
-                state.pendingSaveCount = max(0, state.pendingSaveCount - 1)
+            case .ingestionDrainFinished:
+                // Drains are serialized and each one empties the queue, so
+                // once none is outstanding every queued save has been handled.
+                state.activeDrainCount = max(0, state.activeDrainCount - 1)
+                if state.activeDrainCount == 0 {
+                    state.pendingSaveCount = 0
+                }
                 return .none
 
             case .library(.urlQueued):
@@ -364,51 +377,15 @@ public struct AppFeature {
                 // than at the next launch, and show progress meanwhile. The
                 // row appears through observation as soon as the item exists.
                 state.pendingSaveCount += 1
-                let repository = self.repository
-                let ingestionClient = self.ingestionClient
-                let pdfIngestionClient = self.pdfIngestionClient
-                let textIngestionClient = self.textIngestionClient
-                let date = self.date
-                let ingestionCoordinator = self.ingestionCoordinator
-                return .run { send in
-                    try? await ingestionCoordinator.run {
-                        try await processIngestionJobs(
-                            repository: repository,
-                            ingestionClient: ingestionClient,
-                            pdfIngestionClient: pdfIngestionClient,
-                            textIngestionClient: textIngestionClient
-                        ) { date.now }
-                    }
-                    let jobs = (try? await repository.fetchFailedIngestionJobs()) ?? []
-                    await send(.failedImportsLoaded(FailedImport.list(from: jobs)))
-                    await send(.queuedSaveFinished)
-                }
+                return drainIngestionQueue(state: &state)
 
             case .dismissStartupErrorTapped:
                 state.startupErrorMessage = nil
                 return .none
 
             case .retryFailedImportsTapped:
-                let repository = self.repository
-                let ingestionClient = self.ingestionClient
-                let pdfIngestionClient = self.pdfIngestionClient
-                let textIngestionClient = self.textIngestionClient
-                let date = self.date
-                let ingestionCoordinator = self.ingestionCoordinator
                 state.failedImports = []
-                return .run { send in
-                    try? await repository.retryFailedIngestionJobs()
-                    try? await ingestionCoordinator.run {
-                        try await processIngestionJobs(
-                            repository: repository,
-                            ingestionClient: ingestionClient,
-                            pdfIngestionClient: pdfIngestionClient,
-                            textIngestionClient: textIngestionClient
-                        ) { date.now }
-                    }
-                    let jobs = (try? await repository.fetchFailedIngestionJobs()) ?? []
-                    await send(.failedImportsLoaded(FailedImport.list(from: jobs)))
-                }
+                return drainIngestionQueue(state: &state, retryingFailed: true)
 
             case .dismissFailedImportsTapped:
                 let repository = self.repository
@@ -436,25 +413,7 @@ public struct AppFeature {
                 // until some later launch. `ingestionCoordinator` serializes
                 // the two drains, so overlapping is safe.
                 state.isSceneInBackground = false
-                let repository = self.repository
-                let ingestionClient = self.ingestionClient
-                let pdfIngestionClient = self.pdfIngestionClient
-                let textIngestionClient = self.textIngestionClient
-                let date = self.date
-                let ingestionCoordinator = self.ingestionCoordinator
-                let drain: EffectOf<Self> = .run { send in
-                    try? await ingestionCoordinator.run {
-                        try await processIngestionJobs(
-                            repository: repository,
-                            ingestionClient: ingestionClient,
-                            pdfIngestionClient: pdfIngestionClient,
-                            textIngestionClient: textIngestionClient
-                        ) { date.now }
-                    }
-                    let jobs = (try? await repository.fetchFailedIngestionJobs()) ?? []
-                    await send(.failedImportsLoaded(FailedImport.list(from: jobs)))
-                }
-                var effects = [drain]
+                var effects = [drainIngestionQueue(state: &state)]
                 // Anything the background transition cut short runs now.
                 if state.startupMaintenancePending {
                     state.startupMaintenancePending = false
@@ -719,6 +678,7 @@ public struct AppFeature {
         case startup
         case startupMaintenance
         case syncFollowUp
+        case ingestionDrain
         case syncStatus
         case periodicSync
         case completedItemNotice
@@ -752,7 +712,8 @@ public struct AppFeature {
                         repository: repository,
                         ingestionClient: ingestionClient,
                         pdfIngestionClient: pdfIngestionClient,
-                        textIngestionClient: textIngestionClient
+                        textIngestionClient: textIngestionClient,
+                        ingestionCoordinator: ingestionCoordinator
                     ) { date.now }
                 }
                 await send(.failedImportsLoaded(
@@ -790,7 +751,8 @@ public struct AppFeature {
                             repository: repository,
                             ingestionClient: ingestionClient,
                             pdfIngestionClient: pdfIngestionClient,
-                            textIngestionClient: textIngestionClient
+                            textIngestionClient: textIngestionClient,
+                            ingestionCoordinator: ingestionCoordinator
                         ) { date.now }
                     }
                 }
@@ -829,7 +791,8 @@ public struct AppFeature {
                     repository: repository,
                     ingestionClient: ingestionClient,
                     pdfIngestionClient: pdfIngestionClient,
-                    textIngestionClient: textIngestionClient
+                    textIngestionClient: textIngestionClient,
+                    ingestionCoordinator: ingestionCoordinator
                 ) { date.now }
             }
             let jobs = (try? await repository.fetchFailedIngestionJobs()) ?? []
@@ -837,6 +800,42 @@ public struct AppFeature {
             await send(.syncFollowUpFinished)
         }
         .cancellable(id: CancelID.syncFollowUp, cancelInFlight: true)
+    }
+
+    /// Drains the ingestion queue and refreshes the failed-import list.
+    ///
+    /// Cancelled when the scene enters the background (see
+    /// `sceneDidEnterBackground`); every activation starts a fresh drain, so
+    /// whatever was cut short runs again then.
+    private func drainIngestionQueue(
+        state: inout State,
+        retryingFailed: Bool = false
+    ) -> EffectOf<Self> {
+        state.activeDrainCount += 1
+        let repository = self.repository
+        let ingestionClient = self.ingestionClient
+        let pdfIngestionClient = self.pdfIngestionClient
+        let textIngestionClient = self.textIngestionClient
+        let date = self.date
+        let ingestionCoordinator = self.ingestionCoordinator
+        return .run { send in
+            if retryingFailed {
+                try? await repository.retryFailedIngestionJobs()
+            }
+            try? await ingestionCoordinator.run {
+                try await processIngestionJobs(
+                    repository: repository,
+                    ingestionClient: ingestionClient,
+                    pdfIngestionClient: pdfIngestionClient,
+                    textIngestionClient: textIngestionClient,
+                    ingestionCoordinator: ingestionCoordinator
+                ) { date.now }
+            }
+            let jobs = (try? await repository.fetchFailedIngestionJobs()) ?? []
+            await send(.failedImportsLoaded(FailedImport.list(from: jobs)))
+            await send(.ingestionDrainFinished)
+        }
+        .cancellable(id: CancelID.ingestionDrain)
     }
 
     private func navigateReader(
@@ -865,8 +864,22 @@ private func processIngestionJobs(
     ingestionClient: URLIngestionClient,
     pdfIngestionClient: PDFIngestionClient,
     textIngestionClient: TextIngestionClient,
+    ingestionCoordinator: IngestionCoordinator,
     now: @escaping @Sendable () -> Date
 ) async throws {
+    // Jobs an earlier drain had to abandon go straight back in the queue.
+    let interrupted = await ingestionCoordinator.takeInterrupted()
+    if !interrupted.isEmpty {
+        do {
+            try await repository.releaseIngestionJobs(interrupted)
+        } catch {
+            for id in interrupted {
+                await ingestionCoordinator.noteInterrupted(id)
+            }
+            throw error
+        }
+    }
+
     while let job = try await repository.claimNextIngestionJob(now()) {
         do {
             try await processIngestionJob(
@@ -877,16 +890,18 @@ private func processIngestionJobs(
                 textIngestionClient: textIngestionClient
             )
             try await repository.completeIngestionJob(job.id, now())
-        } catch is CancellationError {
-            try? await repository.failIngestionJob(job.id, "Import cancelled.", now())
+        } catch where isIngestionInterruption(error) {
+            // The app is being backgrounded (the database has stopped taking
+            // locks) or the drain was cancelled. Nothing is wrong with this
+            // import — recording it as a failure would blame the user's
+            // article for the app being suspended. The database may refuse a
+            // write right now, so the job is remembered and released at the
+            // start of the next drain.
+            await ingestionCoordinator.noteInterrupted(job.id)
+            if error.isDatabaseSuspension, !Task.isCancelled {
+                return
+            }
             throw CancellationError()
-        } catch where error.isDatabaseSuspension {
-            // The app is being backgrounded and the database has stopped
-            // taking locks. Nothing is wrong with this import — stop draining
-            // and let the job be reclaimed on the next run. Recording it as a
-            // failure would blame the user's article for the app being
-            // suspended, and surface "database is suspended" as the reason.
-            return
         } catch {
             // `try?`, not `try`: if recording the failure itself fails, the
             // remaining queued imports must still be drained. Rethrowing here
@@ -894,6 +909,14 @@ private func processIngestionJobs(
             try? await repository.failIngestionJob(job.id, error.localizedDescription, now())
         }
     }
+}
+
+/// Whether an import stopped because the app is going away rather than
+/// because of the content being imported. Once the drain's task is cancelled
+/// any error counts: cancellation surfaces as whatever the interrupted layer
+/// happens to throw.
+private func isIngestionInterruption(_ error: any Error) -> Bool {
+    Task.isCancelled || error is CancellationError || error.isDatabaseSuspension
 }
 
 private func processIngestionJob(
@@ -932,6 +955,9 @@ private func processIngestionJob(
                     try? await repository.enqueueIngestionJob(.uploadAsset, payload)
                 }
                 try? FileManager.default.removeItem(at: scratchDir)
+            } catch where isIngestionInterruption(error) {
+                // Keep the staged file: the job runs again.
+                throw error
             } catch {
                 let fallback = pdfURL.deletingPathExtension().lastPathComponent
                 _ = try? await repository.createItemFromIngestion(
@@ -998,6 +1024,8 @@ private func processIngestionJob(
                     mode
                 )
                 try await repository.hydrateItemContent(payload.itemID, result)
+            } catch where isIngestionInterruption(error) {
+                throw error
             } catch {
                 try? await repository.updateLocalContentStatus(payload.itemID, "failed", error.localizedDescription)
                 throw error
@@ -1009,6 +1037,8 @@ private func processIngestionJob(
                 do {
                     try await repository.updateLocalContentStatus(payload.itemID, "downloading", nil)
                     _ = try await articleSaveClient.hydrate(payload.itemID, url)
+                } catch where isIngestionInterruption(error) {
+                    throw error
                 } catch {
                     try? await repository.updateLocalContentStatus(payload.itemID, "failed", error.localizedDescription)
                     throw error
@@ -1030,6 +1060,9 @@ private func processIngestionJob(
                     repository: repository
                 )
                 try? FileManager.default.removeItem(at: scratchDir)
+            } catch where isIngestionInterruption(error) {
+                // Keep the staged file: the job runs again.
+                throw error
             } catch {
                 let fallback = zipURL.deletingPathExtension().lastPathComponent
                 _ = try? await repository.createItemFromIngestion(
@@ -1071,6 +1104,8 @@ private func processIngestionJob(
                     archive: archive,
                     repository: repository
                 )
+            } catch where isIngestionInterruption(error) {
+                throw error
             } catch {
                 try? await repository.updateLocalContentStatus(
                     payload.itemID,
