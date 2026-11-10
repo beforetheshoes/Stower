@@ -112,14 +112,11 @@ opt_in_rules:
 disabled_rules:
   - todo
   - line_length
-  - type_body_length
   - force_try
   - type_contents_order
   - no_grouping_extension
   - file_header
   - type_name
-  - cyclomatic_complexity
-  - function_body_length
   - force_cast
   - identifier_name
   - shorthand_operator
@@ -285,5 +282,20 @@ vertical_whitespace:
 file_length:
   warning: 1000
   error: 1200
+
+# These were disabled outright. They are back on as ratchets, set just above
+# today's worst case: nothing may get bigger than the biggest thing already
+# here. Lower them as the large reducers and the storage client are split.
+type_body_length:
+  warning: 850
+  error: 1000
+
+function_body_length:
+  warning: 260
+  error: 320
+
+cyclomatic_complexity:
+  warning: 36
+  error: 44
 
 warning_threshold: 2500

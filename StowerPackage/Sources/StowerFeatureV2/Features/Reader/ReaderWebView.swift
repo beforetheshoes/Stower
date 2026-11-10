@@ -15,6 +15,9 @@ private final class ReaderWebViewSession {
     }
 
     var archiveServer: LocalArchiveServer?
+    /// Whether the item has a saved archive on disk, checked once per load.
+    /// The appearance updates that follow ask on every change.
+    var hasArchive = false
     var hasRestoredPosition = false
     /// False until the page has loaded and its position is restored. The
     /// web view stays invisible (the themed background shows) until then, so
@@ -37,6 +40,7 @@ private final class ReaderWebViewSession {
         ReaderProgressCoordinator.shared.unregister(page)
         archiveServer?.stop()
         archiveServer = nil
+        hasArchive = false
         hasRestoredPosition = false
         isRevealed = false
         loadKey = nil
@@ -279,6 +283,7 @@ public struct ReaderWebView: View {
         session.beginLoading(loadKey)
 
         let hasArchive = AssetArchiver.archiveExists(for: itemID)
+        session.hasArchive = hasArchive
         let isArchive = isWebViewFormat && hasArchive
         let nativeArchiveURL = usesNativeCapture
             ? ArticleCapturePackage.archiveURL(for: itemID, original: isWebViewFormat)
@@ -511,7 +516,7 @@ public struct ReaderWebView: View {
 
         // Interactive mode: leave the original page untouched. Appearance
         // settings apply only to Reader View.
-        if isWebViewFormat && (usesNativeCapture || AssetArchiver.archiveExists(for: itemID)) {
+        if isWebViewFormat && (usesNativeCapture || session.hasArchive) {
             return
         }
 
