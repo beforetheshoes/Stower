@@ -225,7 +225,7 @@ struct SuspensionDoesNotBecomeUserFacingFailureTests {
         store.exhaustivity = .off(showSkippedAssertions: false)
 
         await store.send(.sceneDidBecomeActive)
-        await store.receive(\.failedImportsLoaded)
+        await store.receive(\.ingestion.failedImportsLoaded)
 
         // The job must not be marked failed — nothing is wrong with it.
         let failures = try await repository.fetchFailedIngestionJobs()

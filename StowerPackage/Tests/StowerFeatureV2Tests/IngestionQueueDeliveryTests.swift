@@ -154,8 +154,9 @@ struct IngestionQueueDeliveryTests {
         }
         store.exhaustivity = .off(showSkippedAssertions: false)
 
-        await store.send(.library(.urlQueued(url))) {
-            $0.pendingSaveCount = 1
+        await store.send(.library(.urlQueued(url)))
+        await store.receive(\.ingestion.saveQueued) {
+            $0.ingestion.pendingSaveCount = 1
         }
         await captureStarted.wait()
 
@@ -168,8 +169,8 @@ struct IngestionQueueDeliveryTests {
         await store.send(.sceneDidBecomeActive) {
             $0.isSceneInBackground = false
         }
-        await store.receive(\.ingestionDrainFinished) {
-            $0.pendingSaveCount = 0
+        await store.receive(\.ingestion.drainFinished) {
+            $0.ingestion.pendingSaveCount = 0
         }
 
         #expect(released.value == [[job.id]])

@@ -37,9 +37,9 @@ extension AppFeature {
                         ingestionCoordinator: ingestionCoordinator
                     ) { date.now }
                 }
-                await send(.failedImportsLoaded(
+                await send(.ingestion(.failedImportsLoaded(
                     FailedImport.list(from: try await repository.fetchFailedIngestionJobs())
-                ))
+                )))
                 // Best effort: the coordinator reports sync
                 // problems through the status stream, and a
                 // failed push is not a failed launch.
@@ -93,91 +93,6 @@ extension AppFeature {
             }
         }
         .cancellable(id: CancelID.startupMaintenance, cancelInFlight: true)
-    }
-
-    /// Hydrates content for records that just arrived through CloudKit and
-    /// drains anything the share extension queued.
-    func syncFollowUp() -> EffectOf<Self> {
-        let repository = self.repository
-        let ingestionClient = self.ingestionClient
-        let pdfIngestionClient = self.pdfIngestionClient
-        let textIngestionClient = self.textIngestionClient
-        let date = self.date
-        let ingestionCoordinator = self.ingestionCoordinator
-        return .run { send in
-            // Each scan is independent: one failing must not stop the rest.
-            // A scan refused because the database is suspended is different —
-            // the whole pass is repeated on the next activation.
-            let scans: [@Sendable () async throws -> Int] = [
-                repository.enqueueHydrationJobsForMissingContent,
-                repository.hydratePDFItemsFromSyncedContent,
-                repository.hydrateTextItemsFromSyncedContent,
-                repository.hydrateWebsiteItemsFromSyncedContent,
-                repository.hydrateBookItemsFromSyncedContent,
-                repository.reconcileOrphanedTagAssignments,
-            ]
-            for scan in scans {
-                do {
-                    _ = try await scan()
-                } catch where error.isDatabaseSuspension {
-                    await send(.syncFollowUpInterrupted)
-                    return
-                } catch is CancellationError {
-                    return
-                } catch {
-                    reportIssue(error)
-                }
-            }
-            try? await ingestionCoordinator.run {
-                try await processIngestionJobs(
-                    repository: repository,
-                    ingestionClient: ingestionClient,
-                    pdfIngestionClient: pdfIngestionClient,
-                    textIngestionClient: textIngestionClient,
-                    ingestionCoordinator: ingestionCoordinator
-                ) { date.now }
-            }
-            let jobs = await reportingErrors { try await repository.fetchFailedIngestionJobs() } ?? []
-            await send(.failedImportsLoaded(FailedImport.list(from: jobs)))
-            await send(.syncFollowUpFinished)
-        }
-        .cancellable(id: CancelID.syncFollowUp, cancelInFlight: true)
-    }
-
-    /// Drains the ingestion queue and refreshes the failed-import list.
-    ///
-    /// Cancelled when the scene enters the background (see
-    /// `sceneDidEnterBackground`); every activation starts a fresh drain, so
-    /// whatever was cut short runs again then.
-    func drainIngestionQueue(
-        state: inout State,
-        retryingFailed: Bool = false
-    ) -> EffectOf<Self> {
-        state.activeDrainCount += 1
-        let repository = self.repository
-        let ingestionClient = self.ingestionClient
-        let pdfIngestionClient = self.pdfIngestionClient
-        let textIngestionClient = self.textIngestionClient
-        let date = self.date
-        let ingestionCoordinator = self.ingestionCoordinator
-        return .run { send in
-            if retryingFailed {
-                await reportingErrors { try await repository.retryFailedIngestionJobs() }
-            }
-            try? await ingestionCoordinator.run {
-                try await processIngestionJobs(
-                    repository: repository,
-                    ingestionClient: ingestionClient,
-                    pdfIngestionClient: pdfIngestionClient,
-                    textIngestionClient: textIngestionClient,
-                    ingestionCoordinator: ingestionCoordinator
-                ) { date.now }
-            }
-            let jobs = await reportingErrors { try await repository.fetchFailedIngestionJobs() } ?? []
-            await send(.failedImportsLoaded(FailedImport.list(from: jobs)))
-            await send(.ingestionDrainFinished)
-        }
-        .cancellable(id: CancelID.ingestionDrain)
     }
 
     func navigateReader(

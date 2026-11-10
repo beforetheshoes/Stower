@@ -120,7 +120,6 @@ public struct AppView: View {
     #if os(iOS)
     @Environment(\.horizontalSizeClass)
     private var horizontalSizeClass
-    @State private var isFilterSheetPresented = false
     #endif
 
     public init(store: StoreOf<AppFeature>) {
@@ -173,17 +172,24 @@ public struct AppView: View {
                     readerSession.reset()
                 }
             }
-            .alert($store.scope(state: \.resetAlert, action: \.resetAlert))
+            .alert($store.scope(state: \.sync.resetAlert, action: \.sync.resetAlert))
+            #if os(iOS)
+            // Focus mode hides the columns, and only the regular-width layout
+            // has a control to leave it. A window that goes compact while
+            // focused would come back with the columns shown and focus still
+            // on, with no way out. Watched here, at the root: the split view
+            // itself is gone by the time the size class is compact.
+            .onChange(of: horizontalSizeClass) { _, sizeClass in
+                if sizeClass == .compact, store.isReaderFocused {
+                    store.send(.exitReaderFocus)
+                }
+            }
+            #endif
             // Lives at the root rather than on `LibraryScreen` because Mac
             // reader focus removes the library from the hierarchy, and the
             // export command must still be able to present its save panel.
             .modifier(EPUBExportPresenter(store: store.scope(state: \.library, action: \.library)))
-            .sheet(
-                isPresented: Binding(
-                    get: { store.isSettingsPresented },
-                    set: { if !$0 { store.send(.closeSettings) } }
-                )
-            ) {
+            .sheet(isPresented: $store.isSettingsPresented.sending(\.settingsPresentationChanged)) {
                 NavigationStack {
                     SettingsScreen(store: store.scope(\.settings, action: \.settings))
                         .toolbar {
@@ -248,10 +254,10 @@ public struct AppView: View {
                 style: .compact
             )
             Button("Dismiss") {
-                store.send(.dismissFailedImportsTapped)
+                store.send(.ingestion(.dismissFailedImportsTapped))
             }
             Button("Retry") {
-                store.send(.retryFailedImportsTapped)
+                store.send(.ingestion(.retryFailedImportsTapped))
             }
             .buttonStyle(.borderedProminent)
         }
@@ -371,8 +377,9 @@ public struct AppView: View {
             NavigationStack {
                 LibraryScreen(
                     store: store.scope(\.library, action: \.library),
-                    onOpenSettings: nil
-                ) { isFilterSheetPresented = true }
+                    onOpenSettings: { store.send(.openSettings) },
+                    onOpenFilters: { store.send(.filterSheetPresentationChanged(true)) }
+                )
                     .scrollContentBackground(.hidden)
                     .background(palette.bg)
                     .navigationDestination(
@@ -390,7 +397,7 @@ public struct AppView: View {
                             .background(palette.bg)
                     }
             }
-            .sheet(isPresented: $isFilterSheetPresented) {
+            .sheet(isPresented: $store.isFilterSheetPresented.sending(\.filterSheetPresentationChanged)) {
                 filterSheet(palette: palette)
             }
         } else {
@@ -411,19 +418,15 @@ public struct AppView: View {
         NavigationStack {
             SidebarScreen(
                 store: store.scope(\.sidebar, action: \.sidebar),
-                onOpenSettings: {
-                    isFilterSheetPresented = false
-                    store.send(.openSettings)
-                },
-                onSelect: { _ in
-                    isFilterSheetPresented = false
-                }
+                onOpenSettings: { store.send(.openSettings) },
+                // The reducer closes the sheet when a list is chosen.
+                onSelect: { _ in }
             )
             .scrollContentBackground(.hidden)
             .background(palette.bg2)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { isFilterSheetPresented = false }
+                    Button("Done") { store.send(.filterSheetPresentationChanged(false)) }
                 }
             }
         }

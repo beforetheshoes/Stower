@@ -441,12 +441,14 @@ struct AppFeatureTests {
         store.exhaustivity = .off(showSkippedAssertions: false)
 
         await store.send(.library(.urlQueued(url))) {
-            $0.pendingSaveCount = 1
             $0.library.queuedSaveCount = 1
         }
-        await store.receive(.failedImportsLoaded([]))
-        await store.receive(.ingestionDrainFinished) {
-            $0.pendingSaveCount = 0
+        await store.receive(\.ingestion.saveQueued) {
+            $0.ingestion.pendingSaveCount = 1
+        }
+        await store.receive(.ingestion(.failedImportsLoaded([])))
+        await store.receive(.ingestion(.drainFinished)) {
+            $0.ingestion.pendingSaveCount = 0
         }
         #expect(saved.value == [url])
     }
@@ -492,7 +494,7 @@ struct AppFeatureTests {
         store.exhaustivity = .off(showSkippedAssertions: false)
 
         await store.send(.library(.urlQueued(try #require(URL(string: "https://example.com/x")))))
-        await store.receive(.ingestionDrainFinished)
+        await store.receive(.ingestion(.drainFinished))
 
         #expect(ingested.value == [staged])
         #expect(created.value.count == 1)
@@ -531,7 +533,7 @@ struct AppFeatureTests {
         store.exhaustivity = .off(showSkippedAssertions: false)
 
         await store.send(.library(.urlQueued(try #require(URL(string: "https://example.com/x")))))
-        await store.receive(.ingestionDrainFinished)
+        await store.receive(.ingestion(.drainFinished))
 
         #expect(failures.value == [EPUBIngestionError.protectedContent.localizedDescription])
         #expect(!FileManager.default.fileExists(atPath: scratchDir.path))
@@ -568,9 +570,9 @@ struct AppFeatureTests {
         store.exhaustivity = .off(showSkippedAssertions: false)
 
         await store.send(.onAppear)
-        await store.receive(.cloudSyncStatusChanged(
+        await store.receive(.sync(.statusChanged(
             CloudSyncStatus(state: .unavailable("Could not determine iCloud account status"))
-        ))
+        )))
         await store.receive(.startupFinished) {
             $0.startupFinished = true
             $0.startupErrorMessage = nil
@@ -886,20 +888,20 @@ struct AppFeatureTests {
         store.exhaustivity = .off(showSkippedAssertions: false)
 
         let synced = Date(timeIntervalSince1970: 2000)
-        await store.send(.cloudSyncStatusChanged(
+        await store.send(.sync(.statusChanged(
             CloudSyncStatus(state: .available, lastSyncAttempt: synced, lastSyncSuccess: synced)
-        )) {
-            $0.syncFollowUpPending = true
+        ))) {
+            $0.sync.followUpPending = true
         }
         #expect(hydrations.value == 0)
 
         await store.send(.sceneDidBecomeActive) {
             $0.isSceneInBackground = false
-            $0.syncFollowUpPending = false
-            $0.isSyncFollowUpRunning = true
+            $0.sync.followUpPending = false
+            $0.sync.isFollowUpRunning = true
         }
-        await store.receive(.syncFollowUpFinished) {
-            $0.isSyncFollowUpRunning = false
+        await store.receive(.sync(.followUpFinished)) {
+            $0.sync.isFollowUpRunning = false
         }
         #expect(hydrations.value == 1)
     }
