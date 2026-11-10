@@ -124,8 +124,7 @@ enum AssetArchiver {
 
     /// Returns the archive directory for a given item.
     static func archiveDirectory(for itemID: UUID) -> URL {
-        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-        return docs
+        stowerDocumentsDirectory()
             .appendingPathComponent("StowerArchive", isDirectory: true)
             .appendingPathComponent(itemID.uuidString, isDirectory: true)
     }

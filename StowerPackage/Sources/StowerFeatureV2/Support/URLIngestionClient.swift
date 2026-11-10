@@ -215,10 +215,9 @@ public struct MediaResolutionClient: Sendable {
 
     /// Persistent directory for downloaded article images (Documents/StowerImages).
     /// Not in Caches — the system won't evict these.
-    static let imageStorageDirectory: URL = {
-        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-        return docs.appendingPathComponent("StowerImages", isDirectory: true)
-    }()
+    static var imageStorageDirectory: URL {
+        stowerDocumentsDirectory().appendingPathComponent("StowerImages", isDirectory: true)
+    }
 }
 
 public struct ReaderRenderClient: Sendable {

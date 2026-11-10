@@ -144,7 +144,7 @@ public enum StorageOffloadService {
     }
 
     private static func totalArchiveBytes() -> Int {
-        let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        let documents = stowerDocumentsDirectory()
         let root = documents.appendingPathComponent("StowerArchive", isDirectory: true)
         return StorageScanActor.directorySize(root)
     }

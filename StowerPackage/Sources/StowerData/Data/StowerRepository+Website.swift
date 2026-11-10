@@ -158,10 +158,7 @@ public struct WebsiteArchiveBytes: Sendable, Equatable {
 /// BFS intentionally mirrors `WebsiteArchiveUnpacker.findEntryURL` so the
 /// two places agree on what "archive exists" means.
 func websiteArchiveExists(itemID: UUID) -> Bool {
-    let docs = FileManager.default.urls(
-        for: .documentDirectory,
-        in: .userDomainMask
-    ).first!
+    let docs = stowerDocumentsDirectory()
     let archiveDir = docs
         .appendingPathComponent("StowerArchive", isDirectory: true)
         .appendingPathComponent(itemID.uuidString, isDirectory: true)
