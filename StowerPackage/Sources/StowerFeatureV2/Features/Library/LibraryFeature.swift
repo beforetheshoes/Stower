@@ -25,7 +25,11 @@ public struct LibraryFeature {
         public var errorMessage: String?
         /// Which list is currently being viewed. Part of the observed query.
         public var filter: LibraryFilter = .unread
+        // View options are remembered across launches; they used to reset
+        // to compact, newest-first every time.
+        @Shared(.appStorage("libraryDisplayStyle"))
         public var displayStyle: LibraryDisplayStyle = .compact
+        @Shared(.appStorage("librarySortOrder"))
         public var sortOrder: LibrarySortOrder = .newestFirst
         /// The item the reader is currently showing. Drives list selection
         /// on Mac and iPad; kept in sync by the app reducer.
@@ -34,6 +38,34 @@ public struct LibraryFeature {
         public var inlineTagCreation: InlineTagCreation?
         /// Draft for the in-app text/markdown composer.
         public var textImportDraft: TextImportDraft?
+        /// Which of the screen's sheets are up. These were view-local state,
+        /// set a run-loop turn late by hand so a sheet opened from a menu
+        /// was not dropped while the menu was still closing; the reducer
+        /// now owns them and does that hop itself.
+        public var isAddURLPresented = false
+        public var isTextImportPresented = false
+        /// The iOS document picker being shown, if any. macOS uses an open
+        /// panel instead.
+        public var importPicker: LibraryImportPicker?
+        /// Bumped to move keyboard focus to the Mac's inline URL field.
+        public var composerFocusRequest = 0
+        /// Dropped files waiting their turn. Imports share one progress
+        /// state, so they run one at a time.
+        var queuedFileImports = [QueuedFileImport]()
+        /// The last failure among queued imports, shown once the queue is
+        /// empty; a later import starting would otherwise wipe it.
+        var queuedImportFailure: String?
+
+        public var showsTextImportSheet: Bool {
+            isTextImportPresented && textImportDraft != nil
+        }
+
+        /// A picked file is being imported with no sheet up to show it.
+        /// PDF, EPUB and website imports run in the foreground and can take
+        /// a while; on iPhone nothing said so.
+        public var isImportingFile: Bool {
+            isSaving && !isAddURLPresented && !showsTextImportSheet
+        }
         /// The item whose EPUB is being built. Only one export runs at a time.
         public var exportingItemID: UUID?
         /// A finished EPUB waiting for the share sheet (iOS) or save panel (macOS).
@@ -41,6 +73,8 @@ public struct LibraryFeature {
         /// Shown in an alert; separate from `errorMessage`, which belongs to
         /// the URL composer.
         public var epubExportError: String?
+        /// Asks before an item is removed for good.
+        @Presents public var deleteConfirmation: ConfirmationDialogState<Action.DeleteConfirmation>?
 
         public var items: [SavedItem] { library.items }
         public var availableTags: [Tag] { library.tags }
@@ -67,6 +101,11 @@ public struct LibraryFeature {
             self.name = name
             self.colorHex = colorHex
         }
+    }
+
+    struct QueuedFileImport: Equatable {
+        var kind: LibraryImportPicker
+        var stagedURL: URL
     }
 
     public struct TextImportDraft: Equatable {
@@ -100,6 +139,10 @@ public struct LibraryFeature {
         case deleteFinished
         case deleteFailed(String)
         case permanentlyDelete(UUID)
+        /// The user asked to delete an item forever; nothing is removed
+        /// until they confirm.
+        case permanentlyDeleteTapped(UUID)
+        case deleteConfirmation(PresentationAction<DeleteConfirmation>)
         case restoreFromTrash(UUID)
         case toggleStar(UUID)
         case toggleRead(UUID)
@@ -128,6 +171,21 @@ public struct LibraryFeature {
         case downloadNow(UUID)
         case addTextTapped
         case textImportDismissed
+        case addURLButtonTapped
+        case addURLPresentationChanged(Bool)
+        case textImportPresentationChanged(Bool)
+        case importPickerRequested(LibraryImportPicker)
+        case importPickerChanged(LibraryImportPicker?)
+        /// A file came back from a document picker or open panel.
+        case filePicked(LibraryImportPicker, URL)
+        /// The picker itself failed (not a cancel).
+        case filePickFailed(LibraryImportPicker, String)
+        /// File ▸ New Link (Cmd-N).
+        case newURLCommand
+        /// The Delete key, on the selected row.
+        case deleteSelectedItemCommand
+        /// Links or files dragged onto the library.
+        case itemsDropped([LibraryDroppedItem])
         case textImportTitleChanged(String)
         case textImportTextChanged(String)
         case textImportModeChanged(TextImportMode)
@@ -152,6 +210,10 @@ public struct LibraryFeature {
         /// The share sheet or save panel closed, saved or not. Deletes the temp file.
         case epubExportDismissed
         case epubExportErrorDismissed
+
+        public enum DeleteConfirmation: Equatable, Sendable {
+            case confirmed(UUID)
+        }
     }
 
     private enum CancelID: Hashable {
@@ -163,6 +225,8 @@ public struct LibraryFeature {
 
     @Dependency(\.stowerRepository)
     var repository
+    @Dependency(\.pickedFileClient)
+    var pickedFileClient
     @Dependency(\.urlIngestionClient)
     var ingestionClient
     @Dependency(\.articleSaveClient)
@@ -181,6 +245,57 @@ public struct LibraryFeature {
     var clock
     @Dependency(\.epubExportClient)
     var epubExportClient
+
+    private enum Presentation: Sendable {
+        case addURL
+        case textImport
+        case picker(LibraryImportPicker)
+    }
+
+    /// Presents on a later main-actor turn. Every sheet here can be opened
+    /// from a toolbar menu, and a sheet presented in the same turn as the
+    /// menu's dismissal is dropped by SwiftUI.
+    private func presentAfterMenuCloses(_ presentation: Presentation) -> EffectOf<Self> {
+        .run { send in
+            await Task.yield()
+            switch presentation {
+            case .addURL:
+                await send(.addURLPresentationChanged(true))
+            case .textImport:
+                await send(.textImportPresentationChanged(true))
+            case .picker(let picker):
+                await send(.importPickerChanged(picker))
+            }
+        }
+    }
+
+    /// Starts the next dropped file, if nothing is importing. When the queue
+    /// has run dry, a failure from earlier in it is put back on screen.
+    private func startNextQueuedImport(_ state: inout State) -> EffectOf<Self> {
+        guard !state.isSaving else { return .none }
+        guard !state.queuedFileImports.isEmpty else {
+            if let failure = state.queuedImportFailure {
+                state.queuedImportFailure = nil
+                state.errorMessage = failure
+                state.saveState = .failed
+            }
+            return .none
+        }
+        let next = state.queuedFileImports.removeFirst()
+        // Marked here, not only when the import action arrives, so a second
+        // call in the same pass does not start another.
+        state.isSaving = true
+        switch next.kind {
+        case .pdf:
+            return .send(.importPDFSelected(next.stagedURL))
+        case .epub:
+            return .send(.importEPUBSelected(next.stagedURL))
+        case .website:
+            return .send(.importWebsiteSelected(next.stagedURL))
+        case .text:
+            return .send(.filePicked(.text, next.stagedURL))
+        }
+    }
 
     public var body: some ReducerOf<Self> {
         Reduce { state, action in
@@ -266,12 +381,12 @@ public struct LibraryFeature {
                 return .send(.openItem(item))
 
             case .displayStyleChanged(let displayStyle):
-                state.displayStyle = displayStyle
+                state.$displayStyle.withLock { $0 = displayStyle }
                 return .none
 
             case .sortOrderChanged(let sortOrder):
                 guard sortOrder != state.sortOrder else { return .none }
-                state.sortOrder = sortOrder
+                state.$sortOrder.withLock { $0 = sortOrder }
                 return loadLibrary(state)
 
             case let .toggleTagOnItem(itemID, tagID):
@@ -357,7 +472,7 @@ public struct LibraryFeature {
                 let repository = self.repository
                 return .run { send in
                     do {
-                        try? await repository.updateLocalContentStatus(id, "downloading", nil)
+                        await reportingErrors { try await repository.updateLocalContentStatus(id, "downloading", nil) }
                         try await CloudAssetService.restore(itemID: id, repository: repository)
                     } catch {
                         await send(.failed(error.localizedDescription))
@@ -377,11 +492,104 @@ public struct LibraryFeature {
                     state.saveState = .queued
                     state.errorMessage = nil
                 }
-                return .none
+                return presentAfterMenuCloses(.textImport)
 
             case .textImportDismissed:
                 state.textImportDraft = nil
+                state.isTextImportPresented = false
                 return .none
+
+            case .addURLButtonTapped:
+                let present = presentAfterMenuCloses(.addURL)
+                // A failed save leaves its URL and error in the composer;
+                // opening it again starts clean.
+                guard state.saveState == .failed else { return present }
+                return .merge(.send(.sourceURLChanged("")), present)
+
+            case .addURLPresentationChanged(let isPresented):
+                state.isAddURLPresented = isPresented
+                return .none
+
+            case .textImportPresentationChanged(let isPresented):
+                state.isTextImportPresented = isPresented
+                return isPresented ? .none : .send(.textImportDismissed)
+
+            case .importPickerRequested(let picker):
+                return presentAfterMenuCloses(.picker(picker))
+
+            case .importPickerChanged(let picker):
+                state.importPicker = picker
+                return .none
+
+            case let .filePicked(kind, pickedURL):
+                let pickedFileClient = self.pickedFileClient
+                switch kind {
+                case .text:
+                    guard let mode = TextImportDetector.importMode(for: pickedURL) else {
+                        return .send(.saveURLFailed("Unsupported text file type."))
+                    }
+                    let titleHint = TextImportDetector.normalizedTitleHint(from: pickedURL)
+                    return .run { send in
+                        do {
+                            let text = try pickedFileClient.readText(pickedURL)
+                            await send(.importTextResolved(text, titleHint, mode))
+                        } catch {
+                            await send(.saveURLFailed("Couldn't read text file: \(error.localizedDescription)"))
+                        }
+                    }
+                case .pdf, .epub, .website:
+                    return .run { send in
+                        do {
+                            let staged = try pickedFileClient.stage(pickedURL)
+                            switch kind {
+                            case .pdf:
+                                await send(.importPDFSelected(staged))
+                            case .epub:
+                                await send(.importEPUBSelected(staged))
+                            case .website:
+                                await send(.importWebsiteSelected(staged))
+                            case .text:
+                                break
+                            }
+                        } catch {
+                            await send(.saveURLFailed("Couldn't read \(kind.fileNoun): \(error.localizedDescription)"))
+                        }
+                    }
+                }
+
+            case .newURLCommand:
+                #if os(macOS)
+                // The Mac composer is always on screen; go to it.
+                state.composerFocusRequest += 1
+                return .none
+                #else
+                return .send(.addURLButtonTapped)
+                #endif
+
+            case .deleteSelectedItemCommand:
+                guard let id = state.openItemID else { return .none }
+                // In Recently Deleted the key means "forever", which asks first.
+                return .send(state.filter == .recentlyDeleted ? .permanentlyDeleteTapped(id) : .deleteItem(id))
+
+            case .itemsDropped(let items):
+                var effects = [EffectOf<Self>]()
+                for item in items {
+                    switch item {
+                    case .link(let url):
+                        effects.append(.send(.saveExternalURL(url)))
+                    case let .file(kind, stagedURL):
+                        state.queuedFileImports.append(QueuedFileImport(kind: kind, stagedURL: stagedURL))
+                    case .unsupported(let name):
+                        effects.append(.send(.saveURLFailed("Stower can't import “\(name)”.")))
+                    case let .unreadable(kind, message):
+                        effects.append(.send(.saveURLFailed("Couldn't read \(kind.fileNoun): \(message)")))
+                    }
+                }
+                effects.append(startNextQueuedImport(&state))
+                return .merge(effects)
+
+            case let .filePickFailed(kind, message):
+                return .send(.saveURLFailed("\(kind.importNoun) import failed: \(message)"))
 
             case .textImportTitleChanged(let title):
                 state.textImportDraft?.title = title
@@ -429,9 +637,9 @@ public struct LibraryFeature {
             case let .importTextResolved(text, titleHint, mode):
                 let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !trimmed.isEmpty else {
-                    state.errorMessage = "The selected file is empty."
-                    state.saveState = .failed
-                    return .none
+                    // Through the one failure path, so a queued drop that
+                    // turns out to be empty does not stall the files after it.
+                    return .send(.saveURLFailed("The selected file is empty."))
                 }
                 state.isSaving = true
                 state.saveState = .extracting
@@ -477,6 +685,7 @@ public struct LibraryFeature {
                 state.saveState = .queued
                 state.sourceURL = ""
                 state.queuedSaveCount += 1
+                state.isAddURLPresented = false
                 return .none
 
             case .cancelURLSaveTapped:
@@ -490,13 +699,17 @@ public struct LibraryFeature {
                 state.saveState = item.processingState
                 state.sourceURL = ""
                 state.textImportDraft = nil
-                return .none
+                state.isTextImportPresented = false
+                return startNextQueuedImport(&state)
 
             case .saveURLFailed(let error):
                 state.isSaving = false
                 state.saveState = .failed
                 state.errorMessage = error
-                return .none
+                if !state.queuedFileImports.isEmpty {
+                    state.queuedImportFailure = error
+                }
+                return startNextQueuedImport(&state)
 
             case .importPDFSelected(let pickedURL):
                 // Foreground import via `UIDocumentPicker` / SwiftUI
@@ -527,7 +740,7 @@ public struct LibraryFeature {
                             kind: .pdf,
                             originalFilename: pickedURL.lastPathComponent
                         ).encoded() {
-                            try? await repository.enqueueIngestionJob(.uploadAsset, payload)
+                            await reportingErrors { try await repository.enqueueIngestionJob(.uploadAsset, payload) }
                         }
                         await send(.saveURLFinished(item))
                         await send(.openItem(item))
@@ -563,7 +776,7 @@ public struct LibraryFeature {
                             kind: .epub,
                             originalFilename: pickedURL.lastPathComponent
                         ).encoded() {
-                            try? await repository.enqueueIngestionJob(.uploadAsset, payload)
+                            await reportingErrors { try await repository.enqueueIngestionJob(.uploadAsset, payload) }
                         }
                         await send(.saveURLFinished(item))
                         await send(.openItem(item))
@@ -608,6 +821,27 @@ public struct LibraryFeature {
                         await send(.deleteFailed(error.localizedDescription))
                     }
                 }
+
+            case .permanentlyDeleteTapped(let id):
+                state.deleteConfirmation = ConfirmationDialogState {
+                    TextState("Delete Forever?")
+                } actions: {
+                    ButtonState(role: .destructive, action: .confirmed(id)) {
+                        TextState("Delete Forever")
+                    }
+                    ButtonState(role: .cancel) {
+                        TextState("Cancel")
+                    }
+                } message: {
+                    TextState("This removes the item and its saved content from all your devices. It cannot be undone.")
+                }
+                return .none
+
+            case .deleteConfirmation(.presented(.confirmed(let id))):
+                return .send(.permanentlyDelete(id))
+
+            case .deleteConfirmation:
+                return .none
 
             case .permanentlyDelete(let id):
                 let repository = self.repository
@@ -685,13 +919,13 @@ public struct LibraryFeature {
                         }
                         // The row shows its spinner from this status until the
                         // refresh writes the new content.
-                        try? await repository.updateLocalContentStatus(id, "downloading", nil)
+                        await reportingErrors { try await repository.updateLocalContentStatus(id, "downloading", nil) }
                         let refreshed = try await articleSaveClient.refresh(id, url)
                         await send(.reprocessFinished(refreshed.item))
                     } catch is CancellationError {
                         return
                     } catch {
-                        try? await repository.updateLocalContentStatus(id, "failed", error.localizedDescription)
+                        await reportingErrors { try await repository.updateLocalContentStatus(id, "failed", error.localizedDescription) }
                         await send(.failed(error.localizedDescription))
                     }
                 }
@@ -705,6 +939,7 @@ public struct LibraryFeature {
                 return .none
             }
         }
+        .ifLet(\.$deleteConfirmation, action: \.deleteConfirmation)
     }
 
     /// Hands a URL to the ingestion queue. The fetch itself runs in the
@@ -737,56 +972,4 @@ public struct LibraryFeature {
         }
         .cancellable(id: CancelID.load, cancelInFlight: true)
     }
-}
-
-private struct TextImportRequest {
-    var text: String
-    var explicitTitle: String?
-    var titleHint: String?
-    var mode: TextImportMode
-    var openAfterSave: Bool
-}
-
-private func runTextImport(
-    _ request: TextImportRequest,
-    repository: StowerRepository,
-    textIngestionClient: TextIngestionClient
-) -> EffectOf<LibraryFeature> {
-    .run { send in
-        do {
-            let result = try await textIngestionClient.ingest(
-                request.text,
-                request.explicitTitle,
-                request.titleHint,
-                request.mode
-            )
-            let item = try await repository.createItemFromIngestion(result)
-            await send(.saveURLFinished(item))
-            if request.openAfterSave {
-                await send(.openItem(item))
-            }
-        } catch {
-            await send(.saveURLFailed(error.localizedDescription))
-        }
-    }
-}
-
-private func normalizeSourceURL(_ value: String) -> String? {
-    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !trimmed.isEmpty else { return nil }
-
-    // If the user typed a scheme (or pasted one), lowercase it so we don't
-    // end up with "Https://…" from iOS autocapitalization. URL schemes are
-    // case-insensitive per RFC 3986, but `URL(string:)` and third-party
-    // parsers have a habit of being picky about the canonical form.
-    if let schemeRange = trimmed.range(of: "://") {
-        let scheme = trimmed[trimmed.startIndex..<schemeRange.lowerBound].lowercased()
-        let rest = trimmed[schemeRange.lowerBound...]
-        return scheme + rest
-    }
-
-    if trimmed.contains(".") {
-        return "https://\(trimmed)"
-    }
-    return nil
 }

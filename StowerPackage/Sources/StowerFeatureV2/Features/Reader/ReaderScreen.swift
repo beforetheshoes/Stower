@@ -20,6 +20,10 @@ public struct ReaderScreen: View {
     /// The safe-area insets measured while chrome is visible. Held steady
     /// while chrome is hidden so the page never reflows under the bar.
     @State private var readerInsets: ReaderInsets = .zero
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass)
+    private var horizontalSizeClass
+    #endif
 
     /// Shorthand for the current palette tokens. Computed on the fly since
     /// `FlexokiPalette` is a cheap value type and tracking it through
@@ -213,9 +217,44 @@ public struct ReaderScreen: View {
                     onLineWidthChanged: { store.send(.lineWidthChanged($0)) },
                     onDone: { session.isAppearancePanelPresented = false }
                 )
-                .frame(width: 400)
+                // Up to 400 points, but able to shrink: a fixed 400 is wider
+                // than an iPhone and was clipped at both edges.
+                .frame(minWidth: 280, idealWidth: 400, maxWidth: 400)
                 .padding(12)
                 .presentationCompactAdaptation(.popover)
+            }
+        }
+
+        // A wide reader — an iPad in landscape, or in focus mode — has room
+        // for the tools the More menu holds. A narrow one does not: there
+        // the system folds extra items into a second "…" menu beside ours.
+        if horizontalSizeClass == .regular, (store.viewportWidth ?? 0) >= 760 {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                if !store.contents.isEmpty {
+                    Button("Contents", systemImage: "list.bullet.indent") {
+                        store.send(.contentsButtonTapped)
+                    }
+                }
+                Button("Find", systemImage: "magnifyingglass") {
+                    session.isFindNavigatorPresented.toggle()
+                }
+                .keyboardShortcut("f", modifiers: .command)
+                Button("Listen", systemImage: "speaker.wave.2") {
+                    session.isListenPanelPresented = true
+                }
+                Button("Article Tools", systemImage: "sparkles") {
+                    store.send(.ai(.panelOpened))
+                    session.isAIPanelPresented = true
+                }
+                if let onToggleReaderFocus {
+                    Button(
+                        isReaderFocused ? "Exit Focus" : "Focus Reader",
+                        systemImage: isReaderFocused
+                            ? "arrow.down.right.and.arrow.up.left"
+                            : "arrow.up.left.and.arrow.down.right",
+                        action: onToggleReaderFocus
+                    )
+                }
             }
         }
 
@@ -476,7 +515,7 @@ public struct ReaderScreen: View {
                     partialCaptureBanner(for: item)
                 }
                 ReaderWebView(
-                    html: { resolvedHTML(for: item) ?? "" },
+                    source: { htmlSource(for: item) },
                     sourceURL: item.sourceURL,
                     itemID: store.itemID,
                     contentVersion: contentReloadToken(for: item),
@@ -511,9 +550,12 @@ public struct ReaderScreen: View {
                 .padding()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            Text("Item not found")
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            ContentUnavailableView(
+                "Article Unavailable",
+                systemImage: "doc.questionmark",
+                description: Text("This article is no longer in your library.")
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
@@ -590,23 +632,25 @@ public struct ReaderScreen: View {
               : "Show the original saved page with SVGs and interactive content")
     }
 
-    /// Picks the right HTML to show. For interactive articles (`webView`
-    /// format) we hand WKWebView the raw captured `sourceHTML` unchanged.
-    /// For all other articles we generate a clean HTML document from the
-    /// structured `ReaderDocument`.
-    private func resolvedHTML(for item: SavedItem) -> String? {
+    /// Describes the page to show. For interactive articles (`webView`
+    /// format) WKWebView gets the raw captured `sourceHTML` unchanged. For
+    /// all other articles the structured `ReaderDocument` is rendered to
+    /// HTML — by the web view, off the main actor, when it loads.
+    private func htmlSource(for item: SavedItem) -> ReaderHTMLSource {
         if store.effectiveRenderFormat == .webView {
-            return store.sourceHTML
+            return .ready(store.sourceHTML ?? "")
         }
-        guard let document = store.document else { return nil }
-        return ReaderDocumentHTMLBuilder.buildReaderHTML(
-            item: item,
-            document: document,
-            appearance: store.appearance,
-            pageWidth: CGFloat(store.viewportWidth ?? 0),
-            fontScale: readerFontScale,
-            restoreBlockIndex: item.lastReadBlockIndex,
-            insets: readerInsets
+        guard let document = store.document else { return .ready("") }
+        return .document(
+            ReaderDocumentPage(
+                item: item,
+                document: document,
+                appearance: store.appearance,
+                pageWidth: CGFloat(store.viewportWidth ?? 0),
+                fontScale: readerFontScale,
+                restoreBlockIndex: item.lastReadBlockIndex,
+                insets: readerInsets
+            )
         )
     }
 
@@ -617,7 +661,9 @@ public struct ReaderScreen: View {
         hasher.combine(item.renderFormat.rawValue)
         hasher.combine(item.captureVersion)
         hasher.combine(store.effectiveRenderFormat.rawValue)
-        hasher.combine(store.sourceHTML?.count)
+        // `utf8.count` is constant-time; `count` walks every character of
+        // what can be megabytes of HTML, on each body pass.
+        hasher.combine(store.sourceHTML?.utf8.count)
 
         if let document = store.document {
             hasher.combine(document.version)
@@ -846,6 +892,13 @@ private struct InlineEmbedScreen: View {
         WebView(page)
             .ignoresSafeArea()
             .navigationTitle("Embed")
+            // The sheet had no way out on the Mac, where a sheet cannot be
+            // swiped away.
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { store.send(.close) }
+                }
+            }
             .task { _ = page.load(URLRequest(url: store.url)) }
     }
 }

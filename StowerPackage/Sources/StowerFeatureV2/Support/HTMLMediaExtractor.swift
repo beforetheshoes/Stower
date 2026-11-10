@@ -107,10 +107,13 @@ func bestImageSource(_ element: Element) -> String? {
 }
 
 func bestSourceFromSrcSet(_ element: Element) -> String? {
-    let srcSet = nonEmpty(try? element.attr("abs:srcset"))
-        ?? nonEmpty(try? element.attr("srcset"))
+    // The raw attribute, never `abs:srcset`: a srcset is a list, and the
+    // parser's absolute form percent-encodes the whole list as if it were
+    // one URL ("a.jpg%20400w,%20b.jpg%201600w"), which made every candidate
+    // unparseable and returned the first one with its descriptor glued on.
+    // The chosen candidate is resolved against the page afterwards.
+    let srcSet = nonEmpty(try? element.attr("srcset"))
         ?? nonEmpty(try? element.attr("data-srcset"))
-        ?? nonEmpty(try? element.attr("abs:data-srcset"))
 
     guard let srcSet else { return nil }
 
@@ -137,7 +140,9 @@ func bestSourceFromSrcSet(_ element: Element) -> String? {
         }
     }
 
-    return bestURL
+    guard let bestURL else { return nil }
+    let base = URL(string: element.getBaseUri())
+    return URL(string: bestURL, relativeTo: base)?.absoluteString ?? bestURL
 }
 
 func isLikelyAvatarImage(combined: String, width: Int?, height: Int?) -> Bool {

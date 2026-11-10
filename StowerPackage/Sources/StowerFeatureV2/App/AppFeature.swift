@@ -13,6 +13,8 @@ public struct AppFeature {
         public var settings = SettingsFeature.State()
         public var isReaderFocused = false
         public var isSettingsPresented: Bool = false
+        /// The iPhone filter sheet (the sidebar, presented modally).
+        public var isFilterSheetPresented = false
         public var cachedAppearance: ReaderAppearanceSettings
         @Presents public var reader: ReaderFeature.State?
         public var startupFinished = false
@@ -20,33 +22,40 @@ public struct AppFeature {
         /// Set when the database could not be opened at launch. Startup is
         /// skipped — nothing it does can work — and the message is shown.
         public var databaseUnavailableMessage: String?
-        /// True from the scene entering the background until its next
-        /// activation, on platforms that suspend the process. Database
-        /// maintenance is deferred while set — see `sceneDidEnterBackground`.
-        public var isSceneInBackground = false
         /// Startup's database maintenance was cancelled, refused, or skipped
         /// because the app was in the background. The next activation runs it.
         public var startupMaintenancePending = false
-        /// The post-sync hydration pass was interrupted or skipped in the
-        /// background and should run on the next activation.
-        public var syncFollowUpPending = false
-        var isSyncFollowUpRunning = false
-        public var failedImports = [FailedImport]()
-        /// Number of URL saves queued from this app that are still being
-        /// fetched. Drives the "Saving…" notice.
-        public var pendingSaveCount = 0
-        /// Queue drains started from the reducer that have not reported back.
-        /// The "Saving…" notice clears when the last one finishes.
-        var activeDrainCount = 0
+        public var ingestion = IngestionFeature.State()
         public var recentlyCompletedItem: SavedItem?
-        public var cloudSyncStatus: CloudSyncStatus = .starting
+        public var sync = SyncFeature.State()
         /// The ordered item IDs the reader was opened from. Next/previous
         /// walk this snapshot, so marking the open article read (which
         /// removes it from Inbox) does not strand navigation.
         public var readerQueue = [UUID]()
-        @Presents public var resetAlert: AlertState<Action.ResetAlert>?
+        /// The list that was showing when the app was last used, so a launch
+        /// returns to it instead of always opening Inbox.
+        @Shared(.appStorage("selectedLibraryList"))
+        var storedList = LibraryFilter.unread.storageKey
+        /// The article that was open when the app was last used, so a launch
+        /// returns to it. Empty when none was.
+        @Shared(.appStorage("lastOpenItemID"))
+        var lastOpenItemID = ""
 
-        public var failedImportCount: Int { failedImports.count }
+        public var cloudSyncStatus: CloudSyncStatus { sync.status }
+        /// True from the scene entering the background until its next
+        /// activation, on platforms that suspend the process. Database
+        /// maintenance is deferred while set — see `sceneDidEnterBackground`.
+        /// One flag, kept by the sync feature, which defers its scans on it.
+        public var isSceneInBackground: Bool {
+            get { sync.isSceneInBackground }
+            set { sync.isSceneInBackground = newValue }
+        }
+        // A computed property; the rule's pattern mistakes it for a stored array.
+        // swiftlint:disable:next prefer_let_over_var
+        public var failedImports: [FailedImport] { ingestion.failedImports }
+        public var failedImportCount: Int { ingestion.failedImports.count }
+        /// Saves queued from this app that are still being fetched.
+        public var pendingSaveCount: Int { ingestion.pendingSaveCount }
 
         public var palette: FlexokiPalette { cachedAppearance.palette }
 
@@ -82,6 +91,12 @@ public struct AppFeature {
             // — must be synchronously available or the entire app flashes
             // blue/white on every launch before the SQLite read completes.
             self.cachedAppearance = AppearanceCache.loadAppearance()
+            // A remembered tag that has since been deleted is corrected by
+            // the sidebar on its first load, and the list follows.
+            if let list = LibraryFilter(storageKey: storedList) {
+                sidebar.selection = list
+                library.filter = list
+            }
         }
     }
 
@@ -129,6 +144,10 @@ public struct AppFeature {
         case browserExtensionURLReceived(URL)
         /// Another app handed Stower a file ("Open in Stower").
         case fileOpened(URL)
+        /// The article that was open last time still exists; open it again.
+        case lastArticleRestored(UUID)
+        /// The article that was open last time is gone; stop remembering it.
+        case lastArticleUnavailable
         case startupFinished
         case startupFailed(String)
         /// Cloud sync start has settled (started, or unavailable) and the
@@ -137,15 +156,7 @@ public struct AppFeature {
         /// Startup maintenance stopped because the database was suspended;
         /// it re-runs on the next activation instead of reporting an error.
         case startupMaintenanceInterrupted
-        case syncFollowUpFinished
-        /// The post-sync pass hit a suspended database; it re-runs on the
-        /// next activation.
-        case syncFollowUpInterrupted
         case sceneDidEnterBackground
-        case failedImportsLoaded([FailedImport])
-        case ingestionDrainFinished
-        case retryFailedImportsTapped
-        case dismissFailedImportsTapped
         case dismissStartupErrorTapped
         case readerAppearanceLoaded(ReaderAppearanceSettings)
         case readerAppearanceFailed(String)
@@ -160,18 +171,15 @@ public struct AppFeature {
         case completedItemNoticeExpired(UUID)
         case openSettings
         case closeSettings
-        case cloudSyncStatusChanged(CloudSyncStatus)
-        case resetAlert(PresentationAction<ResetAlert>)
+        case settingsPresentationChanged(Bool)
+        case filterSheetPresentationChanged(Bool)
 
+        case ingestion(IngestionFeature.Action)
+        case sync(SyncFeature.Action)
         case sidebar(SidebarFeature.Action)
         case library(LibraryFeature.Action)
         case settings(SettingsFeature.Action)
         case reader(PresentationAction<ReaderFeature.Action>)
-
-        public enum ResetAlert: Equatable {
-            case confirmReset
-            case cancel
-        }
     }
 
     @Dependency(\.cloudSyncClient)
@@ -184,10 +192,6 @@ public struct AppFeature {
     var pdfIngestionClient
     @Dependency(\.textIngestionClient)
     var textIngestionClient
-    @Dependency(\.defaultDatabase)
-    var database
-    @Dependency(\.defaultSyncEngine)
-    var syncEngine
     @Dependency(\.continuousClock)
     var clock
     @Dependency(\.date)
@@ -203,7 +207,54 @@ public struct AppFeature {
     @Dependency(\.context)
     var context
 
+    // The two children are defined once. They run inside their `Scope`s,
+    // and `sceneDidEnterBackground` / `sceneDidBecomeActive` also run them
+    // directly, in the same pass. Anything attached to a child — a
+    // dependency override, say — goes here so both paths get it.
+    private var ingestionFeature: some ReducerOf<IngestionFeature> {
+        IngestionFeature()
+    }
+
+    private var syncFeature: some ReducerOf<SyncFeature> {
+        SyncFeature()
+    }
+
     public var body: some ReducerOf<Self> {
+        // Everything the app does runs inside this group so the observer at
+        // the bottom sees a change to the open article wherever it is made:
+        // by the reducer below, or by the reader being dismissed.
+        CombineReducers {
+        // Runs before the reader's own reducer and before anything replaces
+        // or dismisses it. The reader debounces its progress writes by a
+        // second and its effects are cancelled when it goes away, so the
+        // last second of scrolling used to be lost on Done, next/previous,
+        // opening another article, or popping back.
+        Reduce { state, action in
+            switch action {
+            case .reader(.dismiss),
+                 .reader(.presented(.delegate(.done))),
+                 .nextArticleButtonTapped,
+                 .previousArticleButtonTapped,
+                 .library(.openItem):
+                guard let reader = state.reader,
+                      let blockIndex = reader.pendingProgressBlockIndex
+                else { return .none }
+                state.reader?.pendingProgressBlockIndex = nil
+                let repository = self.repository
+                return .run { [itemID = reader.itemID] _ in
+                    await reportingErrors { try await repository.saveReadingProgress(itemID, blockIndex) }
+                }
+            default:
+                return .none
+            }
+        }
+
+        Scope(\.ingestion, action: \.ingestion) {
+            ingestionFeature
+        }
+        Scope(\.sync, action: \.sync) {
+            syncFeature
+        }
         Scope(\.sidebar, action: \.sidebar) {
             SidebarFeature()
         }
@@ -234,38 +285,37 @@ public struct AppFeature {
                 let ingestionCoordinator = self.ingestionCoordinator
                 let storageUsageClient = self.storageUsageClient
                 let openReaderItemID = state.reader?.itemID
-                let clock = self.clock
-                let periodicSync: EffectOf<Self> =
-                    context == .live
-                    ? .run { _ in
-                        // CloudKit push delivery is not guaranteed (especially on macOS). While the app is
-                        // running, periodically force a sync to pull remote changes.
-                        while !Task.isCancelled {
-                            do {
-                                try await clock.sleep(for: .seconds(120))
-                            } catch {
-                                return
-                            }
-                            try? await cloudSyncClient.sendChanges()
+                let lastOpenItemID = UUID(uuidString: state.lastOpenItemID)
+                // A light check, cancelled with the rest of startup's database
+                // work if the app is backgrounded: one indexed lookup, and
+                // none of the article's content. The reader loads that
+                // itself once it is open.
+                let restoreReader: EffectOf<Self> =
+                    state.reader == nil && lastOpenItemID != nil
+                    ? .run { send in
+                        guard let lastOpenItemID else { return }
+                        let isLive = await reportingErrors { try await repository.isLiveItem(lastOpenItemID) }
+                        switch isLive {
+                        case true?:
+                            await send(.lastArticleRestored(lastOpenItemID))
+                        case false?:
+                            // Deleted since, here or on another device.
+                            await send(.lastArticleUnavailable)
+                        case nil:
+                            break
                         }
                     }
-                    .cancellable(id: CancelID.periodicSync, cancelInFlight: true)
+                    .cancellable(id: CancelID.restoreReader, cancelInFlight: true)
                     : .none
-
                 return .merge(
+                    restoreReader,
                     // Load appearance immediately — no dependencies, fastest possible.
                     .run { send in
                         if let appearance = try? await repository.loadReaderAppearanceSettings() {
                             await send(.readerAppearanceLoaded(appearance))
                         }
                     },
-                    .run { send in
-                        for await status in cloudSyncClient.statusStream() {
-                            await send(.cloudSyncStatusChanged(status))
-                        }
-                    }
-                    .cancellable(id: CancelID.syncStatus, cancelInFlight: true),
-                    periodicSync,
+                    .send(.sync(.onAppear)),
                     // Sidebar subscription: loads counts + tags and listens for changes.
                     .send(.sidebar(.onAppear)),
                     // Purge expired trash items (fire-and-forget).
@@ -278,7 +328,7 @@ public struct AppFeature {
                             grouping: (try? await itemStorageClient.manifests(trashedIDs)) ?? [],
                             by: \.itemID
                         )
-                        for itemID in (try? await repository.purgeOldTrash()) ?? [] {
+                        for itemID in await reportingErrors { try await repository.purgeOldTrash() } ?? [] {
                             AssetArchiver.deleteArchive(for: itemID)
                             for manifest in manifestsByItem[itemID] ?? [] {
                                 try? await cloudAssetClient.delete(manifest.recordName)
@@ -300,9 +350,9 @@ public struct AppFeature {
                             await send(.startupMaintenanceInterrupted)
                             return
                         } catch {
-                            await send(.cloudSyncStatusChanged(
+                            await send(.sync(.statusChanged(
                                 CloudSyncStatus(state: .unavailable(error.localizedDescription))
-                            ))
+                            )))
                         }
                         await send(.startupSyncStarted)
                     }
@@ -330,15 +380,6 @@ public struct AppFeature {
                 state.startupMaintenancePending = true
                 return .none
 
-            case .syncFollowUpFinished:
-                state.isSyncFollowUpRunning = false
-                return .none
-
-            case .syncFollowUpInterrupted:
-                state.isSyncFollowUpRunning = false
-                state.syncFollowUpPending = true
-                return .none
-
             case .sceneDidEnterBackground:
                 // iOS kills a process with 0xDEAD10CC if it holds a lock on a
                 // file in a shared container when suspended. GRDB's suspension
@@ -351,19 +392,43 @@ public struct AppFeature {
                 if !state.startupFinished {
                     state.startupMaintenancePending = true
                 }
-                if state.isSyncFollowUpRunning {
-                    state.isSyncFollowUpRunning = false
-                    state.syncFollowUpPending = true
-                }
-                // Cancelled drains never report back. `pendingSaveCount` is
-                // left alone so the "Saving…" notice is still there on return;
-                // the drain that every activation starts clears it.
-                state.activeDrainCount = 0
+                // The children are run here, in this same pass, rather than
+                // sent an action: the cancellation must not wait a turn.
                 return .merge(
                     .cancel(id: CancelID.startupMaintenance),
-                    .cancel(id: CancelID.syncFollowUp),
-                    .cancel(id: CancelID.ingestionDrain)
+                    .cancel(id: CancelID.restoreReader),
+                    syncFeature
+                        .reduce(into: &state.sync, action: .sceneDidEnterBackground)
+                        .map(Action.sync),
+                    ingestionFeature
+                        .reduce(into: &state.ingestion, action: .sceneDidEnterBackground)
+                        .map(Action.ingestion)
                 )
+
+            case .lastArticleRestored(let itemID):
+                // The user may have opened something in the meantime.
+                guard state.reader == nil else { return .none }
+                state.library.openItemID = itemID
+                if let item = state.library.items.first(where: { $0.id == itemID }) {
+                    state.reader = ReaderFeature.State(item: item, appearance: state.cachedAppearance)
+                } else {
+                    state.reader = ReaderFeature.State(itemID: itemID, appearance: state.cachedAppearance)
+                }
+                state.readerQueue = readerQueue(around: itemID, in: state)
+                return .none
+
+            case .lastArticleUnavailable:
+                state.$lastOpenItemID.withLock { $0 = "" }
+                return .none
+
+            case .library(.libraryLoaded):
+                // A restored reader opens before the list has loaded, with
+                // only itself to step through. Give it the list once there
+                // is one.
+                if let itemID = state.reader?.itemID, state.readerQueue == [itemID] {
+                    state.readerQueue = readerQueue(around: itemID, in: state)
+                }
+                return .none
 
             case .startupFinished:
                 state.startupFinished = true
@@ -375,41 +440,15 @@ public struct AppFeature {
                 state.startupErrorMessage = message
                 return .none
 
-            case .failedImportsLoaded(let imports):
-                state.failedImports = imports
-                return .none
-
-            case .ingestionDrainFinished:
-                // Drains are serialized and each one empties the queue, so
-                // once none is outstanding every queued save has been handled.
-                state.activeDrainCount = max(0, state.activeDrainCount - 1)
-                if state.activeDrainCount == 0 {
-                    state.pendingSaveCount = 0
-                }
-                return .none
-
             case .library(.urlQueued):
                 // The link is in the ingestion queue; fetch it now rather
                 // than at the next launch, and show progress meanwhile. The
                 // row appears through observation as soon as the item exists.
-                state.pendingSaveCount += 1
-                return drainIngestionQueue(state: &state)
+                return .send(.ingestion(.saveQueued))
 
             case .dismissStartupErrorTapped:
                 state.startupErrorMessage = nil
                 return .none
-
-            case .retryFailedImportsTapped:
-                state.failedImports = []
-                return drainIngestionQueue(state: &state, retryingFailed: true)
-
-            case .dismissFailedImportsTapped:
-                let repository = self.repository
-                let now = date.now
-                state.failedImports = []
-                return .run { _ in
-                    try? await repository.dismissFailedIngestionJobs(now)
-                }
 
             case .sceneDidBecomeActive:
                 // The share extension enqueues ingestion jobs into the shared
@@ -429,17 +468,17 @@ public struct AppFeature {
                 // until some later launch. `ingestionCoordinator` serializes
                 // the two drains, so overlapping is safe.
                 state.isSceneInBackground = false
-                var effects = [drainIngestionQueue(state: &state)]
+                var effects: [EffectOf<Self>] = [.send(.ingestion(.drainRequested))]
                 // Anything the background transition cut short runs now.
                 if state.startupMaintenancePending {
                     state.startupMaintenancePending = false
                     effects.append(startupMaintenance(state: state))
                 }
-                if state.syncFollowUpPending {
-                    state.syncFollowUpPending = false
-                    state.isSyncFollowUpRunning = true
-                    effects.append(syncFollowUp())
-                }
+                effects.append(
+                    syncFeature
+                        .reduce(into: &state.sync, action: .sceneDidBecomeActive)
+                        .map(Action.sync)
+                )
                 return .merge(effects)
 
             case .browserExtensionURLReceived(let url):
@@ -492,7 +531,7 @@ public struct AppFeature {
                 state.reader?.item?.isRead = newValue
                 let repository = self.repository
                 return .run { _ in
-                    try? await repository.setReadStatus(item.id, newValue)
+                    await reportingErrors { try await repository.setReadStatus(item.id, newValue) }
                 }
 
             case .toggleSelectedItemStarred:
@@ -501,7 +540,7 @@ public struct AppFeature {
                 state.reader?.item?.isStarred = newValue
                 let repository = self.repository
                 return .run { _ in
-                    try? await repository.setStarred(item.id, newValue)
+                    await reportingErrors { try await repository.setStarred(item.id, newValue) }
                 }
 
             case .exportOpenArticleAsEPUB:
@@ -518,7 +557,7 @@ public struct AppFeature {
                 }
                 let repository = self.repository
                 return .run { _ in
-                    try? await repository.setReadStatus(item.id, false)
+                    await reportingErrors { try await repository.setReadStatus(item.id, false) }
                 }
                 .cancellable(id: CancelID.completedItemNotice, cancelInFlight: true)
 
@@ -528,7 +567,18 @@ public struct AppFeature {
                 return .none
 
             case .openSettings:
+                // Settings can be opened from inside the filter sheet; that
+                // sheet goes away in the same pass.
+                state.isFilterSheetPresented = false
                 state.isSettingsPresented = true
+                return .none
+
+            case .settingsPresentationChanged(let isPresented):
+                state.isSettingsPresented = isPresented
+                return .none
+
+            case .filterSheetPresentationChanged(let isPresented):
+                state.isFilterSheetPresented = isPresented
                 return .none
 
             case .closeSettings:
@@ -536,70 +586,31 @@ public struct AppFeature {
                 return .none
 
             case .sidebar(.selectList(let filter)):
+                state.$storedList.withLock { $0 = filter.storageKey }
+                // Choosing a list is what the filter sheet is for.
+                state.isFilterSheetPresented = false
                 return .send(.library(.filterChanged(filter)))
 
             case .sidebar:
-                return .none
+                // The sidebar also moves its own selection — back to Library
+                // when the selected tag is deleted here or on another
+                // device. The list has to follow, or it keeps showing the
+                // deleted tag's (now empty) filter under a "Library" title.
+                guard state.library.filter != state.sidebar.selection else { return .none }
+                state.$storedList.withLock { [list = state.sidebar.selection] in $0 = list.storageKey }
+                return .send(.library(.filterChanged(state.sidebar.selection)))
 
-            case .cloudSyncStatusChanged(let status):
-                let previous = state.cloudSyncStatus
-                state.cloudSyncStatus = status
+            case .sync(.statusChanged(let status)):
                 state.settings.cloudSyncStatus = status
-
-                // If we just completed a sync, refresh the library and kick hydration for newly-arrived records.
-                if status.lastSyncSuccess != nil, status.lastSyncSuccess != previous.lastSyncSuccess {
-                    // Sync completes in the background too; the follow-up
-                    // scans wait for the foreground so they cannot be holding
-                    // a lock when iOS suspends the process.
-                    guard !state.isSceneInBackground else {
-                        state.syncFollowUpPending = true
-                        return .none
-                    }
-                    state.syncFollowUpPending = false
-                    state.isSyncFollowUpRunning = true
-                    return syncFollowUp()
-                }
-
-                switch status.state {
-                case .needsLocalReset(let reason):
-                    state.resetAlert = AlertState {
-                        TextState("Reset local data?")
-                    } actions: {
-                        ButtonState(role: .destructive, action: .confirmReset) {
-                            TextState("Reset")
-                        }
-                        ButtonState(role: .cancel, action: .cancel) {
-                            TextState("Cancel")
-                        }
-                    } message: {
-                        TextState("\(reason). This clears local data and does not delete iCloud data.")
-                    }
-                default:
-                    break
-                }
                 return .none
 
-            case .resetAlert(.presented(.confirmReset)):
-                let database = self.database
-                let syncEngine = self.syncEngine
-                return .run { _ in
-                    // Clear local CloudKit state for synced tables (does not delete iCloud data).
-                    try? await syncEngine.deleteLocalData()
-                    // Clear local-only tables.
-                    try await database.write { db in
-                        try db.execute(sql: #"DELETE FROM "savedItemContentLocalTables""#)
-                        try db.execute(sql: #"DELETE FROM "savedMediaLocalTables""#)
-                        try db.execute(sql: #"DELETE FROM "savedEmbedLocalTables""#)
-                        try db.execute(sql: #"DELETE FROM "savedImageRefLocalTables""#)
-                        try db.execute(sql: #"DELETE FROM "savedImageAssetLocalTables""#)
-                        try db.execute(sql: #"DELETE FROM "ingestionJobLocalTables""#)
-                        try db.execute(sql: #"DELETE FROM "imageDownloadSettingsLocalTables""#)
-                        try db.execute(sql: #"DELETE FROM "readerAppearanceSettingsLocalTables""#)
-                    }
-                }
+            case .sync(.delegate(.followUpScansFinished)):
+                // The scans may have queued hydration jobs; the share
+                // extension may have queued saves.
+                return .send(.ingestion(.drainRequested))
 
-            case .resetAlert(.presented(.cancel)), .resetAlert(.dismiss):
-                return .none
+            case .sync(.delegate(.resetFailed(let message))):
+                return .send(.startupFailed(message))
 
             case .library(.openItem(let item)):
                 // Re-tapping the same row must NOT rebuild `state.reader` —
@@ -684,7 +695,23 @@ public struct AppFeature {
                 state.library.openItemID = nil
                 return .none
 
-            case .library, .settings, .reader:
+            case .library(.deleteItem(let id)), .library(.permanentlyDelete(let id)):
+                // Deleting the open article closes it; the reader used to
+                // keep showing an item that was no longer in the list.
+                guard state.reader?.itemID == id else { return .none }
+                state.reader = nil
+                state.isReaderFocused = false
+                state.library.openItemID = nil
+                return .none
+
+            case .library, .settings, .reader, .ingestion, .sync:
+                return .none
+            }
+        }
+        }
+        .onChange(of: \.reader?.itemID) { _, itemID in
+            Reduce { state, _ in
+                state.$lastOpenItemID.withLock { $0 = itemID?.uuidString ?? "" }
                 return .none
             }
         }
@@ -693,477 +720,7 @@ public struct AppFeature {
     enum CancelID {
         case startup
         case startupMaintenance
-        case syncFollowUp
-        case ingestionDrain
-        case syncStatus
-        case periodicSync
+        case restoreReader
         case completedItemNotice
-    }
-
-    /// The database half of startup: reconcile, backfill, hydrate, drain the
-    /// ingestion queue, then the age-gated storage work. Idempotent, and
-    /// cancelled when the scene enters the background — see
-    /// `sceneDidEnterBackground`.
-    private func startupMaintenance(state: State) -> EffectOf<Self> {
-        let cloudSyncClient = self.cloudSyncClient
-        let repository = self.repository
-        let ingestionClient = self.ingestionClient
-        let pdfIngestionClient = self.pdfIngestionClient
-        let textIngestionClient = self.textIngestionClient
-        let date = self.date
-        let ingestionCoordinator = self.ingestionCoordinator
-        let storageUsageClient = self.storageUsageClient
-        let openReaderItemID = state.reader?.itemID
-        return .run { send in
-            do {
-                _ = try await repository.reconcileOrphanedTagAssignments()
-                // Backfill the text sync table from local content
-                // for any text items missing a sync row (recovery
-                // from the v11 DROP TABLE migration or items that
-                // predate the sync table).
-                _ = try await repository.backfillTextSyncTable()
-                _ = try await repository.enqueueHydrationJobsForMissingContent()
-                try await ingestionCoordinator.run {
-                    try await processIngestionJobs(
-                        repository: repository,
-                        ingestionClient: ingestionClient,
-                        pdfIngestionClient: pdfIngestionClient,
-                        textIngestionClient: textIngestionClient,
-                        ingestionCoordinator: ingestionCoordinator
-                    ) { date.now }
-                }
-                await send(.failedImportsLoaded(
-                    FailedImport.list(from: try await repository.fetchFailedIngestionJobs())
-                ))
-                // Best effort: the coordinator reports sync
-                // problems through the status stream, and a
-                // failed push is not a failed launch.
-                try? await cloudSyncClient.sendChanges()
-                await send(.startupFinished)
-                await send(.settings(.load))
-                // Finished jobs are never read again; drop week-old ones.
-                _ = try? await repository.pruneProcessedIngestionJobs(
-                    date.now.addingTimeInterval(-7 * 24 * 3600)
-                )
-                // Storage maintenance runs last so it never delays
-                // startup, and only every few days. Sweeps are
-                // age-gated and the orphan sweep quarantines for a
-                // week before deleting, so running shortly after a
-                // fresh install is safe.
-                let defaults = UserDefaults.standard
-                let lastMaintenance = defaults.object(
-                    forKey: "lastStorageMaintenanceDate"
-                ) as? Date
-                let isDue = lastMaintenance
-                    .map { date.now.timeIntervalSince($0) >= 3 * 24 * 3600 } ?? true
-                if isDue {
-                    _ = try? await storageUsageClient.runMaintenance(.periodic)
-                    defaults.set(date.now, forKey: "lastStorageMaintenanceDate")
-                }
-                // Cloud-asset backfill: upload PDFs that predate
-                // the asset store and (past the gate date) migrate
-                // legacy website zips; then run the budget-based
-                // eviction pass. All idempotent and cheap when
-                // there is nothing to do.
-                if (try? await CloudAssetService.enqueueBackfillJobs(repository: repository)) ?? 0 > 0 {
-                    try? await ingestionCoordinator.run {
-                        try await processIngestionJobs(
-                            repository: repository,
-                            ingestionClient: ingestionClient,
-                            pdfIngestionClient: pdfIngestionClient,
-                            textIngestionClient: textIngestionClient,
-                            ingestionCoordinator: ingestionCoordinator
-                        ) { date.now }
-                    }
-                }
-                _ = try? await StorageOffloadService.runEviction(
-                    repository: repository,
-                    excluding: Set([openReaderItemID].compactMap(\.self))
-                )
-            } catch where error.isDatabaseSuspension {
-                // Backgrounded mid-startup; re-runs on activation.
-                await send(.startupMaintenanceInterrupted)
-            } catch {
-                await send(.startupFailed(error.localizedDescription))
-            }
-        }
-        .cancellable(id: CancelID.startupMaintenance, cancelInFlight: true)
-    }
-
-    /// Hydrates content for records that just arrived through CloudKit and
-    /// drains anything the share extension queued.
-    private func syncFollowUp() -> EffectOf<Self> {
-        let repository = self.repository
-        let ingestionClient = self.ingestionClient
-        let pdfIngestionClient = self.pdfIngestionClient
-        let textIngestionClient = self.textIngestionClient
-        let date = self.date
-        let ingestionCoordinator = self.ingestionCoordinator
-        return .run { send in
-            // Each scan is independent: one failing must not stop the rest.
-            // A scan refused because the database is suspended is different —
-            // the whole pass is repeated on the next activation.
-            let scans: [@Sendable () async throws -> Int] = [
-                repository.enqueueHydrationJobsForMissingContent,
-                repository.hydratePDFItemsFromSyncedContent,
-                repository.hydrateTextItemsFromSyncedContent,
-                repository.hydrateWebsiteItemsFromSyncedContent,
-                repository.hydrateBookItemsFromSyncedContent,
-                repository.reconcileOrphanedTagAssignments,
-            ]
-            for scan in scans {
-                do {
-                    _ = try await scan()
-                } catch where error.isDatabaseSuspension {
-                    await send(.syncFollowUpInterrupted)
-                    return
-                } catch is CancellationError {
-                    return
-                } catch {
-                    reportIssue(error)
-                }
-            }
-            try? await ingestionCoordinator.run {
-                try await processIngestionJobs(
-                    repository: repository,
-                    ingestionClient: ingestionClient,
-                    pdfIngestionClient: pdfIngestionClient,
-                    textIngestionClient: textIngestionClient,
-                    ingestionCoordinator: ingestionCoordinator
-                ) { date.now }
-            }
-            let jobs = (try? await repository.fetchFailedIngestionJobs()) ?? []
-            await send(.failedImportsLoaded(FailedImport.list(from: jobs)))
-            await send(.syncFollowUpFinished)
-        }
-        .cancellable(id: CancelID.syncFollowUp, cancelInFlight: true)
-    }
-
-    /// Drains the ingestion queue and refreshes the failed-import list.
-    ///
-    /// Cancelled when the scene enters the background (see
-    /// `sceneDidEnterBackground`); every activation starts a fresh drain, so
-    /// whatever was cut short runs again then.
-    private func drainIngestionQueue(
-        state: inout State,
-        retryingFailed: Bool = false
-    ) -> EffectOf<Self> {
-        state.activeDrainCount += 1
-        let repository = self.repository
-        let ingestionClient = self.ingestionClient
-        let pdfIngestionClient = self.pdfIngestionClient
-        let textIngestionClient = self.textIngestionClient
-        let date = self.date
-        let ingestionCoordinator = self.ingestionCoordinator
-        return .run { send in
-            if retryingFailed {
-                try? await repository.retryFailedIngestionJobs()
-            }
-            try? await ingestionCoordinator.run {
-                try await processIngestionJobs(
-                    repository: repository,
-                    ingestionClient: ingestionClient,
-                    pdfIngestionClient: pdfIngestionClient,
-                    textIngestionClient: textIngestionClient,
-                    ingestionCoordinator: ingestionCoordinator
-                ) { date.now }
-            }
-            let jobs = (try? await repository.fetchFailedIngestionJobs()) ?? []
-            await send(.failedImportsLoaded(FailedImport.list(from: jobs)))
-            await send(.ingestionDrainFinished)
-        }
-        .cancellable(id: CancelID.ingestionDrain)
-    }
-
-    private func navigateReader(
-        offset: Int,
-        state: inout State
-    ) -> EffectOf<Self> {
-        guard let targetID = state.readerNavigationTarget(offset: offset) else { return .none }
-        state.library.openItemID = targetID
-
-        // Prefer the observed row so the header renders instantly; fall
-        // back to a database load when the target has left the current list.
-        if let item = state.library.items.first(where: { $0.id == targetID }) {
-            state.reader = ReaderFeature.State(item: item, appearance: state.cachedAppearance)
-        } else {
-            state.reader = ReaderFeature.State(itemID: targetID, appearance: state.cachedAppearance)
-        }
-        let itemStorageClient = self.itemStorageClient
-        return .run { _ in
-            try? await itemStorageClient.touchOpened(targetID)
-        }
-    }
-}
-
-private func processIngestionJobs(
-    repository: StowerRepository,
-    ingestionClient: URLIngestionClient,
-    pdfIngestionClient: PDFIngestionClient,
-    textIngestionClient: TextIngestionClient,
-    ingestionCoordinator: IngestionCoordinator,
-    now: @escaping @Sendable () -> Date
-) async throws {
-    // Jobs an earlier drain had to abandon go straight back in the queue.
-    let interrupted = await ingestionCoordinator.takeInterrupted()
-    if !interrupted.isEmpty {
-        do {
-            try await repository.releaseIngestionJobs(interrupted)
-        } catch {
-            for id in interrupted {
-                await ingestionCoordinator.noteInterrupted(id)
-            }
-            throw error
-        }
-    }
-
-    while let job = try await repository.claimNextIngestionJob(now()) {
-        do {
-            try await processIngestionJob(
-                job,
-                repository: repository,
-                ingestionClient: ingestionClient,
-                pdfIngestionClient: pdfIngestionClient,
-                textIngestionClient: textIngestionClient
-            )
-            try await repository.completeIngestionJob(job.id, now())
-        } catch where isIngestionInterruption(error) {
-            // The app is being backgrounded (the database has stopped taking
-            // locks) or the drain was cancelled. Nothing is wrong with this
-            // import — recording it as a failure would blame the user's
-            // article for the app being suspended. The database may refuse a
-            // write right now, so the job is remembered and released at the
-            // start of the next drain.
-            await ingestionCoordinator.noteInterrupted(job.id)
-            if error.isDatabaseSuspension, !Task.isCancelled {
-                return
-            }
-            throw CancellationError()
-        } catch {
-            // `try?`, not `try`: if recording the failure itself fails, the
-            // remaining queued imports must still be drained. Rethrowing here
-            // stranded every job that the failing one was ahead of.
-            try? await repository.failIngestionJob(job.id, error.localizedDescription, now())
-        }
-    }
-}
-
-/// Whether an import stopped because the app is going away rather than
-/// because of the content being imported. Once the drain's task is cancelled
-/// any error counts: cancellation surfaces as whatever the interrupted layer
-/// happens to throw.
-private func isIngestionInterruption(_ error: any Error) -> Bool {
-    Task.isCancelled || error is CancellationError || error.isDatabaseSuspension
-}
-
-private func processIngestionJob(
-    _ job: IngestionJob,
-    repository: StowerRepository,
-    ingestionClient: URLIngestionClient,
-    pdfIngestionClient: PDFIngestionClient,
-    textIngestionClient: TextIngestionClient
-) async throws {
-    @Dependency(\.articleSaveClient)
-    var articleSaveClient
-    switch job.kind {
-        case .url:
-            let trimmed = job.payload.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard let url = URL(string: trimmed), ["http", "https"].contains(url.scheme?.lowercased() ?? "") else {
-                throw IngestionProcessingError.invalidHydrationURL(trimmed)
-            }
-            _ = try await articleSaveClient.save(url)
-        case .pdf:
-            // Payload is the absolute path of a PDF file that the share
-            // extension or in-app picker copied into the shared App Group
-            // container. The file lives inside a UUID-named subdirectory
-            // (so the original filename is preserved for title fallback);
-            // clean up the whole subdir once ingestion is done.
-            let pdfURL = URL(fileURLWithPath: job.payload)
-            let scratchDir = pdfURL.deletingLastPathComponent()
-            do {
-                let result = try await pdfIngestionClient.ingest(pdfURL)
-                let item = try await repository.createItemFromIngestion(result)
-                try? PDFArchiver.archivePDF(from: pdfURL, itemID: item.id)
-                if let payload = try? AssetJobPayload(
-                    itemID: item.id,
-                    kind: .pdf,
-                    originalFilename: pdfURL.lastPathComponent
-                ).encoded() {
-                    try? await repository.enqueueIngestionJob(.uploadAsset, payload)
-                }
-                try? FileManager.default.removeItem(at: scratchDir)
-            } catch where isIngestionInterruption(error) {
-                // Keep the staged file: the job runs again.
-                throw error
-            } catch {
-                let fallback = pdfURL.deletingPathExtension().lastPathComponent
-                _ = try? await repository.createItemFromIngestion(
-                    .sharedText("Failed to ingest PDF: \(fallback)\n\n\(error.localizedDescription)")
-                )
-                try? FileManager.default.removeItem(at: scratchDir)
-            }
-        case .epub:
-            // Payload is the absolute path of an EPUB the share extension
-            // copied into the shared App Group container, inside a UUID-named
-            // subdirectory that keeps the original filename for the title
-            // fallback.
-            @Dependency(\.epubIngestionClient)
-            var epubIngestionClient
-            let epubURL = URL(fileURLWithPath: job.payload)
-            let scratchDir = epubURL.deletingLastPathComponent()
-            do {
-                let result = try await epubIngestionClient.ingest(epubURL)
-                let item = try await repository.createItemFromIngestion(result)
-                try? EPUBBookArchiver.archiveBook(from: epubURL, itemID: item.id)
-                if let payload = try? AssetJobPayload(
-                    itemID: item.id,
-                    kind: .epub,
-                    originalFilename: epubURL.lastPathComponent
-                ).encoded() {
-                    try? await repository.enqueueIngestionJob(.uploadAsset, payload)
-                }
-                try? FileManager.default.removeItem(at: scratchDir)
-            } catch let error as EPUBIngestionError {
-                // The file itself is the problem, so a retry cannot succeed.
-                // Drop the staged copy and report the import as failed.
-                try? FileManager.default.removeItem(at: scratchDir)
-                throw error
-            }
-        case .text:
-            let payload = QueuedTextPayloadCodec.decode(job.payload, defaultMode: .auto)
-            let result = try await textIngestionClient.ingest(
-                payload.content,
-                nil,
-                payload.titleHint,
-                payload.mode
-            )
-            _ = try await repository.createItemFromIngestion(result)
-        case .markdown:
-            let payload = QueuedTextPayloadCodec.decode(job.payload, defaultMode: .markdown)
-            let result = try await textIngestionClient.ingest(
-                payload.content,
-                nil,
-                payload.titleHint,
-                .markdown
-            )
-            _ = try await repository.createItemFromIngestion(result)
-        case .hydrateText:
-            let data = Data(job.payload.utf8)
-            let payload = try JSONDecoder().decode(TextHydrationPayload.self, from: data)
-            do {
-                let mode = payload.rawSourceMode
-                    .flatMap(TextImportMode.init(rawValue:))
-                    ?? .auto
-                let result = try await textIngestionClient.ingest(
-                    payload.rawSourceText,
-                    payload.title,
-                    nil,
-                    mode
-                )
-                try await repository.hydrateItemContent(payload.itemID, result)
-            } catch where isIngestionInterruption(error) {
-                throw error
-            } catch {
-                try? await repository.updateLocalContentStatus(payload.itemID, "failed", error.localizedDescription)
-                throw error
-            }
-        case .hydrate:
-            let data = Data(job.payload.utf8)
-            let payload = try JSONDecoder().decode(HydrationPayload.self, from: data)
-            if let url = URL(string: payload.url) {
-                do {
-                    try await repository.updateLocalContentStatus(payload.itemID, "downloading", nil)
-                    _ = try await articleSaveClient.hydrate(payload.itemID, url)
-                } catch where isIngestionInterruption(error) {
-                    throw error
-                } catch {
-                    try? await repository.updateLocalContentStatus(payload.itemID, "failed", error.localizedDescription)
-                    throw error
-                }
-            } else {
-                throw IngestionProcessingError.invalidHydrationURL(payload.url)
-            }
-        case .website:
-            // Payload is the absolute path of a .zip file the share extension
-            // (or another background enqueuer) copied into the shared App
-            // Group container (PendingWebsites/{uuid}/). The in-app picker
-            // path imports inline via WebsiteImportService without touching
-            // this queue.
-            let zipURL = URL(fileURLWithPath: job.payload)
-            let scratchDir = zipURL.deletingLastPathComponent()
-            do {
-                _ = try await WebsiteImportService.importWebsite(
-                    zipURL: zipURL,
-                    repository: repository
-                )
-                try? FileManager.default.removeItem(at: scratchDir)
-            } catch where isIngestionInterruption(error) {
-                // Keep the staged file: the job runs again.
-                throw error
-            } catch {
-                let fallback = zipURL.deletingPathExtension().lastPathComponent
-                _ = try? await repository.createItemFromIngestion(
-                    .sharedText("Failed to import website: \(fallback)\n\n\(error.localizedDescription)")
-                )
-                try? FileManager.default.removeItem(at: scratchDir)
-            }
-        case .uploadAsset:
-            let payload = try AssetJobPayload.decoded(from: job.payload)
-            try await CloudAssetService.upload(payload: payload)
-        case .downloadAsset:
-            let payload = try AssetJobPayload.decoded(from: job.payload)
-            try await CloudAssetService.restore(itemID: payload.itemID, repository: repository)
-        case .migrateWebsiteAsset:
-            let payload = try AssetJobPayload.decoded(from: job.payload)
-            try await CloudAssetService.migrateWebsiteZip(
-                itemID: payload.itemID,
-                repository: repository
-            )
-        case .migrateCaptureAsset:
-            let payload = try AssetJobPayload.decoded(from: job.payload)
-            try await CloudAssetService.migrateCapture(
-                itemID: payload.itemID,
-                repository: repository
-            )
-        case .hydrateWebsite:
-            // Receive-side: the website archive arrived via CloudKit sync but
-            // the site isn't unpacked locally yet. Pull the zip bytes out of
-            // the sync table and run the same unpack logic we use on the
-            // originating device.
-            let data = Data(job.payload.utf8)
-            let payload = try JSONDecoder().decode(WebsiteHydrationPayload.self, from: data)
-            do {
-                guard let archive = try await repository.loadWebsiteArchive(payload.itemID) else {
-                    throw IngestionProcessingError.missingWebsiteArchive
-                }
-                try await WebsiteImportService.hydrateWebsite(
-                    itemID: payload.itemID,
-                    archive: archive,
-                    repository: repository
-                )
-            } catch where isIngestionInterruption(error) {
-                throw error
-            } catch {
-                try? await repository.updateLocalContentStatus(
-                    payload.itemID,
-                    "failed",
-                    error.localizedDescription
-                )
-                throw error
-            }
-        }
-}
-
-private enum IngestionProcessingError: LocalizedError {
-    case invalidHydrationURL(String)
-    case missingWebsiteArchive
-
-    var errorDescription: String? {
-        switch self {
-        case .invalidHydrationURL(let value):
-            "Invalid hydration URL: \(value)"
-        case .missingWebsiteArchive:
-            "The synced website archive is not available yet."
-        }
     }
 }

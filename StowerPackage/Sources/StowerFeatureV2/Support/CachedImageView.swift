@@ -15,8 +15,9 @@ import AppKit
 /// thumbnail cell — SwiftUI's `.interpolation(.high)` modifier acts on
 /// the drawing phase but can't undo the quality loss that happens when
 /// the full-size bitmap is scaled to a tiny frame at render time.
+@MainActor
 @Observable
-final class ImageLoader: @unchecked Sendable {
+final class ImageLoader {
     enum Phase {
         case loading
         case success(Image)
@@ -25,9 +26,9 @@ final class ImageLoader: @unchecked Sendable {
 
     private(set) var phase: Phase = .loading
 
-    private static let userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 (KHTML, like Gecko)"
+    nonisolated private static let userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 (KHTML, like Gecko)"
 
-    private static let session: URLSession = {
+    nonisolated private static let session: URLSession = {
         let cache = URLCache(
             memoryCapacity: 32 * 1024 * 1024,   // 32 MB in-memory
             diskCapacity: 256 * 1024 * 1024,     // 256 MB on disk
@@ -50,31 +51,42 @@ final class ImageLoader: @unchecked Sendable {
         loadTask?.cancel()
         phase = .loading
         loadTask = Task { [weak self] in
-            do {
-                let data: Data
-                if url.isFileURL {
-                    data = try Data(contentsOf: url)
-                } else {
-                    let (downloaded, _) = try await Self.session.data(from: url)
-                    data = downloaded
-                }
-                guard !Task.isCancelled else { return }
-
-                let image = try Self.makeImage(from: data, targetPixelSize: targetPixelSize)
-                guard !Task.isCancelled else { return }
-                let loader = self
-                await MainActor.run { loader?.phase = .success(image) }
-            } catch {
-                guard !Task.isCancelled else { return }
-                let loader = self
-                await MainActor.run { loader?.phase = .failure(error) }
+            // Fetching and decoding run off the main actor; only the result
+            // comes back here.
+            let result = await Self.fetchImage(url: url, targetPixelSize: targetPixelSize)
+            guard !Task.isCancelled else { return }
+            switch result {
+            case .success(let image):
+                self?.phase = .success(image)
+            case .failure(let error):
+                self?.phase = .failure(error)
             }
+        }
+    }
+
+    @concurrent
+    nonisolated private static func fetchImage(
+        url: URL,
+        targetPixelSize: CGFloat?
+    ) async -> Result<Image, any Error> {
+        do {
+            let data: Data
+            if url.isFileURL {
+                data = try Data(contentsOf: url)
+            } else {
+                let (downloaded, _) = try await session.data(from: url)
+                data = downloaded
+            }
+            try Task.checkCancellation()
+            return .success(try makeImage(from: data, targetPixelSize: targetPixelSize))
+        } catch {
+            return .failure(error)
         }
     }
 
     // MARK: - Decoding
 
-    private static func makeImage(from data: Data, targetPixelSize: CGFloat?) throws -> Image {
+    nonisolated private static func makeImage(from data: Data, targetPixelSize: CGFloat?) throws -> Image {
         if let targetPixelSize, let cgImage = downsample(data: data, maxPixelSize: targetPixelSize) {
             return makeSwiftUIImage(cgImage: cgImage)
         }
@@ -97,7 +109,7 @@ final class ImageLoader: @unchecked Sendable {
     /// `kCGImageSourceCreateThumbnailFromImageAlways` flag performs a
     /// single high-quality downsample during decode, avoiding the need
     /// to decode the full image into memory first.
-    private static func downsample(data: Data, maxPixelSize: CGFloat) -> CGImage? {
+    nonisolated private static func downsample(data: Data, maxPixelSize: CGFloat) -> CGImage? {
         let sourceOptions: [CFString: Any] = [
             kCGImageSourceShouldCache: false
         ]
@@ -113,7 +125,7 @@ final class ImageLoader: @unchecked Sendable {
         return CGImageSourceCreateThumbnailAtIndex(source, 0, thumbnailOptions as CFDictionary)
     }
 
-    private static func makeSwiftUIImage(cgImage: CGImage) -> Image {
+    nonisolated private static func makeSwiftUIImage(cgImage: CGImage) -> Image {
         #if canImport(UIKit)
         let uiImage = UIImage(cgImage: cgImage)
         return Image(uiImage: uiImage)
@@ -126,7 +138,7 @@ final class ImageLoader: @unchecked Sendable {
         #endif
     }
 
-    deinit {
+    isolated deinit {
         loadTask?.cancel()
     }
 }

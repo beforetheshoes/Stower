@@ -155,15 +155,14 @@ struct HTMLBlockParserTests {
         #expect(concatenatedRawText(inlines) == "prime target for potential phishing attempts. It's important.")
     }
 
-    @Test
+    @Test(.enabled(if: FileManager.default.fileExists(atPath: "/tmp/eff_article.html")))
     func liveExtractionAgainstRealEFFArticleFile() async throws {
         // Hermetic to this machine, but invaluable as a diagnostic: runs
         // the live extraction pipeline against the ACTUAL downloaded EFF
         // HTML file and verifies the user-visible "phishing" list item
-        // comes out with correct spacing. Skip silently if the file isn't
-        // present.
+        // comes out with correct spacing. Reported as skipped when the file
+        // isn't present.
         let path = "/tmp/eff_article.html"
-        guard FileManager.default.fileExists(atPath: path) else { return }
         let html = try String(contentsOfFile: path, encoding: .utf8)
 
         let result = try await ExtractionPipelineClient.live.extract(

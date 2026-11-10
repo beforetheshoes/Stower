@@ -3,10 +3,7 @@ import Foundation
 import OSLog
 import StowerData
 
-private let kWebsiteImportLog = Logger(
-    subsystem: "com.ryanleewilliams.stower",
-    category: "WebsiteImport"
-)
+private let kWebsiteImportLog = Logger.stower("WebsiteImport")
 
 /// Shared entry points for bringing a user-uploaded website zip into the
 /// library. Used by both the in-app file importer (inline, foreground) and

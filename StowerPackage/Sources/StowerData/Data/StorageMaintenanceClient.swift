@@ -3,7 +3,7 @@ import Foundation
 import OSLog
 import SQLiteData
 
-private let kMaintenanceLogger = Logger(subsystem: "com.ryanleewilliams.stower", category: "StorageMaintenance")
+private let kMaintenanceLogger = Logger.stower("StorageMaintenance")
 
 /// Size and fragmentation statistics for the main database file.
 public struct DatabaseStorageStats: Equatable, Sendable {

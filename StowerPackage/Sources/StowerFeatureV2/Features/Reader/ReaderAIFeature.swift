@@ -101,6 +101,8 @@ public struct ReaderAIFeature {
     var repository
     @Dependency(\.articleAIClient)
     var ai
+    @Dependency(\.date.now)
+    var now
 
     public var body: some ReducerOf<Self> {
         Reduce { state, action in
@@ -234,7 +236,7 @@ public struct ReaderAIFeature {
                     state.summaryText = final
                     state.summaryStage = nil
                     state.isSummarizing = false
-                    state.summaryGeneratedAt = Date.now
+                    state.summaryGeneratedAt = now
                     state.summaryWasCached = false
 
                     // Persist to the local cache table. Fire-and-forget: UI

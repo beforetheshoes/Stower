@@ -6,10 +6,7 @@ import StowerData
 import SwiftSoup
 import ZIPFoundation
 
-private let kEPUBIngestLog = Logger(
-    subsystem: "com.ryanleewilliams.stower",
-    category: "EPUBIngest"
-)
+private let kEPUBIngestLog = Logger.stower("EPUBIngest")
 
 public enum EPUBIngestionError: Error, Equatable, LocalizedError {
     case unreadable

@@ -125,7 +125,7 @@ public struct YouTubeIngestionClient: Sendable {
     }
 
     public static let live: YouTubeIngestionClient = .make(
-        fetch: { request in try await URLSession.shared.data(for: request) },
+        fetch: { request in try await networkSession().data(for: request) },
         downloadImage: { url in
             var request = URLRequest(url: url)
             request.timeoutInterval = 15
@@ -133,7 +133,7 @@ public struct YouTubeIngestionClient: Sendable {
                 "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 (KHTML, like Gecko)",
                 forHTTPHeaderField: "User-Agent"
             )
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await networkSession().data(for: request)
             if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
                 throw URLError(.badServerResponse)
             }

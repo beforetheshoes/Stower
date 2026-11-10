@@ -4,10 +4,11 @@ Stower is one SwiftUI application for iOS, iPadOS, and macOS 27. It compiles in 
 
 ## Architecture
 
-- `StowerFeature` contains the TCA app domain, SwiftUI screens, reader, ingestion clients, Foundation Models integration, and App Intents.
+- `StowerFeature` (sources in `StowerPackage/Sources/StowerFeatureV2`) contains the TCA app domain, SwiftUI screens, reader, ingestion clients, Foundation Models integration, and App Intents.
 - `StowerData` contains SQLiteData tables, migrations, repositories, CloudKit sync, and shared ingestion payloads.
 - `Stower/StowerApp.swift` is the thin application entry point.
 - `StowerShare` writes imports into the shared SQLite ingestion queue.
+- `StowerSafari` and `BrowserExtension` are the Safari web extension; it hands URLs to the app through `stower://save`.
 - `StowerFeatureV2Tests` uses Swift Testing and TCA `TestStore`.
 
 Open `Stower.xcworkspace` and use the unified `Stower` scheme for both iOS and macOS. There is no `StowerMac` project/package and no SwiftData stack.
@@ -33,7 +34,7 @@ xcodebuild build -workspace Stower.xcworkspace -scheme Stower -destination 'gene
 xcodebuild build -workspace Stower.xcworkspace -scheme Stower -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO
 ```
 
-OS 27 simulator tests use `platform=iOS Simulator,name=iPhone 17 Pro,OS=27.0`. CI build/test jobs run on a self-hosted runner labelled `macOS` and `xcode-27` until a suitable hosted image exists.
+OS 27 simulator tests use `platform=iOS Simulator,name=iPhone 17 Pro,OS=27.0`. CI (`.github/workflows/ci.yml`) runs SwiftLint only: hosted runners do not have Xcode 27 yet, so builds and tests are run locally before a PR. Merges to `main` ship to TestFlight.
 
 ## Key paths
 

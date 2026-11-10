@@ -50,7 +50,8 @@ public struct ContentView: View {
     }
 }
 
-#if os(macOS)
+/// Menu commands and their keyboard shortcuts. On iPadOS these are what a
+/// hardware keyboard gets; the reader had no shortcuts there at all.
 public struct ReaderCommands: Commands {
     let store: StoreOf<AppFeature>
 
@@ -59,6 +60,21 @@ public struct ReaderCommands: Commands {
     }
 
     public var body: some Commands {
+        #if os(iOS)
+        // The Mac gets this item, and its shortcut, from the Settings scene.
+        CommandGroup(replacing: .appSettings) {
+            Button("Settings…") {
+                store.send(.openSettings)
+            }
+            .keyboardShortcut(",", modifiers: .command)
+        }
+        #endif
+        CommandGroup(replacing: .newItem) {
+            Button("New Link…") {
+                store.send(.library(.newURLCommand))
+            }
+            .keyboardShortcut("n", modifiers: .command)
+        }
         CommandMenu("Reader") {
             Button(store.isReaderFocused ? "Exit Reader Focus" : "Focus Reader") {
                 store.send(.readerFocusButtonTapped)
@@ -104,6 +120,27 @@ public struct ReaderCommands: Commands {
         }
     }
 }
+
+#if os(macOS)
+/// The contents of the Mac's Settings window.
+public struct SettingsWindow: View {
+    let store: StoreOf<AppFeature>
+
+    public init(store: StoreOf<AppFeature>) {
+        self.store = store
+    }
+
+    public var body: some View {
+        let palette = store.palette
+        NavigationStack {
+            SettingsScreen(store: store.scope(state: \.settings, action: \.settings))
+        }
+        .frame(minWidth: 520, idealWidth: 560, minHeight: 480, idealHeight: 640)
+        .tint(palette.primary)
+        .environment(\.flexokiPalette, palette)
+        .preferredColorScheme(palette.colorScheme)
+    }
+}
 #endif
 
 public struct AppView: View {
@@ -111,10 +148,13 @@ public struct AppView: View {
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var previousColumnVisibility: NavigationSplitViewVisibility = .all
     @State private var readerSession = ReaderWebSession()
+    #if os(macOS)
+    @Environment(\.openSettings)
+    private var openSettingsWindow
+    #endif
     #if os(iOS)
     @Environment(\.horizontalSizeClass)
     private var horizontalSizeClass
-    @State private var isFilterSheetPresented = false
     #endif
 
     public init(store: StoreOf<AppFeature>) {
@@ -150,6 +190,13 @@ public struct AppView: View {
                         savingNotice(count: store.pendingSaveCount, palette: palette)
                             .transition(.move(edge: .bottom).combined(with: .opacity))
                     }
+                    #if os(iOS)
+                    // The Mac composer row shows this itself.
+                    if store.library.isImportingFile {
+                        progressNotice("Importing…")
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                    }
+                    #endif
                     if let completedItem = store.recentlyCompletedItem {
                         completedItemNotice(completedItem, palette: palette)
                             .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -160,6 +207,7 @@ public struct AppView: View {
                 .padding(.horizontal, 12)
                 .padding(.bottom, 8)
                 .animation(.snappy(duration: 0.3), value: store.pendingSaveCount)
+                .animation(.snappy(duration: 0.3), value: store.library.isImportingFile)
                 .animation(.snappy(duration: 0.3), value: store.recentlyCompletedItem?.id)
             }
             .onChange(of: store.reader?.itemID) { _, itemID in
@@ -167,17 +215,24 @@ public struct AppView: View {
                     readerSession.reset()
                 }
             }
-            .alert($store.scope(state: \.resetAlert, action: \.resetAlert))
+            .alert($store.scope(state: \.sync.resetAlert, action: \.sync.resetAlert))
+            #if os(iOS)
+            // Focus mode hides the columns, and only the regular-width layout
+            // has a control to leave it. A window that goes compact while
+            // focused would come back with the columns shown and focus still
+            // on, with no way out. Watched here, at the root: the split view
+            // itself is gone by the time the size class is compact.
+            .onChange(of: horizontalSizeClass) { _, sizeClass in
+                if sizeClass == .compact, store.isReaderFocused {
+                    store.send(.exitReaderFocus)
+                }
+            }
+            #endif
             // Lives at the root rather than on `LibraryScreen` because Mac
             // reader focus removes the library from the hierarchy, and the
             // export command must still be able to present its save panel.
             .modifier(EPUBExportPresenter(store: store.scope(state: \.library, action: \.library)))
-            .sheet(
-                isPresented: Binding(
-                    get: { store.isSettingsPresented },
-                    set: { if !$0 { store.send(.closeSettings) } }
-                )
-            ) {
+            .sheet(isPresented: $store.isSettingsPresented.sending(\.settingsPresentationChanged)) {
                 NavigationStack {
                     SettingsScreen(store: store.scope(\.settings, action: \.settings))
                         .toolbar {
@@ -242,10 +297,10 @@ public struct AppView: View {
                 style: .compact
             )
             Button("Dismiss") {
-                store.send(.dismissFailedImportsTapped)
+                store.send(.ingestion(.dismissFailedImportsTapped))
             }
             Button("Retry") {
-                store.send(.retryFailedImportsTapped)
+                store.send(.ingestion(.retryFailedImportsTapped))
             }
             .buttonStyle(.borderedProminent)
         }
@@ -294,10 +349,14 @@ public struct AppView: View {
     }
 
     private func savingNotice(count: Int, palette: FlexokiPalette) -> some View {
+        progressNotice(count == 1 ? "Saving article…" : "Saving \(count) articles…")
+    }
+
+    private func progressNotice(_ text: String) -> some View {
         HStack(spacing: 12) {
             ProgressView()
                 .controlSize(.small)
-            Text(count == 1 ? "Saving article…" : "Saving \(count) articles…")
+            Text(text)
                 .font(.callout.weight(.medium))
             Spacer(minLength: 8)
         }
@@ -365,19 +424,27 @@ public struct AppView: View {
             NavigationStack {
                 LibraryScreen(
                     store: store.scope(\.library, action: \.library),
-                    onOpenSettings: nil
-                ) { isFilterSheetPresented = true }
+                    onOpenSettings: { store.send(.openSettings) },
+                    onOpenFilters: { store.send(.filterSheetPresentationChanged(true)) }
+                )
                     .scrollContentBackground(.hidden)
                     .background(palette.bg)
                     .navigationDestination(
                         item: $store.scope(\.$reader, action: \.reader)
                     ) { readerStore in
+                        // Deliberately not handed the shared `readerSession`.
+                        // Doing so was tried and made a pushed article first
+                        // appear in a stale layout (wrong font, title under
+                        // the bar) until the next interaction: the pushed
+                        // reader's first page is built before its insets and
+                        // appearance settle, and only a fresh session per
+                        // pass reloads it. Covered by ReaderChromeUITests.
                         ReaderScreen(store: readerStore)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .background(palette.bg)
                     }
             }
-            .sheet(isPresented: $isFilterSheetPresented) {
+            .sheet(isPresented: $store.isFilterSheetPresented.sending(\.filterSheetPresentationChanged)) {
                 filterSheet(palette: palette)
             }
         } else {
@@ -398,19 +465,15 @@ public struct AppView: View {
         NavigationStack {
             SidebarScreen(
                 store: store.scope(\.sidebar, action: \.sidebar),
-                onOpenSettings: {
-                    isFilterSheetPresented = false
-                    store.send(.openSettings)
-                },
-                onSelect: { _ in
-                    isFilterSheetPresented = false
-                }
+                onOpenSettings: { store.send(.openSettings) },
+                // The reducer closes the sheet when a list is chosen.
+                onSelect: { _ in }
             )
             .scrollContentBackground(.hidden)
             .background(palette.bg2)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { isFilterSheetPresented = false }
+                    Button("Done") { store.send(.filterSheetPresentationChanged(false)) }
                 }
             }
         }
@@ -428,7 +491,11 @@ public struct AppView: View {
             SidebarScreen(
                 store: store.scope(\.sidebar, action: \.sidebar)
             ) {
+                #if os(macOS)
+                openSettingsWindow()
+                #else
                 store.send(.openSettings)
+                #endif
             }
             .scrollContentBackground(.hidden)
             .background(palette.bg2)

@@ -3,7 +3,7 @@ import Foundation
 import OSLog
 import StowerData
 
-private let kOffloadLogger = Logger(subsystem: "com.ryanleewilliams.stower", category: "StorageOffload")
+private let kOffloadLogger = Logger.stower("StorageOffload")
 
 public enum StorageOffloadError: Error, Equatable, LocalizedError {
     case notOffloadable
@@ -144,7 +144,7 @@ public enum StorageOffloadService {
     }
 
     private static func totalArchiveBytes() -> Int {
-        let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        let documents = stowerDocumentsDirectory()
         let root = documents.appendingPathComponent("StowerArchive", isDirectory: true)
         return StorageScanActor.directorySize(root)
     }

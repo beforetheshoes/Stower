@@ -9,6 +9,9 @@ public struct StowerRepository: Sendable {
     /// oldest first. Backs the bulk "re-extract library" maintenance action.
     public var fetchReextractableItems: @Sendable () async throws -> [SavedItem]
     public var loadItem: @Sendable (UUID) async throws -> SavedItem?
+    /// Whether an item exists and is not in the trash. One indexed lookup;
+    /// none of the item's content is read.
+    public var isLiveItem: @Sendable (UUID) async throws -> Bool
     public var createItemFromIngestion: @Sendable (IngestionResult) async throws -> SavedItem
     public var updateItemFromIngestion: @Sendable (UUID, IngestionResult) async throws -> SavedItem?
     public var hydrateItemContent: @Sendable (UUID, IngestionResult) async throws -> Void
@@ -63,10 +66,6 @@ public struct StowerRepository: Sendable {
     public var removeTag: @Sendable (UUID, UUID) async throws -> Void
     public var reconcileOrphanedTagAssignments: @Sendable () async throws -> Int
 
-    /// Database-backed stream fired whenever library, tag, or assignment rows
-    /// change locally or through CloudKit.
-    public var observeLibraryChanges: @Sendable () -> AsyncStream<Void>
-
     public var loadSettings: @Sendable () async throws -> ImageDownloadSettings
     public var saveSettings: @Sendable (ImageDownloadSettings) async throws -> Void
     public var loadReaderAppearanceSettings: @Sendable () async throws -> ReaderAppearanceSettings
@@ -118,6 +117,10 @@ public struct StowerRepository: Sendable {
     /// Enqueues `downloadAsset` jobs for synced books that have nothing to
     /// render on this device yet. Returns the number of jobs enqueued.
     public var hydrateBookItemsFromSyncedContent: @Sendable () async throws -> Int
+
+    /// Empties every local-only table. Synced tables are cleared separately
+    /// through the sync engine; iCloud data is not touched.
+    public var resetLocalData: @Sendable () async throws -> Void
 }
 
 private enum StowerRepositoryKey: DependencyKey {
@@ -144,6 +147,7 @@ extension StowerRepository {
             fetchLibrary: { _ in [] },
             fetchReextractableItems: { [] },
             loadItem: { _ in nil },
+            isLiveItem: { _ in false },
             createItemFromIngestion: { _ in throw RepositoryError.notBootstrapped },
             updateItemFromIngestion: { _, _ in nil },
             hydrateItemContent: { _, _ in },
@@ -176,7 +180,6 @@ extension StowerRepository {
             addTag: { _, _ in },
             removeTag: { _, _ in },
             reconcileOrphanedTagAssignments: { 0 },
-            observeLibraryChanges: { AsyncStream { _ in } },
             loadSettings: { ImageDownloadSettings() },
             saveSettings: { _ in },
             loadReaderAppearanceSettings: { ReaderAppearanceSettings() },
@@ -198,7 +201,8 @@ extension StowerRepository {
             saveWebsiteArchive: { _, _, _, _ in },
             loadWebsiteArchive: { _ in nil },
             hydrateWebsiteItemsFromSyncedContent: { 0 },
-            hydrateBookItemsFromSyncedContent: { 0 }
+            hydrateBookItemsFromSyncedContent: { 0 },
+            resetLocalData: {}
         )
     }()
 }
@@ -274,10 +278,17 @@ extension StowerRepository {
             try await rawPermanentDelete(id)
         }
 
+        let rawResetLocalData = _resetLocalData(database: database)
+        let resetLocalData: @Sendable () async throws -> Void = {
+            documentCache.removeAll()
+            try await rawResetLocalData()
+        }
+
         return Self(
             fetchLibrary: _fetchLibraryFiltered(database: database),
             fetchReextractableItems: _fetchReextractableItems(database: database),
             loadItem: _loadItem(database: database),
+            isLiveItem: _isLiveItem(database: database),
             createItemFromIngestion: cachedCreateFromIngestion,
             updateItemFromIngestion: cachedUpdateFromIngestion,
             hydrateItemContent: cachedHydrateItemContent,
@@ -313,7 +324,6 @@ extension StowerRepository {
                 database: database,
                 scheduleSync: scheduleSync
             ),
-            observeLibraryChanges: _observeLibraryChanges(database: database),
             loadSettings: _loadSettings(database: database),
             saveSettings: _saveSettings(database: database),
             loadReaderAppearanceSettings: _loadReaderAppearanceSettings(database: database),
@@ -341,7 +351,8 @@ extension StowerRepository {
                 database: database,
                 archiveExists: websiteArchiveExists(itemID:)
             ),
-            hydrateBookItemsFromSyncedContent: _hydrateBookItemsFromSyncedContent(database: database)
+            hydrateBookItemsFromSyncedContent: _hydrateBookItemsFromSyncedContent(database: database),
+            resetLocalData: resetLocalData
         )
     }
 }

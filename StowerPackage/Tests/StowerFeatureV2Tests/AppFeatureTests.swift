@@ -112,6 +112,7 @@ struct AppFeatureTests {
             $0.library.openItemID = item.id
             $0.readerQueue = [item.id]
             $0.reader = ReaderFeature.State(item: item, appearance: $0.cachedAppearance)
+            $0.$lastOpenItemID.withLock { $0 = item.id.uuidString }
         }
         await store.send(.readerFocusButtonTapped) {
             $0.isReaderFocused = true
@@ -144,6 +145,7 @@ struct AppFeatureTests {
         await store.send(.nextArticleButtonTapped) {
             $0.library.openItemID = second.id
             $0.reader = ReaderFeature.State(itemID: second.id, appearance: $0.cachedAppearance)
+            $0.$lastOpenItemID.withLock { $0 = second.id.uuidString }
         }
         #expect(store.state.canNavigateToPreviousArticle)
         #expect(!store.state.canNavigateToNextArticle)
@@ -152,6 +154,7 @@ struct AppFeatureTests {
             $0.isReaderFocused = false
             $0.library.openItemID = nil
             $0.reader = nil
+            $0.$lastOpenItemID.withLock { $0 = "" }
         }
     }
 
@@ -211,7 +214,6 @@ struct AppFeatureTests {
             $0.stowerRepository.fetchLibrary = { _ in [item] }
             $0.stowerRepository.fetchListCounts = { .zero }
             $0.stowerRepository.fetchTags = { [] }
-            $0.stowerRepository.observeLibraryChanges = { AsyncStream { $0.finish() } }
             $0.stowerRepository.purgeOldTrash = { [] }
             $0.stowerRepository.loadSettings = { settings }
             $0.stowerRepository.loadReaderAppearanceSettings = { appearance }
@@ -220,6 +222,9 @@ struct AppFeatureTests {
             $0.stowerRepository.claimNextIngestionJobOfKind = { _, _ in nil }
             $0.continuousClock = ImmediateClock()
             $0.date.now = Date(timeIntervalSince1970: 1000)
+            // Startup's storage tail can enqueue backfill jobs when other
+            // tests have left archives in the shared container.
+            $0.uuid = .incrementing
             $0.syncDiagnosticsClient = .noop
         }
 
@@ -275,11 +280,13 @@ struct AppFeatureTests {
             $0.stowerRepository.fetchLibrary = { _ in [] }
             $0.stowerRepository.fetchListCounts = { .zero }
             $0.stowerRepository.fetchTags = { [] }
-            $0.stowerRepository.observeLibraryChanges = { AsyncStream { $0.finish() } }
             $0.stowerRepository.purgeOldTrash = { [] }
             $0.stowerRepository.enqueueHydrationJobsForMissingContent = { 0 }
             $0.continuousClock = ImmediateClock()
             $0.date.now = Date(timeIntervalSince1970: 1000)
+            // Startup's storage tail can enqueue backfill jobs when other
+            // tests have left archives in the shared container.
+            $0.uuid = .incrementing
             $0.syncDiagnosticsClient = .noop
         }
 
@@ -332,11 +339,13 @@ struct AppFeatureTests {
             $0.stowerRepository.fetchLibrary = { _ in [] }
             $0.stowerRepository.fetchListCounts = { .zero }
             $0.stowerRepository.fetchTags = { [] }
-            $0.stowerRepository.observeLibraryChanges = { AsyncStream { $0.finish() } }
             $0.stowerRepository.purgeOldTrash = { [] }
             $0.stowerRepository.enqueueHydrationJobsForMissingContent = { 0 }
             $0.continuousClock = ImmediateClock()
             $0.date.now = Date(timeIntervalSince1970: 1000)
+            // Startup's storage tail can enqueue backfill jobs when other
+            // tests have left archives in the shared container.
+            $0.uuid = .incrementing
             $0.syncDiagnosticsClient = .noop
         }
 
@@ -392,11 +401,13 @@ struct AppFeatureTests {
             $0.stowerRepository.fetchLibrary = { _ in [] }
             $0.stowerRepository.fetchListCounts = { .zero }
             $0.stowerRepository.fetchTags = { [] }
-            $0.stowerRepository.observeLibraryChanges = { AsyncStream { $0.finish() } }
             $0.stowerRepository.purgeOldTrash = { [] }
             $0.stowerRepository.enqueueHydrationJobsForMissingContent = { 0 }
             $0.continuousClock = ImmediateClock()
             $0.date.now = Date(timeIntervalSince1970: 1000)
+            // Startup's storage tail can enqueue backfill jobs when other
+            // tests have left archives in the shared container.
+            $0.uuid = .incrementing
             $0.syncDiagnosticsClient = .noop
         }
 
@@ -433,12 +444,14 @@ struct AppFeatureTests {
         store.exhaustivity = .off(showSkippedAssertions: false)
 
         await store.send(.library(.urlQueued(url))) {
-            $0.pendingSaveCount = 1
             $0.library.queuedSaveCount = 1
         }
-        await store.receive(.failedImportsLoaded([]))
-        await store.receive(.ingestionDrainFinished) {
-            $0.pendingSaveCount = 0
+        await store.receive(\.ingestion.saveQueued) {
+            $0.ingestion.pendingSaveCount = 1
+        }
+        await store.receive(.ingestion(.failedImportsLoaded([])))
+        await store.receive(.ingestion(.drainFinished)) {
+            $0.ingestion.pendingSaveCount = 0
         }
         #expect(saved.value == [url])
     }
@@ -484,7 +497,7 @@ struct AppFeatureTests {
         store.exhaustivity = .off(showSkippedAssertions: false)
 
         await store.send(.library(.urlQueued(try #require(URL(string: "https://example.com/x")))))
-        await store.receive(.ingestionDrainFinished)
+        await store.receive(.ingestion(.drainFinished))
 
         #expect(ingested.value == [staged])
         #expect(created.value.count == 1)
@@ -523,7 +536,7 @@ struct AppFeatureTests {
         store.exhaustivity = .off(showSkippedAssertions: false)
 
         await store.send(.library(.urlQueued(try #require(URL(string: "https://example.com/x")))))
-        await store.receive(.ingestionDrainFinished)
+        await store.receive(.ingestion(.drainFinished))
 
         #expect(failures.value == [EPUBIngestionError.protectedContent.localizedDescription])
         #expect(!FileManager.default.fileExists(atPath: scratchDir.path))
@@ -560,9 +573,9 @@ struct AppFeatureTests {
         store.exhaustivity = .off(showSkippedAssertions: false)
 
         await store.send(.onAppear)
-        await store.receive(.cloudSyncStatusChanged(
+        await store.receive(.sync(.statusChanged(
             CloudSyncStatus(state: .unavailable("Could not determine iCloud account status"))
-        ))
+        )))
         await store.receive(.startupFinished) {
             $0.startupFinished = true
             $0.startupErrorMessage = nil
@@ -585,6 +598,182 @@ struct AppFeatureTests {
             $0.startupFinished = true
             $0.startupErrorMessage = "Stower could not open its library: disk full"
         }
+    }
+
+    // MARK: - Navigation consistency
+
+    @Test
+    func deletingTheSelectedTagReturnsTheLibraryToAllItems() async {
+        let tagID = UUID(7)
+        var state = AppFeature.State()
+        state.sidebar.selection = .tag(tagID)
+        state.library.filter = .tag(tagID)
+
+        let store = TestStore(initialState: state) {
+            AppFeature()
+        } withDependencies: {
+            $0.stowerRepository.deleteTag = { _ in }
+        }
+        store.exhaustivity = .off(showSkippedAssertions: false)
+
+        await store.send(.sidebar(.deleteTagTapped(tagID))) {
+            $0.sidebar.selection = .all
+        }
+        await store.receive(\.library.filterChanged) {
+            $0.library.filter = .all
+        }
+    }
+
+    @Test
+    func deletingTheOpenArticleClosesTheReader() async {
+        let item = SavedItem(title: "Open", content: "Body")
+        var state = AppFeature.State()
+        state.reader = ReaderFeature.State(item: item)
+        state.library.openItemID = item.id
+        state.isReaderFocused = true
+
+        let store = TestStore(initialState: state) {
+            AppFeature()
+        } withDependencies: {
+            $0.stowerRepository.deleteItem = { _ in }
+        }
+        store.exhaustivity = .off(showSkippedAssertions: false)
+
+        await store.send(.library(.deleteItem(item.id))) {
+            $0.reader = nil
+            $0.isReaderFocused = false
+            $0.library.openItemID = nil
+        }
+    }
+
+    @Test
+    func deletingAnotherArticleLeavesTheReaderOpen() async {
+        let item = SavedItem(title: "Open", content: "Body")
+        var state = AppFeature.State()
+        state.reader = ReaderFeature.State(item: item)
+
+        let store = TestStore(initialState: state) {
+            AppFeature()
+        } withDependencies: {
+            $0.stowerRepository.deleteItem = { _ in }
+        }
+        store.exhaustivity = .off(showSkippedAssertions: false)
+
+        await store.send(.library(.deleteItem(UUID(99))))
+        #expect(store.state.reader?.itemID == item.id)
+    }
+
+    @Test
+    func deletingForeverWaitsForConfirmation() async {
+        let id = UUID(5)
+        let deleted = LockIsolated<[UUID]>([])
+        let store = TestStore(initialState: AppFeature.State()) {
+            AppFeature()
+        } withDependencies: {
+            $0.stowerRepository.permanentlyDelete = { id in deleted.withValue { $0.append(id) } }
+        }
+        store.exhaustivity = .off(showSkippedAssertions: false)
+
+        await store.send(.library(.permanentlyDeleteTapped(id)))
+        #expect(store.state.library.deleteConfirmation != nil)
+        #expect(deleted.value.isEmpty)
+
+        await store.send(.library(.deleteConfirmation(.presented(.confirmed(id))))) {
+            $0.library.deleteConfirmation = nil
+        }
+        await store.receive(\.library.permanentlyDelete)
+        await store.finish()
+        #expect(deleted.value == [id])
+    }
+
+    @Test
+    func theSelectedListIsRememberedForTheNextLaunch() async {
+        let tagID = UUID(3)
+        let store = TestStore(initialState: AppFeature.State()) {
+            AppFeature()
+        }
+        store.exhaustivity = .off(showSkippedAssertions: false)
+        #expect(store.state.library.filter == .unread)
+
+        await store.send(.sidebar(.selectList(.tag(tagID)))) {
+            $0.sidebar.selection = .tag(tagID)
+        }
+        await store.receive(\.library.filterChanged)
+
+        // A new state is what the next launch starts from.
+        let relaunched = AppFeature.State()
+        #expect(relaunched.sidebar.selection == .tag(tagID))
+        #expect(relaunched.library.filter == .tag(tagID))
+    }
+
+    @Test
+    func recentlyDeletedIsNotWhereTheNextLaunchOpens() async {
+        let store = TestStore(initialState: AppFeature.State()) {
+            AppFeature()
+        }
+        store.exhaustivity = .off(showSkippedAssertions: false)
+
+        await store.send(.sidebar(.selectList(.recentlyDeleted)))
+        await store.receive(\.library.filterChanged)
+
+        #expect(AppFeature.State().library.filter == .all)
+    }
+
+    @Test
+    func listStorageKeysRoundTrip() {
+        let lists: [LibraryFilter] = [.all, .unread, .read, .starred, .untagged, .tag(UUID(9))]
+        for list in lists {
+            #expect(LibraryFilter(storageKey: list.storageKey) == list)
+        }
+        #expect(LibraryFilter(storageKey: "tag:not-a-uuid") == nil)
+        #expect(LibraryFilter(storageKey: "") == nil)
+    }
+
+    // MARK: - Reading position
+
+    @Test
+    func closingTheReaderWritesAPositionStillWaitingOnItsDebounce() async {
+        let item = SavedItem(title: "Long read", content: "Body")
+        let saved = LockIsolated<[Int]>([])
+        var state = AppFeature.State()
+        state.reader = ReaderFeature.State(item: item)
+        state.reader?.pendingProgressBlockIndex = 42
+
+        let store = TestStore(initialState: state) {
+            AppFeature()
+        } withDependencies: {
+            $0.stowerRepository.saveReadingProgress = { id, blockIndex in
+                #expect(id == item.id)
+                saved.withValue { $0.append(blockIndex) }
+            }
+        }
+        store.exhaustivity = .off(showSkippedAssertions: false)
+
+        await store.send(.reader(.dismiss)) {
+            $0.reader = nil
+        }
+        await store.finish()
+        #expect(saved.value == [42])
+    }
+
+    @Test
+    func closingTheReaderWithNothingPendingWritesNothing() async {
+        let saved = LockIsolated(0)
+        var state = AppFeature.State()
+        state.reader = ReaderFeature.State(item: SavedItem(title: "Read", content: "Body"))
+
+        let store = TestStore(initialState: state) {
+            AppFeature()
+        } withDependencies: {
+            $0.stowerRepository.saveReadingProgress = { _, _ in saved.withValue { $0 += 1 } }
+        }
+        store.exhaustivity = .off(showSkippedAssertions: false)
+
+        await store.send(.reader(.dismiss)) {
+            $0.reader = nil
+        }
+        await store.finish()
+        #expect(saved.value == 0)
     }
 
     // MARK: - Background suspension
@@ -702,20 +891,20 @@ struct AppFeatureTests {
         store.exhaustivity = .off(showSkippedAssertions: false)
 
         let synced = Date(timeIntervalSince1970: 2000)
-        await store.send(.cloudSyncStatusChanged(
+        await store.send(.sync(.statusChanged(
             CloudSyncStatus(state: .available, lastSyncAttempt: synced, lastSyncSuccess: synced)
-        )) {
-            $0.syncFollowUpPending = true
+        ))) {
+            $0.sync.followUpPending = true
         }
         #expect(hydrations.value == 0)
 
         await store.send(.sceneDidBecomeActive) {
             $0.isSceneInBackground = false
-            $0.syncFollowUpPending = false
-            $0.isSyncFollowUpRunning = true
+            $0.sync.followUpPending = false
+            $0.sync.isFollowUpRunning = true
         }
-        await store.receive(.syncFollowUpFinished) {
-            $0.isSyncFollowUpRunning = false
+        await store.receive(.sync(.followUpFinished)) {
+            $0.sync.isFollowUpRunning = false
         }
         #expect(hydrations.value == 1)
     }

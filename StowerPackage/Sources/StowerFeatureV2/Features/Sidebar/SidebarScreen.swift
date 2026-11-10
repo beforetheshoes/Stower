@@ -29,6 +29,14 @@ public struct SidebarScreen: View {
                 if let newValue { store.send(.selectList(newValue)) }
             }
         )) {
+            if let error = store.errorMessage {
+                // Tag and list failures were recorded and never shown.
+                Section {
+                    Label(error, systemImage: "exclamationmark.triangle")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            }
             Section("Lists") {
                 listRow(.unread, label: "Inbox", systemImage: "tray", count: store.counts.unread)
                 listRow(.all, label: "Library", systemImage: "books.vertical", count: store.counts.all)
@@ -133,10 +141,14 @@ public struct SidebarScreen: View {
                     if store.selection == filter {
                         Image(systemName: "checkmark")
                             .foregroundStyle(palette.primary)
-                            .accessibilityLabel("Selected")
+                            .accessibilityHidden(true)
                     }
                 }
             }
+            // The selected state is a trait, not part of the name: VoiceOver
+            // reads "Library, selected", and the row keeps one name whether
+            // or not it is the current list.
+            .accessibilityAddTraits(store.selection == filter ? .isSelected : [])
             .badge(count)
         } else {
             NavigationLink(value: filter) {

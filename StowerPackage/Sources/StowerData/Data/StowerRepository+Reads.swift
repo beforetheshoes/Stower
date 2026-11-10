@@ -60,12 +60,28 @@ extension StowerRepository {
         }
     }
 
+    static func _isLiveItem(database: any DatabaseWriter) -> @Sendable (UUID) async throws -> Bool {
+        { (id: UUID) async throws -> Bool in
+            try await database.read { db in
+                try SavedItemSyncTable
+                    .where { $0.id.eq(id) && $0.deletedAt.is(nil) }
+                    .fetchCount(db) > 0
+            }
+        }
+    }
+
     static func _loadReaderDocument(database: any DatabaseWriter) -> @Sendable (UUID) async throws -> ReaderDocument? {
         { (id: UUID) async throws -> ReaderDocument? in
             try await database.read { db -> ReaderDocument? in
-                guard let row: SavedItemContentLocalTable = try SavedItemContentLocalTable.find(id).fetchOne(db) else { return nil }
-                guard !row.documentJSON.isEmpty else { return nil }
-                var document = try JSONDecoder().decode(ReaderDocument.self, from: Data(row.documentJSON.utf8))
+                // One column: the row also carries the source HTML and the
+                // plain text, neither of which is needed to open the reader.
+                guard let documentJSON = try SavedItemContentLocalTable
+                    .where({ $0.itemID.eq(id) })
+                    .select(\.documentJSON)
+                    .fetchOne(db)
+                else { return nil }
+                guard !documentJSON.isEmpty else { return nil }
+                var document = try JSONDecoder().decode(ReaderDocument.self, from: Data(documentJSON.utf8))
                 document.blocks = sanitizeLoadedBlocks(document.blocks)
                 return document
             }
@@ -75,8 +91,12 @@ extension StowerRepository {
     static func _loadSourceHTML(database: any DatabaseWriter) -> @Sendable (UUID) async throws -> String? {
         { (id: UUID) async throws -> String? in
             try await database.read { db -> String? in
-                guard let row: SavedItemContentLocalTable = try SavedItemContentLocalTable.find(id).fetchOne(db) else { return nil }
-                return row.sourceHTML.isEmpty ? nil : row.sourceHTML
+                guard let sourceHTML = try SavedItemContentLocalTable
+                    .where({ $0.itemID.eq(id) })
+                    .select(\.sourceHTML)
+                    .fetchOne(db)
+                else { return nil }
+                return sourceHTML.isEmpty ? nil : sourceHTML
             }
         }
     }
@@ -86,11 +106,15 @@ extension StowerRepository {
     ) -> @Sendable (UUID, String, Int) async throws -> CachedSummary? {
         { (id: UUID, quality: String, promptVersion: Int) async throws -> CachedSummary? in
             try await database.read { db -> CachedSummary? in
-                guard let content = try SavedItemContentLocalTable.find(id).fetchOne(db) else { return nil }
+                guard let plainText = try SavedItemContentLocalTable
+                    .where({ $0.itemID.eq(id) })
+                    .select(\.plainText)
+                    .fetchOne(db)
+                else { return nil }
                 let cacheID = "\(id.uuidString.lowercased()):\(quality)"
                 guard let row = try ArticleSummaryLocalTable.find(cacheID).fetchOne(db),
                       row.promptVersion == promptVersion,
-                      row.contentHash == sha256Hex(content.plainText),
+                      row.contentHash == sha256Hex(plainText),
                       !row.text.isEmpty
                 else {
                     return nil

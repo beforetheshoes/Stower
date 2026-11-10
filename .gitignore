@@ -79,3 +79,10 @@ fastlane/screenshots
 fastlane/test_output
 fastlane/README.md
 *.p8
+
+# Local artifacts
+.DS_Store
+*.profraw
+.tmp-image-cache/
+# TestFlight feedback exports contain tester contact details
+testflight_feedback*/

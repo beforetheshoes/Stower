@@ -184,7 +184,7 @@ public struct MediaResolutionClient: Sendable {
                             "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 (KHTML, like Gecko)",
                             forHTTPHeaderField: "User-Agent"
                         )
-                        let (data, response) = try await URLSession.shared.data(for: request)
+                        let (data, response) = try await networkSession().data(for: request)
                         guard let httpResponse = response as? HTTPURLResponse,
                               (200..<300).contains(httpResponse.statusCode),
                               data.count < 10_000_000 else {
@@ -215,10 +215,9 @@ public struct MediaResolutionClient: Sendable {
 
     /// Persistent directory for downloaded article images (Documents/StowerImages).
     /// Not in Caches — the system won't evict these.
-    static let imageStorageDirectory: URL = {
-        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-        return docs.appendingPathComponent("StowerImages", isDirectory: true)
-    }()
+    static var imageStorageDirectory: URL {
+        stowerDocumentsDirectory().appendingPathComponent("StowerImages", isDirectory: true)
+    }
 }
 
 public struct ReaderRenderClient: Sendable {
@@ -306,7 +305,7 @@ private func maybeIngestAsPDF(url: URL) async throws -> IngestionResult? {
     )
 
     var isPDFFromHead = false
-    if let (_, response) = try? await URLSession.shared.data(for: headRequest),
+    if let (_, response) = try? await networkSession().data(for: headRequest),
        let http = response as? HTTPURLResponse {
         let mime = (http.mimeType ?? "").lowercased()
         let contentType = (http.value(forHTTPHeaderField: "Content-Type") ?? "").lowercased()
@@ -330,7 +329,7 @@ private func maybeIngestAsPDF(url: URL) async throws -> IngestionResult? {
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 (KHTML, like Gecko)",
         forHTTPHeaderField: "User-Agent"
     )
-    let (data, response) = try await URLSession.shared.data(for: getRequest)
+    let (data, response) = try await networkSession().data(for: getRequest)
 
     // Sniff: a real PDF starts with `%PDF-`. Guards against servers that
     // lie in Content-Type or that 200-OK with an HTML error page when the
@@ -449,4 +448,12 @@ func detectInteractiveContent(document: Document) -> Bool {
     }
 
     return false
+}
+
+/// The session ingestion fetches through. A dependency rather than
+/// `URLSession.shared` so tests cannot reach the network by accident.
+func networkSession() -> URLSession {
+    @Dependency(\.urlSession)
+    var session
+    return session
 }

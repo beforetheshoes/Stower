@@ -70,11 +70,11 @@ xcodebuild test \
   CODE_SIGNING_ALLOWED=NO
 ```
 
-CI build and test jobs currently require a self-hosted macOS runner labelled `xcode-27`. The lint job remains hosted. This can return to a hosted Xcode image after Xcode 27 is generally available there.
+CI currently runs SwiftLint only. Hosted runners do not include Xcode 27 yet, so builds and tests are run locally before a pull request; build and test jobs can be added once a hosted image has Xcode 27.
 
 ## Data and synchronization
 
-The main app and share extension use App Group `group.com.ryanleewilliams.stower`. Synced records use CloudKit container `iCloud.com.ryanleewilliams.stower`; downloaded/rendered content and ingestion jobs remain local where appropriate.
+The main app and share extension use App Group `group.com.Stower` (`group.com.Stower.dev` for development builds). Synced records use CloudKit container `iCloud.Stower`; downloaded/rendered content and ingestion jobs remain local where appropriate.
 
 Database schema changes belong in a new, non-destructive migration in `StowerPackage/Sources/StowerData/Data/Bootstrap.swift`. Do not revise a migration that may already have shipped.
 

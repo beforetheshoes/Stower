@@ -5,7 +5,7 @@ import SQLiteData
 import CloudKit
 #endif
 
-private let kCloudSyncLogger = Logger(subsystem: "com.ryanleewilliams.stower", category: "CloudSync")
+private let kCloudSyncLogger = Logger.stower("CloudSync")
 
 extension StowerDatabase {
     static func makeCloudSyncClient(

@@ -15,6 +15,9 @@ private final class ReaderWebViewSession {
     }
 
     var archiveServer: LocalArchiveServer?
+    /// Whether the item has a saved archive on disk. Set when the page
+    /// loads; a later appearance update re-asks only while it is false.
+    var hasArchive = false
     var hasRestoredPosition = false
     /// False until the page has loaded and its position is restored. The
     /// web view stays invisible (the themed background shows) until then, so
@@ -37,6 +40,7 @@ private final class ReaderWebViewSession {
         ReaderProgressCoordinator.shared.unregister(page)
         archiveServer?.stop()
         archiveServer = nil
+        hasArchive = false
         hasRestoredPosition = false
         isRevealed = false
         loadKey = nil
@@ -66,7 +70,7 @@ private final class ReaderWebViewSession {
 /// `onReadingProgress`. TTS highlighting is driven by the `highlightedBlockIndex`
 /// binding and mapped through `ReaderWebPageFactory.runHighlight`.
 public struct ReaderWebView: View {
-    let htmlProvider: () -> String
+    let htmlSourceProvider: () -> ReaderHTMLSource
     let sourceURL: String?
     let itemID: UUID
     let contentVersion: Int
@@ -87,6 +91,7 @@ public struct ReaderWebView: View {
     @Environment(\.openURL)
     private var openURL
 
+    /// Takes HTML that already exists.
     public init(
         html: @escaping () -> String,
         sourceURL: String?,
@@ -104,7 +109,46 @@ public struct ReaderWebView: View {
         onOpenInlineEmbed: ((String) -> Void)? = nil,
         onContentTap: (() -> Void)? = nil
     ) {
-        self.htmlProvider = html
+        self.init(
+            source: { .ready(html()) },
+            sourceURL: sourceURL,
+            itemID: itemID,
+            contentVersion: contentVersion,
+            appearance: appearance,
+            fontScale: fontScale,
+            viewportWidth: viewportWidth,
+            insets: insets,
+            isWebViewFormat: isWebViewFormat,
+            usesNativeCapture: usesNativeCapture,
+            highlightedBlockIndex: highlightedBlockIndex,
+            restoreBlockIndex: restoreBlockIndex,
+            scrollRequest: scrollRequest,
+            onOpenInlineEmbed: onOpenInlineEmbed,
+            onContentTap: onContentTap
+        )
+    }
+
+    /// Takes a description of the page. The document is turned into HTML
+    /// off the main actor when the page loads, which for a long article is
+    /// the most expensive step of opening it.
+    public init(
+        source: @escaping () -> ReaderHTMLSource,
+        sourceURL: String?,
+        itemID: UUID,
+        contentVersion: Int,
+        appearance: ReaderAppearanceSettings,
+        fontScale: Double = 1,
+        viewportWidth: Double? = nil,
+        insets: ReaderInsets = .zero,
+        isWebViewFormat: Bool = false,
+        usesNativeCapture: Bool = false,
+        highlightedBlockIndex: Int? = nil,
+        restoreBlockIndex: Int? = nil,
+        scrollRequest: ReaderScrollRequest? = nil,
+        onOpenInlineEmbed: ((String) -> Void)? = nil,
+        onContentTap: (() -> Void)? = nil
+    ) {
+        self.htmlSourceProvider = source
         self.sourceURL = sourceURL
         self.itemID = itemID
         self.contentVersion = contentVersion
@@ -239,12 +283,16 @@ public struct ReaderWebView: View {
         session.beginLoading(loadKey)
 
         let hasArchive = AssetArchiver.archiveExists(for: itemID)
+        session.hasArchive = hasArchive
         let isArchive = isWebViewFormat && hasArchive
         let nativeArchiveURL = usesNativeCapture
             ? ArticleCapturePackage.archiveURL(for: itemID, original: isWebViewFormat)
             : nil
 
-        let currentHTML = htmlProvider()
+        // The inputs are read here, on the main actor; the HTML is built
+        // off it.
+        let currentHTML = await htmlSourceProvider().build()
+        guard Task.isCancelled == false, session.loadKey == loadKey else { return }
         let currentSourceURL = sourceURL
         let currentItemID = itemID
         let currentAppearance = appearance
@@ -468,8 +516,16 @@ public struct ReaderWebView: View {
 
         // Interactive mode: leave the original page untouched. Appearance
         // settings apply only to Reader View.
-        if isWebViewFormat && (usesNativeCapture || AssetArchiver.archiveExists(for: itemID)) {
-            return
+        if isWebViewFormat {
+            // An archive can be written while the reader is open (switching
+            // to web view does it), so a "no" from load time is asked again.
+            // A "yes" is kept: archives are not removed under an open reader.
+            if !session.hasArchive, !usesNativeCapture {
+                session.hasArchive = AssetArchiver.archiveExists(for: itemID)
+            }
+            if usesNativeCapture || session.hasArchive {
+                return
+            }
         }
 
         let css = appearance.readerCSS(

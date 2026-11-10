@@ -15,6 +15,48 @@ public enum LibraryFilter: Equatable, Hashable, Sendable, Codable {
     case tag(UUID)
 }
 
+extension LibraryFilter {
+    /// A stable string form for remembering the selected list between
+    /// launches. Recently Deleted is not remembered: reopening the app in
+    /// the trash would be a surprise.
+    public var storageKey: String {
+        switch self {
+        case .all, .recentlyDeleted:
+            "all"
+        case .unread:
+            "unread"
+        case .read:
+            "read"
+        case .starred:
+            "starred"
+        case .untagged:
+            "untagged"
+        case .tag(let id):
+            "tag:\(id.uuidString)"
+        }
+    }
+
+    public init?(storageKey: String) {
+        switch storageKey {
+        case "all":
+            self = .all
+        case "unread":
+            self = .unread
+        case "read":
+            self = .read
+        case "starred":
+            self = .starred
+        case "untagged":
+            self = .untagged
+        default:
+            guard storageKey.hasPrefix("tag:"),
+                  let id = UUID(uuidString: String(storageKey.dropFirst(4)))
+            else { return nil }
+            self = .tag(id)
+        }
+    }
+}
+
 /// Counts for every sidebar list, produced in a single repository read so the
 /// sidebar can render accurate badges without fanning out N queries per tag.
 public struct LibraryListCounts: Equatable, Sendable {

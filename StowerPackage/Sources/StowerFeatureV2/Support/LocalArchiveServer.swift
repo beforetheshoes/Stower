@@ -1,6 +1,7 @@
 import Foundation
 import Network
 import OSLog
+import Synchronization
 
 /// A lightweight local HTTP server that serves archived web content from disk.
 ///
@@ -18,20 +19,22 @@ import OSLog
 /// chunk names. To fill those gaps, the server falls back to live-fetching missing
 /// assets from `originURL` on the first request and writing them to disk, so the
 /// archive self-heals as the user interacts with the page.
-private let kArchiveServerLog = Logger(
-    subsystem: "com.ryanleewilliams.stower",
-    category: "ArchiveServer"
-)
+private let kArchiveServerLog = Logger.stower("ArchiveServer")
 
-final class LocalArchiveServer: @unchecked Sendable {
-    private var listener: NWListener?
+final class LocalArchiveServer: Sendable {
+    private struct Running {
+        var listener: NWListener?
+        var port: UInt16 = 0
+    }
+
+    private let running = Mutex(Running())
     private let archiveDir: URL
     private let articlePath: String
     /// Origin URL used to resolve relative paths when falling back to live fetch.
     /// Nil disables fetch-through entirely (pure offline mode).
     private let originURL: URL?
     private let queue = DispatchQueue(label: "LocalArchiveServer", qos: .userInitiated)
-    private(set) var port: UInt16 = 0
+    var port: UInt16 { running.withLock { $0.port } }
 
     /// - Parameters:
     ///   - archiveDir: The directory containing the archived files.
@@ -50,7 +53,7 @@ final class LocalArchiveServer: @unchecked Sendable {
     func start() async throws -> UInt16 {
         let params = NWParameters.tcp
         let listener = try NWListener(using: params, on: .any)
-        self.listener = listener
+        running.withLock { $0.listener = listener }
 
         let archiveDir = self.archiveDir
         let articlePath = self.articlePath
@@ -84,7 +87,7 @@ final class LocalArchiveServer: @unchecked Sendable {
             listener.start(queue: queue)
         }
 
-        self.port = assignedPort
+        running.withLock { $0.port = assignedPort }
         return assignedPort
     }
 
@@ -94,13 +97,15 @@ final class LocalArchiveServer: @unchecked Sendable {
 
     /// Stops the server.
     func stop() {
+        let listener = running.withLock { running in
+            defer { running = Running() }
+            return running.listener
+        }
         listener?.cancel()
-        listener = nil
-        port = 0
     }
 
     deinit {
-        listener?.cancel()
+        running.withLock { $0.listener }?.cancel()
     }
 
     // MARK: - Connection Handling

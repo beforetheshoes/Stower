@@ -233,3 +233,71 @@ struct SyncHydrationScanTests {
         #expect(try await repository.fetchTagIDs(item.id) == [kept.id])
     }
 }
+
+@Suite
+struct LocalDataResetTests {
+    @Test
+    func resetEmptiesEveryLocalOnlyTableInTheSchema() async throws {
+        let database = try StowerDatabase.makeDatabase()
+        let repository = StowerRepository.live(database: database, cloudSyncClient: .noop)
+
+        // Every local-only table, read from the schema itself, so a table
+        // added later fails this test until the reset covers it.
+        let localTables: [String] = try await database.read { db in
+            try #sql(
+                """
+                SELECT "name" FROM "sqlite_master"
+                WHERE "type" = 'table' AND "name" LIKE '%LocalTables'
+                ORDER BY "name"
+                """,
+                as: String.self
+            )
+            .fetchAll(db)
+        }
+        #expect(localTables.count == 12)
+
+        let id = UUID(1)
+        let now = Date(timeIntervalSince1970: 1000)
+        try await database.write { db in
+            try SavedItemSyncTable.insert { SavedItemSyncTable(id: id, title: "Item") }.execute(db)
+            try SavedItemContentLocalTable.insert { SavedItemContentLocalTable(itemID: id) }.execute(db)
+            try ArticleSummaryLocalTable.insert {
+                ArticleSummaryLocalTable(
+                    id: "a",
+                    itemID: id,
+                    quality: "q",
+                    promptVersion: 1,
+                    contentHash: "h",
+                    text: "t",
+                    generatedAt: now
+                )
+            }
+            .execute(db)
+            try SavedMediaLocalTable.insert { SavedMediaLocalTable(id: id, itemID: id) }.execute(db)
+            try SavedEmbedLocalTable.insert { SavedEmbedLocalTable(id: id, itemID: id) }.execute(db)
+            try SavedImageRefLocalTable.insert { SavedImageRefLocalTable(id: id, itemID: id) }.execute(db)
+            try SavedImageAssetLocalTable.insert { SavedImageAssetLocalTable(id: id, itemID: id) }.execute(db)
+            try ImageDownloadSettingsLocalTable.insert { ImageDownloadSettingsLocalTable(id: id) }.execute(db)
+            try ReaderAppearanceSettingsLocalTable.insert {
+                ReaderAppearanceSettingsLocalTable(id: id)
+            }
+            .execute(db)
+            try IngestionJobLocalTable.insert { IngestionJobLocalTable(id: id) }.execute(db)
+            try ItemStorageLocalTable.insert { ItemStorageLocalTable(itemID: id) }.execute(db)
+            try StoragePolicyLocalTable.insert { StoragePolicyLocalTable(id: id) }.execute(db)
+            try OrphanCandidateLocalTable.insert {
+                OrphanCandidateLocalTable(key: "t:\(id)", tableName: "t", orphanID: id)
+            }
+            .execute(db)
+        }
+
+        try await repository.resetLocalData()
+
+        for table in localTables {
+            let count = try await database.read { db in
+                try #sql("SELECT count(*) FROM \(quote: table)", as: Int.self).fetchOne(db)
+            }
+            #expect(count == 0, "\(table) still has rows after a reset")
+        }
+    }
+}

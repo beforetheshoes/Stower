@@ -80,6 +80,7 @@ struct ReaderAIFeatureTests {
         let store = TestStore(initialState: initial) {
             ReaderAIFeature()
         } withDependencies: {
+            $0.date.now = Date(timeIntervalSince1970: 2000)
             $0.articleAIClient = fakeAI
             $0.stowerRepository.loadSummary = { _, _, _ in nil }
             $0.stowerRepository.saveSummary = { _, quality, version, text in
@@ -303,6 +304,7 @@ struct ReaderAIFeatureTests {
         let store = TestStore(initialState: initial) {
             ReaderAIFeature()
         } withDependencies: {
+            $0.date.now = Date(timeIntervalSince1970: 2000)
             $0.articleAIClient = fakeAI
             $0.stowerRepository.saveSummary = { _, quality, version, text in
                 saved.setValue((quality, version, text))

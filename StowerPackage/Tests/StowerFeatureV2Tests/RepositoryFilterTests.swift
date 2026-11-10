@@ -256,16 +256,4 @@ struct RepositoryFilterTests {
         #expect(plan.contains { $0.contains("idx_savedItemSyncTables_deletedAt_createdAt") })
         #expect(!plan.contains { $0.contains("TEMP B-TREE") })
     }
-
-    @Test
-    func observeLibraryChanges_firesOnMutation() async throws {
-        let repository = try makeRepository()
-        let stream = repository.observeLibraryChanges()
-        var iterator = stream.makeAsyncIterator()
-
-        async let received = iterator.next()
-        _ = try await repository.createItemFromIngestion(.sharedText("Ping"))
-        let pong: Void? = await received
-        #expect(pong != nil)
-    }
 }

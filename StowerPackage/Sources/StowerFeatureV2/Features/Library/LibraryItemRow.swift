@@ -36,7 +36,7 @@ struct LibraryItemRow: View {
                     if isOffloaded {
                         Image(systemName: "icloud.and.arrow.down")
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(palette.tx2)
                             .accessibilityLabel("Stored in iCloud")
                     }
 
@@ -46,7 +46,7 @@ struct LibraryItemRow: View {
                 if !metadata.isEmpty {
                     Text(metadata.joined(separator: " · "))
                         .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(palette.tx2)
                         .lineLimit(1)
                 }
 
@@ -121,7 +121,7 @@ struct LibraryItemRow: View {
                 if tags.count > visible.count {
                     Text("+\(tags.count - visible.count)")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(palette.tx2)
                 }
             }
             .lineLimit(1)

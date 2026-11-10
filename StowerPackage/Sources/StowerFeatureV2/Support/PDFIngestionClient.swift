@@ -13,10 +13,7 @@ import UIKit
 import AppKit
 #endif
 
-private let kPDFIngestLog = Logger(
-    subsystem: "com.ryanleewilliams.stower",
-    category: "PDFIngest"
-)
+private let kPDFIngestLog = Logger.stower("PDFIngest")
 
 public enum PDFIngestionError: Error, LocalizedError {
     case unreadable

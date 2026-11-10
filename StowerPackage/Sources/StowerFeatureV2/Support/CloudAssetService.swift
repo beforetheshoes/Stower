@@ -4,7 +4,7 @@ import OSLog
 import PDFKit
 import StowerData
 
-private let kAssetServiceLogger = Logger(subsystem: "com.ryanleewilliams.stower", category: "CloudAssetService")
+private let kAssetServiceLogger = Logger.stower("CloudAssetService")
 
 public enum CloudAssetServiceError: Error, Equatable, LocalizedError {
     case missingLocalFile
@@ -462,7 +462,7 @@ public enum CloudAssetService {
         // container yet. Failed jobs never suppress a re-enqueue, so retrying
         // every startup is safe and cheap (upload jobs are deduplicated while
         // queued or running).
-        let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        let documents = stowerDocumentsDirectory()
         let archiveRoot = documents.appendingPathComponent("StowerArchive", isDirectory: true)
         let itemDirs = (try? FileManager.default.contentsOfDirectory(
             at: archiveRoot,

@@ -46,7 +46,21 @@ extension StowerRepository {
         database: any DatabaseWriter
     ) -> @Sendable (Date) async throws -> IngestionJob? {
         { now in
-            try await database.write { db in
+            // An empty queue is the usual case — every activation and every
+            // completed sync asks — and it should not cost a write lock on
+            // the shared database. Only a queue with something to claim, or
+            // a stale claim to recover, goes on to the write.
+            let hasWork = try await database.read { db in
+                try IngestionJobLocalTable
+                    .where {
+                        $0.status.eq(IngestionJob.Status.queued.rawValue)
+                            || $0.status.eq(IngestionJob.Status.processing.rawValue)
+                    }
+                    .fetchCount(db) > 0
+            }
+            guard hasWork else { return nil }
+
+            return try await database.write { db in
                 let staleBefore = now.addingTimeInterval(-600)
                 try IngestionJobLocalTable
                     .where { $0.status.eq(IngestionJob.Status.processing.rawValue) }
@@ -99,7 +113,18 @@ extension StowerRepository {
         database: any DatabaseWriter
     ) -> @Sendable (IngestionJob.Kind, Date) async throws -> IngestionJob? {
         { kind, now in
-            try await database.write { db in
+            let hasWork = try await database.read { db in
+                try IngestionJobLocalTable
+                    .where { $0.kind.eq(kind.rawValue) }
+                    .where {
+                        $0.status.eq(IngestionJob.Status.queued.rawValue)
+                            || $0.status.eq(IngestionJob.Status.processing.rawValue)
+                    }
+                    .fetchCount(db) > 0
+            }
+            guard hasWork else { return nil }
+
+            return try await database.write { db in
                 let staleBefore = now.addingTimeInterval(-600)
                 try IngestionJobLocalTable
                     .where { $0.kind.eq(kind.rawValue) }

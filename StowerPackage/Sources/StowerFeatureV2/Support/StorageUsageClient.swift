@@ -3,7 +3,7 @@ import Foundation
 import OSLog
 import StowerData
 
-private let kStorageLogger = Logger(subsystem: "com.ryanleewilliams.stower", category: "StorageUsage")
+private let kStorageLogger = Logger.stower("StorageUsage")
 
 // MARK: - Value types
 
@@ -78,7 +78,7 @@ public struct StorageRoots: Sendable {
 
     public static func live() -> Self {
         let fileManager = FileManager.default
-        let documents = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first!
+        let documents = stowerDocumentsDirectory()
         let caches = fileManager.urls(for: .cachesDirectory, in: .userDomainMask).first!
         let temporary = fileManager.temporaryDirectory
         let appGroup = fileManager

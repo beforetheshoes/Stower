@@ -124,7 +124,10 @@ struct ReaderWebViewLifecycleTests {
 
     private func waitForWebViews(count: Int, in rootView: NSView) async -> [WKWebView] {
         let clock = ContinuousClock()
-        let deadline = clock.now.advanced(by: .seconds(5))
+        // A poll, not a pause: it returns the moment the views exist. The
+        // ceiling is generous because the page's HTML is built on the shared
+        // pool, which the rest of the suite keeps busy.
+        let deadline = clock.now.advanced(by: .seconds(20))
 
         while clock.now < deadline {
             rootView.layoutSubtreeIfNeeded()
@@ -138,7 +141,7 @@ struct ReaderWebViewLifecycleTests {
     }
 
     private func waitUntil(
-        timeout: Duration = .seconds(5),
+        timeout: Duration = .seconds(20),
         _ predicate: () -> Bool
     ) async -> Bool {
         let clock = ContinuousClock()
