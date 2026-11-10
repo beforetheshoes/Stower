@@ -95,6 +95,13 @@ extension AppFeature {
         .cancellable(id: CancelID.startupMaintenance, cancelInFlight: true)
     }
 
+    /// The list the reader steps through with next and previous: the
+    /// library as it stands, or just the article when it is not in it.
+    func readerQueue(around itemID: UUID, in state: State) -> [UUID] {
+        let ids = state.library.items.map(\.id)
+        return ids.contains(itemID) ? ids : [itemID]
+    }
+
     func navigateReader(
         offset: Int,
         state: inout State

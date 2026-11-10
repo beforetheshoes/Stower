@@ -60,6 +60,16 @@ extension StowerRepository {
         }
     }
 
+    static func _isLiveItem(database: any DatabaseWriter) -> @Sendable (UUID) async throws -> Bool {
+        { (id: UUID) async throws -> Bool in
+            try await database.read { db in
+                try SavedItemSyncTable
+                    .where { $0.id.eq(id) && $0.deletedAt.is(nil) }
+                    .fetchCount(db) > 0
+            }
+        }
+    }
+
     static func _loadReaderDocument(database: any DatabaseWriter) -> @Sendable (UUID) async throws -> ReaderDocument? {
         { (id: UUID) async throws -> ReaderDocument? in
             try await database.read { db -> ReaderDocument? in

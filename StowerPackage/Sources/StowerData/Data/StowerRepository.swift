@@ -9,6 +9,9 @@ public struct StowerRepository: Sendable {
     /// oldest first. Backs the bulk "re-extract library" maintenance action.
     public var fetchReextractableItems: @Sendable () async throws -> [SavedItem]
     public var loadItem: @Sendable (UUID) async throws -> SavedItem?
+    /// Whether an item exists and is not in the trash. One indexed lookup;
+    /// none of the item's content is read.
+    public var isLiveItem: @Sendable (UUID) async throws -> Bool
     public var createItemFromIngestion: @Sendable (IngestionResult) async throws -> SavedItem
     public var updateItemFromIngestion: @Sendable (UUID, IngestionResult) async throws -> SavedItem?
     public var hydrateItemContent: @Sendable (UUID, IngestionResult) async throws -> Void
@@ -144,6 +147,7 @@ extension StowerRepository {
             fetchLibrary: { _ in [] },
             fetchReextractableItems: { [] },
             loadItem: { _ in nil },
+            isLiveItem: { _ in false },
             createItemFromIngestion: { _ in throw RepositoryError.notBootstrapped },
             updateItemFromIngestion: { _, _ in nil },
             hydrateItemContent: { _, _ in },
@@ -284,6 +288,7 @@ extension StowerRepository {
             fetchLibrary: _fetchLibraryFiltered(database: database),
             fetchReextractableItems: _fetchReextractableItems(database: database),
             loadItem: _loadItem(database: database),
+            isLiveItem: _isLiveItem(database: database),
             createItemFromIngestion: cachedCreateFromIngestion,
             updateItemFromIngestion: cachedUpdateFromIngestion,
             hydrateItemContent: cachedHydrateItemContent,

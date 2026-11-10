@@ -256,12 +256,12 @@ struct LastArticleTests {
 
     private func makeStore(
         _ state: AppFeature.State = .init(),
-        loadItem: @escaping @Sendable (UUID) async throws -> SavedItem? = { _ in nil }
+        isLiveItem: @escaping @Sendable (UUID) async throws -> Bool = { _ in false }
     ) -> TestStoreOf<AppFeature> {
         let store = TestStore(initialState: state) {
             AppFeature()
         } withDependencies: {
-            $0.stowerRepository.loadItem = loadItem
+            $0.stowerRepository.isLiveItem = isLiveItem
             $0.stowerRepository.claimNextIngestionJob = { _ in nil }
             $0.stowerRepository.fetchFailedIngestionJobs = { [] }
             $0.stowerRepository.purgeOldTrash = { [] }
@@ -290,28 +290,43 @@ struct LastArticleTests {
     func aLaunchReopensTheArticleThatWasOpen() async {
         var state = AppFeature.State()
         state.$lastOpenItemID.withLock { $0 = item.id.uuidString }
-        let item = self.item
-        let store = makeStore(state) { id in id == item.id ? item : nil }
+        let id = item.id
+        let store = makeStore(state) { $0 == id }
 
         await store.send(.onAppear)
-        await store.receive(.lastArticleRestored(item)) {
-            $0.reader = ReaderFeature.State(item: item, appearance: $0.cachedAppearance)
-            $0.library.openItemID = item.id
+        await store.receive(.lastArticleRestored(id)) {
+            // Not in the list yet, so the reader loads it by ID.
+            $0.reader = ReaderFeature.State(itemID: id, appearance: $0.cachedAppearance)
+            $0.library.openItemID = id
+            $0.readerQueue = [id]
         }
         await store.skipInFlightEffects()
     }
 
     @Test
-    func anArticleDeletedSinceIsNotReopened() async {
-        var trashed = item
-        trashed.deletedAt = Date(timeIntervalSince1970: 500)
+    func anArticleDeletedSinceIsNotReopenedAndIsForgotten() async {
         var state = AppFeature.State()
-        state.$lastOpenItemID.withLock { $0 = trashed.id.uuidString }
-        let store = makeStore(state) { [trashed] _ in trashed }
+        state.$lastOpenItemID.withLock { $0 = item.id.uuidString }
+        let store = makeStore(state) { _ in false }
+
+        await store.send(.onAppear)
+        await store.receive(.lastArticleUnavailable)
+        #expect(store.state.reader == nil)
+        #expect(store.state.lastOpenItemID.isEmpty)
+        await store.skipInFlightEffects()
+    }
+
+    @Test
+    func aFailedCheckLeavesTheArticleRemembered() async {
+        struct Unavailable: Error {}
+        var state = AppFeature.State()
+        state.$lastOpenItemID.withLock { $0 = item.id.uuidString }
+        let store = makeStore(state) { _ in throw CancellationError() }
 
         await store.send(.onAppear)
         await store.receive(\.startupFinished)
         #expect(store.state.reader == nil)
+        #expect(store.state.lastOpenItemID == item.id.uuidString)
         await store.skipInFlightEffects()
     }
 
@@ -322,7 +337,20 @@ struct LastArticleTests {
         state.reader = ReaderFeature.State(item: other)
         let store = makeStore(state)
 
-        await store.send(.lastArticleRestored(item))
+        await store.send(.lastArticleRestored(item.id))
         #expect(store.state.reader?.itemID == other.id)
+    }
+
+    @Test
+    func aRestoredReaderKeepsItsOwnQueueUntilTheListHasIt() async {
+        var state = AppFeature.State()
+        state.reader = ReaderFeature.State(itemID: item.id)
+        state.readerQueue = [item.id]
+        let store = makeStore(state)
+
+        // The list loaded without the article in it: there is still
+        // nothing else to step through.
+        await store.send(.library(.libraryLoaded))
+        #expect(store.state.readerQueue == [item.id])
     }
 }

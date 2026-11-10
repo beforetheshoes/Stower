@@ -145,7 +145,9 @@ public struct AppFeature {
         /// Another app handed Stower a file ("Open in Stower").
         case fileOpened(URL)
         /// The article that was open last time still exists; open it again.
-        case lastArticleRestored(SavedItem)
+        case lastArticleRestored(UUID)
+        /// The article that was open last time is gone; stop remembering it.
+        case lastArticleUnavailable
         case startupFinished
         case startupFailed(String)
         /// Cloud sync start has settled (started, or unavailable) and the
@@ -284,14 +286,27 @@ public struct AppFeature {
                 let storageUsageClient = self.storageUsageClient
                 let openReaderItemID = state.reader?.itemID
                 let lastOpenItemID = UUID(uuidString: state.lastOpenItemID)
-                let restoreReader: EffectOf<Self> = .run { [isOpen = state.reader != nil] send in
-                    // Only an article that is still in the library comes
-                    // back, not one deleted since — here or on another device.
-                    guard !isOpen, let lastOpenItemID else { return }
-                    let loaded = await reportingErrors { try await repository.loadItem(lastOpenItemID) }
-                    guard let item = loaded.flatMap(\.self), item.deletedAt == nil else { return }
-                    await send(.lastArticleRestored(item))
-                }
+                // A light check, cancelled with the rest of startup's database
+                // work if the app is backgrounded: one indexed lookup, and
+                // none of the article's content. The reader loads that
+                // itself once it is open.
+                let restoreReader: EffectOf<Self> =
+                    state.reader == nil && lastOpenItemID != nil
+                    ? .run { send in
+                        guard let lastOpenItemID else { return }
+                        let isLive = await reportingErrors { try await repository.isLiveItem(lastOpenItemID) }
+                        switch isLive {
+                        case true?:
+                            await send(.lastArticleRestored(lastOpenItemID))
+                        case false?:
+                            // Deleted since, here or on another device.
+                            await send(.lastArticleUnavailable)
+                        case nil:
+                            break
+                        }
+                    }
+                    .cancellable(id: CancelID.restoreReader, cancelInFlight: true)
+                    : .none
                 return .merge(
                     restoreReader,
                     // Load appearance immediately — no dependencies, fastest possible.
@@ -381,6 +396,7 @@ public struct AppFeature {
                 // sent an action: the cancellation must not wait a turn.
                 return .merge(
                     .cancel(id: CancelID.startupMaintenance),
+                    .cancel(id: CancelID.restoreReader),
                     syncFeature
                         .reduce(into: &state.sync, action: .sceneDidEnterBackground)
                         .map(Action.sync),
@@ -389,12 +405,29 @@ public struct AppFeature {
                         .map(Action.ingestion)
                 )
 
-            case .lastArticleRestored(let item):
+            case .lastArticleRestored(let itemID):
                 // The user may have opened something in the meantime.
                 guard state.reader == nil else { return .none }
-                state.library.openItemID = item.id
-                state.readerQueue = [item.id]
-                state.reader = ReaderFeature.State(item: item, appearance: state.cachedAppearance)
+                state.library.openItemID = itemID
+                if let item = state.library.items.first(where: { $0.id == itemID }) {
+                    state.reader = ReaderFeature.State(item: item, appearance: state.cachedAppearance)
+                } else {
+                    state.reader = ReaderFeature.State(itemID: itemID, appearance: state.cachedAppearance)
+                }
+                state.readerQueue = readerQueue(around: itemID, in: state)
+                return .none
+
+            case .lastArticleUnavailable:
+                state.$lastOpenItemID.withLock { $0 = "" }
+                return .none
+
+            case .library(.libraryLoaded):
+                // A restored reader opens before the list has loaded, with
+                // only itself to step through. Give it the list once there
+                // is one.
+                if let itemID = state.reader?.itemID, state.readerQueue == [itemID] {
+                    state.readerQueue = readerQueue(around: itemID, in: state)
+                }
                 return .none
 
             case .startupFinished:
@@ -687,6 +720,7 @@ public struct AppFeature {
     enum CancelID {
         case startup
         case startupMaintenance
+        case restoreReader
         case completedItemNotice
     }
 }
