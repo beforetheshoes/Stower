@@ -773,31 +773,6 @@ public struct LibraryScreen: View {
 
     // MARK: - Tag Pills
 
-    @ViewBuilder
-    private func tagPillsRow(for item: SavedItem) -> some View {
-        let tags = resolvedTags(for: item)
-        if !tags.isEmpty {
-            let visible = Array(tags.prefix(3))
-            let overflow = tags.count - visible.count
-            HStack(spacing: 4) {
-                ForEach(visible) { tag in
-                    let color = tagPillColor(tag.colorHex)
-                    Text(tag.name)
-                        .font(.caption2.weight(.medium))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .foregroundStyle(color)
-                        .background(color.opacity(0.15), in: .capsule)
-                }
-                if overflow > 0 {
-                    Text("+\(overflow)")
-                        .font(.caption2)
-                        .foregroundStyle(palette.tx2)
-                }
-            }
-        }
-    }
-
     private func resolvedTags(for item: SavedItem) -> [Tag] {
         item.tagIDs.compactMap { id in
             store.availableTags.first { $0.id == id }
@@ -848,29 +823,6 @@ public struct LibraryScreen: View {
     private func tagPillColor(_ hex: String?) -> Color {
         guard let hex, !hex.isEmpty else { return palette.secondary }
         return Color(hex: hex)
-    }
-
-    @ViewBuilder
-    private func libraryProgressRow(_ progress: ReadingProgressSnapshot) -> some View {
-        HStack(spacing: 8) {
-            GeometryReader { geometry in
-                let width = max(geometry.size.width, 0)
-                ZStack(alignment: .leading) {
-                    Capsule()
-                        .fill(palette.ui.opacity(0.28))
-                    Capsule()
-                        .fill(palette.primaryMuted)
-                        .frame(width: width * progress.fractionComplete)
-                }
-            }
-            .frame(height: 4)
-
-            Text("\(progress.percentComplete)%")
-                .font(.caption2.weight(.medium))
-                .foregroundStyle(palette.tx2)
-                .monospacedDigit()
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: - Tags Submenu
@@ -1040,33 +992,6 @@ public struct LibraryScreen: View {
         }
     }
 
-    /// The pill is purely for states the user might want to act on:
-    /// extraction in progress, partial content, or outright failure.
-    /// `.ready` and `.queued` are suppressed because they add no signal
-    /// in the common case — every row in a healthy library is one or
-    /// the other.
-    private func shouldShowBadge(for state: ProcessingState) -> Bool {
-        switch state {
-        case .ready, .queued:
-            return false
-        case .extracting, .partial, .failed:
-            return true
-        }
-    }
-
-    private func processingBadge(_ state: ProcessingState) -> some View {
-        Text(state.rawValue.capitalized)
-            .font(.caption2.weight(.semibold))
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .foregroundStyle(badgeForeground(state))
-            // Liquid Glass pill. The semantic state color becomes the
-            // tint on the glass capsule so warning / error / extracting
-            // still read at a glance over a scrolling list, while the
-            // capsule itself refracts the row content beneath it.
-            .glassEffect(.regular.tint(badgeBackground(state)), in: .capsule)
-    }
-
     private func badgeBackground(_ state: ProcessingState) -> Color {
         switch state {
         case .ready:
@@ -1099,76 +1024,3 @@ public struct LibraryScreen: View {
 }
 
 // MARK: - Library Item Thumbnail
-
-private struct LibraryItemThumbnail: View {
-    let item: SavedItem
-
-    private static let size: CGFloat = 72
-    /// Max pixel dimension to downsample to. 4× the point size gives
-    /// enough headroom for 3× Retina displays without wasting memory
-    /// on unused resolution (the thumbnail cell is 72pt square).
-    private static let targetPixelSize: CGFloat = size * 4
-
-    var body: some View {
-        Group {
-            if let url = resolvedImageURL {
-                CachedImageView(url: url, targetPixelSize: Self.targetPixelSize) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image
-                            .resizable()
-                            .interpolation(.high)
-                            .antialiased(true)
-                            .scaledToFill()
-                    case .failure:
-                        placeholder
-                    default:
-                        placeholder
-                            .overlay { ProgressView().controlSize(.small) }
-                    }
-                }
-            } else {
-                placeholder
-            }
-        }
-        .frame(width: Self.size, height: Self.size)
-        .clipShape(.rect(cornerRadius: 8))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.secondary.opacity(0.15), lineWidth: 0.5)
-        }
-    }
-
-    private var placeholder: some View {
-        ZStack {
-            Color.secondary.opacity(0.08)
-            Image(systemName: "doc.text")
-                .font(.title2)
-                .foregroundStyle(.secondary.opacity(0.45))
-                .accessibilityLabel("Document placeholder")
-        }
-    }
-
-    private var resolvedImageURL: URL? {
-        guard let heroURLString = item.heroImageURL, !heroURLString.isEmpty else {
-            return nil
-        }
-        // `stower-archive:<relative-path>` is produced by the website-archive
-        // importer: each device resolves it against its own local archive
-        // directory so the field can sync cross-device without pinning a
-        // file URL. Fall through to regular URL parsing for every other
-        // scheme (http/https/data/etc.).
-        let scheme = WebsiteArchiveUnpacker.heroArchiveURLScheme + ":"
-        if heroURLString.hasPrefix(scheme) {
-            let relative = String(heroURLString.dropFirst(scheme.count))
-            guard !relative.isEmpty else { return nil }
-            let fileURL = AssetArchiver.archiveDirectory(for: item.id)
-                .appendingPathComponent(relative)
-            guard FileManager.default.fileExists(atPath: fileURL.path) else {
-                return nil
-            }
-            return fileURL
-        }
-        return URL(string: heroURLString)
-    }
-}

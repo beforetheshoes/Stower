@@ -118,6 +118,10 @@ public struct StowerRepository: Sendable {
     /// Enqueues `downloadAsset` jobs for synced books that have nothing to
     /// render on this device yet. Returns the number of jobs enqueued.
     public var hydrateBookItemsFromSyncedContent: @Sendable () async throws -> Int
+
+    /// Empties every local-only table. Synced tables are cleared separately
+    /// through the sync engine; iCloud data is not touched.
+    public var resetLocalData: @Sendable () async throws -> Void
 }
 
 private enum StowerRepositoryKey: DependencyKey {
@@ -198,7 +202,8 @@ extension StowerRepository {
             saveWebsiteArchive: { _, _, _, _ in },
             loadWebsiteArchive: { _ in nil },
             hydrateWebsiteItemsFromSyncedContent: { 0 },
-            hydrateBookItemsFromSyncedContent: { 0 }
+            hydrateBookItemsFromSyncedContent: { 0 },
+            resetLocalData: {}
         )
     }()
 }
@@ -341,7 +346,11 @@ extension StowerRepository {
                 database: database,
                 archiveExists: websiteArchiveExists(itemID:)
             ),
-            hydrateBookItemsFromSyncedContent: _hydrateBookItemsFromSyncedContent(database: database)
+            hydrateBookItemsFromSyncedContent: _hydrateBookItemsFromSyncedContent(database: database),
+            resetLocalData: {
+                documentCache.removeAll()
+                try await _resetLocalData(database: database)()
+            }
         )
     }
 }
