@@ -113,7 +113,6 @@ disabled_rules:
   - todo
   - line_length
   - type_body_length
-  - file_length
   - force_try
   - type_contents_order
   - no_grouping_extension
@@ -286,5 +285,11 @@ trailing_whitespace:
 
 vertical_whitespace:
   max_empty_lines: 2
+
+# No file is over 1,000 lines today; this keeps it that way. Split a file
+# before raising the limit.
+file_length:
+  warning: 1000
+  error: 1200
 
 warning_threshold: 2500
