@@ -104,7 +104,9 @@ struct StorageMaintenanceTests {
         try await database.write { db in
             try IngestionJobLocalTable.insert {
                 IngestionJobLocalTable(id: UUID(), kind: "pdf", payload: "/pending/a.pdf", status: "queued")
-                IngestionJobLocalTable(id: UUID(), kind: "website", payload: "/pending/site", status: "claimed")
+                // `processing` is what a claimed, in-flight job is stored as.
+                IngestionJobLocalTable(id: UUID(), kind: "website", payload: "/pending/site", status: "processing")
+                IngestionJobLocalTable(id: UUID(), kind: "epub", payload: "/pending/book.epub", status: "processing")
                 IngestionJobLocalTable(id: UUID(), kind: "pdf", payload: "/pending/b.pdf", status: "failed")
                 IngestionJobLocalTable(id: UUID(), kind: "pdf", payload: "/pending/done.pdf", status: "completed")
                 IngestionJobLocalTable(id: UUID(), kind: "url", payload: "https://example.com", status: "queued")
@@ -113,7 +115,7 @@ struct StorageMaintenanceTests {
         }
 
         let paths = try await client.activeJobPayloadPaths()
-        #expect(paths == ["/pending/a.pdf", "/pending/site", "/pending/b.pdf"])
+        #expect(paths == ["/pending/a.pdf", "/pending/site", "/pending/book.epub", "/pending/b.pdf"])
     }
 }
 

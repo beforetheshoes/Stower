@@ -206,6 +206,35 @@ struct IngestionQueueDeliveryTests {
     }
 
     @Test
+    func processedJobsArePrunedOnceOldAndUnfinishedOnesKept() async throws {
+        let database = try StowerDatabase.makeDatabase()
+        let repository = StowerRepository.live(database: database, cloudSyncClient: .noop)
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        let old = now.addingTimeInterval(-8 * 24 * 3600)
+        let recent = now.addingTimeInterval(-3600)
+
+        try await database.write { db in
+            try IngestionJobLocalTable.insert {
+                IngestionJobLocalTable(id: UUID(1), payload: "old-done", processedAt: old, status: "completed")
+                IngestionJobLocalTable(id: UUID(2), payload: "old-dismissed", processedAt: old, status: "dismissed")
+                IngestionJobLocalTable(id: UUID(3), payload: "recent-done", processedAt: recent, status: "completed")
+                IngestionJobLocalTable(id: UUID(4), payload: "old-queued", createdAt: old, status: "queued")
+                IngestionJobLocalTable(id: UUID(5), payload: "old-failed", createdAt: old, status: "failed")
+            }
+            .execute(db)
+        }
+
+        let cutoff = now.addingTimeInterval(-7 * 24 * 3600)
+        #expect(try await repository.pruneProcessedIngestionJobs(cutoff) == 2)
+        #expect(try await repository.pruneProcessedIngestionJobs(cutoff) == 0)
+
+        let survivors = try await database.read { db in
+            try IngestionJobLocalTable.order { $0.payload }.select(\.payload).fetchAll(db)
+        }
+        #expect(survivors == ["old-failed", "old-queued", "recent-done"])
+    }
+
+    @Test
     func releasingDoesNotReviveAJobThatAlreadyFinished() async throws {
         let database = try StowerDatabase.makeDatabase()
         let repository = StowerRepository.live(database: database, cloudSyncClient: .noop)

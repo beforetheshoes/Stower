@@ -17,6 +17,9 @@ public struct AppFeature {
         @Presents public var reader: ReaderFeature.State?
         public var startupFinished = false
         public var startupErrorMessage: String?
+        /// Set when the database could not be opened at launch. Startup is
+        /// skipped — nothing it does can work — and the message is shown.
+        public var databaseUnavailableMessage: String?
         /// True from the scene entering the background until its next
         /// activation, on platforms that suspend the process. Database
         /// maintenance is deferred while set — see `sceneDidEnterBackground`.
@@ -217,6 +220,11 @@ public struct AppFeature {
         Reduce { state, action in
             switch action {
             case .onAppear:
+                if let message = state.databaseUnavailableMessage {
+                    state.startupFinished = true
+                    state.startupErrorMessage = message
+                    return .none
+                }
                 let cloudSyncClient = self.cloudSyncClient
                 let repository = self.repository
                 let ingestionClient = self.ingestionClient
@@ -733,6 +741,10 @@ public struct AppFeature {
                 try? await cloudSyncClient.sendChanges()
                 await send(.startupFinished)
                 await send(.settings(.load))
+                // Finished jobs are never read again; drop week-old ones.
+                _ = try? await repository.pruneProcessedIngestionJobs(
+                    date.now.addingTimeInterval(-7 * 24 * 3600)
+                )
                 // Storage maintenance runs last so it never delays
                 // startup, and only every few days. Sweeps are
                 // age-gated and the orphan sweep quarantines for a

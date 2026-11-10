@@ -56,7 +56,11 @@ public struct LibraryRequest: FetchKeyRequest {
             oldestFirst: oldestFirst
         )
         let tags = try LibraryQueries.fetchTags(db)
-        let storage = try ItemStorageClient.storageInfos(db, itemIDs: items.map(\.id))
+        let storage = try ItemStorageClient.storageInfos(
+            db,
+            items: items.map { (id: $0.id, isRead: $0.isRead) },
+            renderFormatByID: Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0.renderFormat.rawValue) })
+        )
         return Value(
             items: items,
             tags: tags,

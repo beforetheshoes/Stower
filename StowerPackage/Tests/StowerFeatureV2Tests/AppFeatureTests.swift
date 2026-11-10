@@ -572,6 +572,21 @@ struct AppFeatureTests {
         #expect(settingsLoaded.value)
     }
 
+    @Test
+    func unopenableDatabaseIsReportedInsteadOfShowingAnEmptyLibrary() async {
+        var state = AppFeature.State()
+        state.databaseUnavailableMessage = "Stower could not open its library: disk full"
+        // No dependencies are stubbed: startup must not run at all.
+        let store = TestStore(initialState: state) {
+            AppFeature()
+        }
+
+        await store.send(.onAppear) {
+            $0.startupFinished = true
+            $0.startupErrorMessage = "Stower could not open its library: disk full"
+        }
+    }
+
     // MARK: - Background suspension
 
     /// Stubs the startup pipeline so the tests can count and gate its

@@ -220,6 +220,31 @@ extension StowerRepository {
         }
     }
 
+    /// Deletes jobs that finished (completed or dismissed) before `cutoff`.
+    /// Nothing reads a processed job again, and text hydration payloads
+    /// carry the whole source text, so the table otherwise grows forever.
+    static func _pruneProcessedIngestionJobs(
+        database: any DatabaseWriter
+    ) -> @Sendable (Date) async throws -> Int {
+        { cutoff in
+            let stale = try await database.read { db in
+                try IngestionJobLocalTable
+                    .where { $0.processedAt < #bind(cutoff as Date?) }
+                    .select(\.id)
+                    .fetchAll(db)
+            }
+            guard !stale.isEmpty else { return 0 }
+            try await database.write { db in
+                try IngestionJobLocalTable
+                    .where { $0.id.in(stale) }
+                    .where { $0.processedAt.isNot(nil) }
+                    .delete()
+                    .execute(db)
+            }
+            return stale.count
+        }
+    }
+
     static func _fetchFailedIngestionJobs(
         database: any DatabaseWriter
     ) -> @Sendable () async throws -> [IngestionJob] {

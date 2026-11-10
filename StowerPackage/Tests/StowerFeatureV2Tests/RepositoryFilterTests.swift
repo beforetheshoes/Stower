@@ -1,4 +1,5 @@
 import Foundation
+import GRDB
 @testable import StowerData
 @testable import StowerFeature
 import Testing
@@ -232,6 +233,28 @@ struct RepositoryFilterTests {
         // v6 non-unique replacements MUST exist.
         #expect(indexes.contains("idx_tagSyncTables_name_lower"))
         #expect(indexes.contains("idx_itemTagSyncTables_item_tag_pair"))
+    }
+
+    @Test
+    func migration_v20_indexesTheLibrarySortColumn() async throws {
+        let database = try StowerDatabase.makeDatabase()
+
+        let plan: [String] = try await database.read { db in
+            try Row.fetchAll(
+                db,
+                sql: """
+                    EXPLAIN QUERY PLAN
+                    SELECT "id" FROM "savedItemSyncTables"
+                    WHERE "deletedAt" IS NULL
+                    ORDER BY "createdAt" DESC
+                    """
+            )
+            .map { $0["detail"] as String }
+        }
+
+        // The list is read in index order instead of being sorted per fetch.
+        #expect(plan.contains { $0.contains("idx_savedItemSyncTables_deletedAt_createdAt") })
+        #expect(!plan.contains { $0.contains("TEMP B-TREE") })
     }
 
     @Test
