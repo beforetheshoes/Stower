@@ -109,6 +109,32 @@ struct ExistingItemLookupTests {
         #expect(try await lookup("https://my_site.example.com/a", in: database) == id)
     }
 
+    @Test
+    func aPercentEncodedHostStillMatches() async throws {
+        // Normalization decodes the host; the stored string does not contain
+        // it literally, so the SQL narrowing must not drop the row.
+        let database = try makeDatabase()
+        let id = UUID(6)
+        try await insert(id, url: "https://ex%61mple.com/post", into: database)
+        let stored = StowerRepository.normalizedURLKey("https://ex%61mple.com/post")
+        try #require(stored == StowerRepository.normalizedURLKey("https://example.com/post"))
+
+        #expect(try await lookup("https://example.com/post", in: database) == id)
+    }
+
+    @Test
+    func anInternationalizedHostIsNotNarrowedAway() async throws {
+        let database = try makeDatabase()
+        let id = UUID(7)
+        try await insert(id, url: "https://BÜCHER.example/post", into: database)
+
+        let found = try await lookup("https://bücher.example/post", in: database)
+        let sameKey = StowerRepository.normalizedURLKey("https://BÜCHER.example/post")
+            == StowerRepository.normalizedURLKey("https://bücher.example/post")
+        // Whatever normalization decides, the lookup must agree with it.
+        #expect(found == (sameKey ? id : nil))
+    }
+
     // MARK: - Empty queue
 
     @Test
