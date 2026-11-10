@@ -199,6 +199,18 @@ public struct AppFeature {
     @Dependency(\.context)
     var context
 
+    // The two children are defined once. They run inside their `Scope`s,
+    // and `sceneDidEnterBackground` / `sceneDidBecomeActive` also run them
+    // directly, in the same pass. Anything attached to a child — a
+    // dependency override, say — goes here so both paths get it.
+    private var ingestionFeature: some ReducerOf<IngestionFeature> {
+        IngestionFeature()
+    }
+
+    private var syncFeature: some ReducerOf<SyncFeature> {
+        SyncFeature()
+    }
+
     public var body: some ReducerOf<Self> {
         // Runs before the reader's own reducer and before anything replaces
         // or dismisses it. The reader debounces its progress writes by a
@@ -226,10 +238,10 @@ public struct AppFeature {
         }
 
         Scope(\.ingestion, action: \.ingestion) {
-            IngestionFeature()
+            ingestionFeature
         }
         Scope(\.sync, action: \.sync) {
-            SyncFeature()
+            syncFeature
         }
         Scope(\.sidebar, action: \.sidebar) {
             SidebarFeature()
@@ -349,10 +361,10 @@ public struct AppFeature {
                 // sent an action: the cancellation must not wait a turn.
                 return .merge(
                     .cancel(id: CancelID.startupMaintenance),
-                    SyncFeature()
+                    syncFeature
                         .reduce(into: &state.sync, action: .sceneDidEnterBackground)
                         .map(Action.sync),
-                    IngestionFeature()
+                    ingestionFeature
                         .reduce(into: &state.ingestion, action: .sceneDidEnterBackground)
                         .map(Action.ingestion)
                 )
@@ -402,7 +414,7 @@ public struct AppFeature {
                     effects.append(startupMaintenance(state: state))
                 }
                 effects.append(
-                    SyncFeature()
+                    syncFeature
                         .reduce(into: &state.sync, action: .sceneDidBecomeActive)
                         .map(Action.sync)
                 )
