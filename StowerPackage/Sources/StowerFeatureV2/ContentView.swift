@@ -155,6 +155,13 @@ public struct AppView: View {
                         savingNotice(count: store.pendingSaveCount, palette: palette)
                             .transition(.move(edge: .bottom).combined(with: .opacity))
                     }
+                    #if os(iOS)
+                    // The Mac composer row shows this itself.
+                    if store.library.isImportingFile {
+                        progressNotice("Importing…")
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                    }
+                    #endif
                     if let completedItem = store.recentlyCompletedItem {
                         completedItemNotice(completedItem, palette: palette)
                             .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -165,6 +172,7 @@ public struct AppView: View {
                 .padding(.horizontal, 12)
                 .padding(.bottom, 8)
                 .animation(.snappy(duration: 0.3), value: store.pendingSaveCount)
+                .animation(.snappy(duration: 0.3), value: store.library.isImportingFile)
                 .animation(.snappy(duration: 0.3), value: store.recentlyCompletedItem?.id)
             }
             .onChange(of: store.reader?.itemID) { _, itemID in
@@ -306,10 +314,14 @@ public struct AppView: View {
     }
 
     private func savingNotice(count: Int, palette: FlexokiPalette) -> some View {
+        progressNotice(count == 1 ? "Saving article…" : "Saving \(count) articles…")
+    }
+
+    private func progressNotice(_ text: String) -> some View {
         HStack(spacing: 12) {
             ProgressView()
                 .controlSize(.small)
-            Text(count == 1 ? "Saving article…" : "Saving \(count) articles…")
+            Text(text)
                 .font(.callout.weight(.medium))
             Spacer(minLength: 8)
         }

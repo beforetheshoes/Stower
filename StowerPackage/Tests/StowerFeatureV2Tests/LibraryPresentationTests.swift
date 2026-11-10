@@ -104,4 +104,21 @@ struct LibraryPresentationTests {
             $0.importPicker = nil
         }
     }
+
+    @Test
+    func aFileImportWithNoSheetUpIsReportedAsImporting() {
+        var state = LibraryFeature.State()
+        #expect(!state.isImportingFile)
+
+        state.isSaving = true
+        #expect(state.isImportingFile)
+
+        // A save running behind its own sheet shows its progress there.
+        state.isAddURLPresented = true
+        #expect(!state.isImportingFile)
+        state.isAddURLPresented = false
+        state.isTextImportPresented = true
+        state.textImportDraft = LibraryFeature.TextImportDraft()
+        #expect(!state.isImportingFile)
+    }
 }

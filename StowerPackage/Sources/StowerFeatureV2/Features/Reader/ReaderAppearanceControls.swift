@@ -17,6 +17,17 @@ struct ReaderAppearanceControls: View {
     private var palette: FlexokiPalette { appearance.palette }
 
     var body: some View {
+        // Shown as-is when it fits; scrolls when it does not — a small
+        // phone, or large Dynamic Type — instead of running off the popover.
+        ViewThatFits(in: .vertical) {
+            controls
+            ScrollView {
+                controls
+            }
+        }
+    }
+
+    private var controls: some View {
         VStack(alignment: .leading, spacing: 18) {
             HStack {
                 Text("Appearance")
@@ -203,7 +214,11 @@ private struct AccentSwatchRow: View {
     let onSelect: (FlexokiHue) -> Void
 
     var body: some View {
-        HStack(spacing: 10) {
+        // Each 30-point swatch sits in a 40 x 44 slot, so the row looks as it
+        // did (30 + 10 spacing) while the touch target is no longer 30
+        // points square. The negative padding keeps the first swatch on the
+        // leading edge.
+        HStack(spacing: 0) {
             ForEach(FlexokiHue.allCases, id: \.self) { hue in
                 AccentSwatch(
                     hue: hue,
@@ -215,6 +230,7 @@ private struct AccentSwatchRow: View {
                 }
             }
         }
+        .padding(.horizontal, -5)
     }
 }
 
@@ -247,6 +263,8 @@ private struct AccentSwatch: View {
                     .strokeBorder(ringColor, lineWidth: selected ? 2 : 0)
                     .padding(-3)
             )
+            .frame(width: 40, height: 44)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(hue.displayName)

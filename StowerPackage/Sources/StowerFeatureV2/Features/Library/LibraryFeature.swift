@@ -51,6 +51,13 @@ public struct LibraryFeature {
         public var showsTextImportSheet: Bool {
             isTextImportPresented && textImportDraft != nil
         }
+
+        /// A picked file is being imported with no sheet up to show it.
+        /// PDF, EPUB and website imports run in the foreground and can take
+        /// a while; on iPhone nothing said so.
+        public var isImportingFile: Bool {
+            isSaving && !isAddURLPresented && !showsTextImportSheet
+        }
         /// The item whose EPUB is being built. Only one export runs at a time.
         public var exportingItemID: UUID?
         /// A finished EPUB waiting for the share sheet (iOS) or save panel (macOS).
