@@ -714,7 +714,7 @@ public struct ReaderFeature {
                         let repository = self.repository
                         let itemID = state.itemID
                         finishEffect = .run { send in
-                            try? await repository.setReadStatus(itemID, true)
+                            await reportingErrors { try await repository.setReadStatus(itemID, true) }
                             await send(.delegate(.finishedReading(itemID: itemID)))
                         }
                     }
@@ -739,7 +739,7 @@ public struct ReaderFeature {
                 }
                 let repository = self.repository
                 return .run { [id = state.itemID] _ in
-                    try? await repository.saveReadingProgress(id, blockIndex)
+                    await reportingErrors { try await repository.saveReadingProgress(id, blockIndex) }
                 }
 
             case .contentAreaTapped:

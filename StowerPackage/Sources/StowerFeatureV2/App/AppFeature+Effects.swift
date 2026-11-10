@@ -137,7 +137,7 @@ extension AppFeature {
                     ingestionCoordinator: ingestionCoordinator
                 ) { date.now }
             }
-            let jobs = (try? await repository.fetchFailedIngestionJobs()) ?? []
+            let jobs = await reportingErrors { try await repository.fetchFailedIngestionJobs() } ?? []
             await send(.failedImportsLoaded(FailedImport.list(from: jobs)))
             await send(.syncFollowUpFinished)
         }
@@ -162,7 +162,7 @@ extension AppFeature {
         let ingestionCoordinator = self.ingestionCoordinator
         return .run { send in
             if retryingFailed {
-                try? await repository.retryFailedIngestionJobs()
+                await reportingErrors { try await repository.retryFailedIngestionJobs() }
             }
             try? await ingestionCoordinator.run {
                 try await processIngestionJobs(
@@ -173,7 +173,7 @@ extension AppFeature {
                     ingestionCoordinator: ingestionCoordinator
                 ) { date.now }
             }
-            let jobs = (try? await repository.fetchFailedIngestionJobs()) ?? []
+            let jobs = await reportingErrors { try await repository.fetchFailedIngestionJobs() } ?? []
             await send(.failedImportsLoaded(FailedImport.list(from: jobs)))
             await send(.ingestionDrainFinished)
         }

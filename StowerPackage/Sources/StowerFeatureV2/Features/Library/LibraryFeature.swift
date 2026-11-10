@@ -412,7 +412,7 @@ public struct LibraryFeature {
                 let repository = self.repository
                 return .run { send in
                     do {
-                        try? await repository.updateLocalContentStatus(id, "downloading", nil)
+                        await reportingErrors { try await repository.updateLocalContentStatus(id, "downloading", nil) }
                         try await CloudAssetService.restore(itemID: id, repository: repository)
                     } catch {
                         await send(.failed(error.localizedDescription))
@@ -607,7 +607,7 @@ public struct LibraryFeature {
                             kind: .pdf,
                             originalFilename: pickedURL.lastPathComponent
                         ).encoded() {
-                            try? await repository.enqueueIngestionJob(.uploadAsset, payload)
+                            await reportingErrors { try await repository.enqueueIngestionJob(.uploadAsset, payload) }
                         }
                         await send(.saveURLFinished(item))
                         await send(.openItem(item))
@@ -643,7 +643,7 @@ public struct LibraryFeature {
                             kind: .epub,
                             originalFilename: pickedURL.lastPathComponent
                         ).encoded() {
-                            try? await repository.enqueueIngestionJob(.uploadAsset, payload)
+                            await reportingErrors { try await repository.enqueueIngestionJob(.uploadAsset, payload) }
                         }
                         await send(.saveURLFinished(item))
                         await send(.openItem(item))
@@ -786,13 +786,13 @@ public struct LibraryFeature {
                         }
                         // The row shows its spinner from this status until the
                         // refresh writes the new content.
-                        try? await repository.updateLocalContentStatus(id, "downloading", nil)
+                        await reportingErrors { try await repository.updateLocalContentStatus(id, "downloading", nil) }
                         let refreshed = try await articleSaveClient.refresh(id, url)
                         await send(.reprocessFinished(refreshed.item))
                     } catch is CancellationError {
                         return
                     } catch {
-                        try? await repository.updateLocalContentStatus(id, "failed", error.localizedDescription)
+                        await reportingErrors { try await repository.updateLocalContentStatus(id, "failed", error.localizedDescription) }
                         await send(.failed(error.localizedDescription))
                     }
                 }

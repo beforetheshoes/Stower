@@ -3,7 +3,7 @@ import Foundation
 import OSLog
 import SQLiteData
 
-private let kBootstrapLogger = Logger(subsystem: "com.ryanleewilliams.stower", category: "Bootstrap")
+private let kBootstrapLogger = Logger.stower("Bootstrap")
 
 // MARK: - Diagnostics Types
 

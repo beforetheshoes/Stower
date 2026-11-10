@@ -2,10 +2,7 @@ import Foundation
 import OSLog
 import ZIPFoundation
 
-private let kUnpackerLog = Logger(
-    subsystem: "com.ryanleewilliams.stower",
-    category: "WebsiteArchiveUnpacker"
-)
+private let kUnpackerLog = Logger.stower("WebsiteArchiveUnpacker")
 
 /// Unpacks a user-supplied `.zip` containing a static website into the given
 /// archive directory. Produces the same on-disk layout the reader already

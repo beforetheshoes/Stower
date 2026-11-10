@@ -4,7 +4,7 @@ import OSLog
 import PDFKit
 import StowerData
 
-private let kAssetServiceLogger = Logger(subsystem: "com.ryanleewilliams.stower", category: "CloudAssetService")
+private let kAssetServiceLogger = Logger.stower("CloudAssetService")
 
 public enum CloudAssetServiceError: Error, Equatable, LocalizedError {
     case missingLocalFile

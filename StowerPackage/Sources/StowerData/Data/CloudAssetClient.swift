@@ -5,7 +5,7 @@ import OSLog
 import CloudKit
 #endif
 
-private let kAssetLogger = Logger(subsystem: "com.ryanleewilliams.stower", category: "CloudAssets")
+private let kAssetLogger = Logger.stower("CloudAssets")
 
 public enum CloudAssetError: Error, Equatable, Sendable {
     /// The user's iCloud storage is full — the payload cannot be uploaded.

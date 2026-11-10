@@ -3,7 +3,7 @@ import Foundation
 import OSLog
 import StowerData
 
-private let kStorageLogger = Logger(subsystem: "com.ryanleewilliams.stower", category: "StorageUsage")
+private let kStorageLogger = Logger.stower("StorageUsage")
 
 // MARK: - Value types
 

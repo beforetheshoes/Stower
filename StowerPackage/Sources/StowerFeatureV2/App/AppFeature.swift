@@ -230,7 +230,7 @@ public struct AppFeature {
                 state.reader?.pendingProgressBlockIndex = nil
                 let repository = self.repository
                 return .run { [itemID = reader.itemID] _ in
-                    try? await repository.saveReadingProgress(itemID, blockIndex)
+                    await reportingErrors { try await repository.saveReadingProgress(itemID, blockIndex) }
                 }
             default:
                 return .none
@@ -311,7 +311,7 @@ public struct AppFeature {
                             grouping: (try? await itemStorageClient.manifests(trashedIDs)) ?? [],
                             by: \.itemID
                         )
-                        for itemID in (try? await repository.purgeOldTrash()) ?? [] {
+                        for itemID in await reportingErrors { try await repository.purgeOldTrash() } ?? [] {
                             AssetArchiver.deleteArchive(for: itemID)
                             for manifest in manifestsByItem[itemID] ?? [] {
                                 try? await cloudAssetClient.delete(manifest.recordName)
@@ -441,7 +441,7 @@ public struct AppFeature {
                 let now = date.now
                 state.failedImports = []
                 return .run { _ in
-                    try? await repository.dismissFailedIngestionJobs(now)
+                    await reportingErrors { try await repository.dismissFailedIngestionJobs(now) }
                 }
 
             case .sceneDidBecomeActive:
@@ -525,7 +525,7 @@ public struct AppFeature {
                 state.reader?.item?.isRead = newValue
                 let repository = self.repository
                 return .run { _ in
-                    try? await repository.setReadStatus(item.id, newValue)
+                    await reportingErrors { try await repository.setReadStatus(item.id, newValue) }
                 }
 
             case .toggleSelectedItemStarred:
@@ -534,7 +534,7 @@ public struct AppFeature {
                 state.reader?.item?.isStarred = newValue
                 let repository = self.repository
                 return .run { _ in
-                    try? await repository.setStarred(item.id, newValue)
+                    await reportingErrors { try await repository.setStarred(item.id, newValue) }
                 }
 
             case .exportOpenArticleAsEPUB:
@@ -551,7 +551,7 @@ public struct AppFeature {
                 }
                 let repository = self.repository
                 return .run { _ in
-                    try? await repository.setReadStatus(item.id, false)
+                    await reportingErrors { try await repository.setReadStatus(item.id, false) }
                 }
                 .cancellable(id: CancelID.completedItemNotice, cancelInFlight: true)
 

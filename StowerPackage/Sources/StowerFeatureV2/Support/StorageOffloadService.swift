@@ -3,7 +3,7 @@ import Foundation
 import OSLog
 import StowerData
 
-private let kOffloadLogger = Logger(subsystem: "com.ryanleewilliams.stower", category: "StorageOffload")
+private let kOffloadLogger = Logger.stower("StorageOffload")
 
 public enum StorageOffloadError: Error, Equatable, LocalizedError {
     case notOffloadable

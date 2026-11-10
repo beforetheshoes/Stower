@@ -19,10 +19,7 @@ import Synchronization
 /// chunk names. To fill those gaps, the server falls back to live-fetching missing
 /// assets from `originURL` on the first request and writing them to disk, so the
 /// archive self-heals as the user interacts with the page.
-private let kArchiveServerLog = Logger(
-    subsystem: "com.ryanleewilliams.stower",
-    category: "ArchiveServer"
-)
+private let kArchiveServerLog = Logger.stower("ArchiveServer")
 
 final class LocalArchiveServer: Sendable {
     private struct Running {
