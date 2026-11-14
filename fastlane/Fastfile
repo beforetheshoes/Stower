@@ -46,8 +46,23 @@ end
 #
 # -skipMacroValidation lets this build on a machine that has never opened the project:
 # Swift macro trust is a local Xcode setting that nothing in the repo can substitute for.
-def next_build_number(platform)
-  latest_testflight_build_number(app_identifier: APP_ID, platform: platform) + 1
+# The iOS and macOS apps share one bundle ID and version, and App Store Connect rejects an
+# upload whose build number either platform has already used (ITMS-90189, which arrives by
+# email after the upload reports success). So the next number is one past the highest build
+# on any platform, not just the one being built.
+#
+# A build uploaded a moment ago may not be listed yet, so when both platforms ship in one run
+# the number the first lane used is also read back from a note in the job's temp directory.
+BUILD_NUMBER_NOTE = File.join(ENV["RUNNER_TEMP"] || Dir.tmpdir, "stower-last-build-number")
+
+def next_build_number
+  latest = %w[ios osx].map do |platform|
+    latest_testflight_build_number(app_identifier: APP_ID, platform: platform)
+  end
+  latest << File.read(BUILD_NUMBER_NOTE).to_i if File.exist?(BUILD_NUMBER_NOTE)
+  number = latest.max + 1
+  File.write(BUILD_NUMBER_NOTE, number.to_s)
+  number
 end
 
 def build_args(build_number)
@@ -132,7 +147,7 @@ platform :ios do
     authenticate
 
     match(type: "appstore", platform: "ios", readonly: ENV["CI"].to_s == "true")
-    build_number = next_build_number("ios")
+    build_number = next_build_number
 
     build_app(
       workspace: WORKSPACE,
@@ -184,7 +199,7 @@ platform :mac do
       additional_cert_types: ["mac_installer_distribution"],
       readonly: ENV["CI"].to_s == "true"
     )
-    build_number = next_build_number("osx")
+    build_number = next_build_number
 
     build_app(
       workspace: WORKSPACE,
