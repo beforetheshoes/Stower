@@ -83,6 +83,10 @@ public struct LibraryScreen: View {
             }
             #endif
 
+            if store.sortOrder == .newestFirst {
+                pendingSaveRows
+            }
+
             ForEach(store.items) { item in
                 libraryRow(item)
                 .tag(item.id)
@@ -196,6 +200,10 @@ public struct LibraryScreen: View {
                         .padding(.horizontal, 6)
                 )
             }
+
+            if store.sortOrder == .oldestFirst {
+                pendingSaveRows
+            }
         }
         .scrollContentBackground(.hidden)
         // Obscure rows as they scroll beneath the Liquid Glass nav bar so
@@ -220,7 +228,7 @@ public struct LibraryScreen: View {
             // Only after the first observation has delivered: a populated
             // list must never be covered by a spinner, and the empty state
             // must not flash before the rows arrive.
-            if store.hasLoaded, store.items.isEmpty {
+            if store.hasLoaded, store.items.isEmpty, store.pendingSaves.isEmpty {
                 libraryEmptyState
             }
         }
@@ -368,6 +376,16 @@ public struct LibraryScreen: View {
     }
 
     /// A selectable row in the split layout, a push button on iPhone.
+    /// Saves still being fetched, listed where the article will appear:
+    /// first when the newest is on top, last otherwise.
+    var pendingSaveRows: some View {
+        ForEach(store.pendingSaves) { save in
+            LibraryPendingSaveRow(save: save)
+                .selectionDisabled()
+                .listRowBackground(Color.clear)
+        }
+    }
+
     @ViewBuilder
     func libraryRow(_ item: SavedItem) -> some View {
         let row = LibraryItemRow(

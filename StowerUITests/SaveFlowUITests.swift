@@ -1,7 +1,7 @@
 import XCTest
 
 /// Verifies that adding a link returns control immediately: the sheet closes
-/// on Add, a saving notice appears, and the row arrives in Inbox on its own.
+/// on Add, the save is listed in Inbox at once, and the article replaces it.
 final class SaveFlowUITests: XCTestCase {
     override func setUpWithError() throws {
         continueAfterFailure = true
@@ -37,8 +37,15 @@ final class SaveFlowUITests: XCTestCase {
         XCTAssertTrue(sheetGone, "Add URL sheet stayed open after Add")
         try save(app.screenshot(), name: "save_queued")
 
+        // The save is listed at once, before anything has been fetched.
+        let pending = app.descendants(matching: .any)["pendingSaveRow"].firstMatch
+        XCTAssertTrue(pending.waitForExistence(timeout: 3), "Save was not listed while it was being fetched")
+        try save(app.screenshot(), name: "save_pending_row")
+
+        // Then the article replaces it.
+        XCTAssertTrue(pending.waitForNonExistence(timeout: 120), "Save never finished")
         let row = app.cells.firstMatch
-        XCTAssertTrue(row.waitForExistence(timeout: 120), "Saved row never arrived")
+        XCTAssertTrue(row.waitForExistence(timeout: 10), "Saved row never arrived")
         try save(app.screenshot(), name: "save_row_arrived")
     }
 

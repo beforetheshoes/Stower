@@ -12,6 +12,8 @@ public struct LibraryFeature {
         /// filter, query, and sort. Every write anywhere in the app shows up
         /// here through observation; nothing reloads the list by hand.
         @Fetch public var library = LibraryRequest.Value()
+        /// Saves still being fetched; see `pendingSaves`.
+        @Fetch var queuedSaves = [PendingSave]()
         /// False until the first observation has delivered a value, so the
         /// empty state never flashes before the rows arrive.
         public var hasLoaded = false
@@ -962,10 +964,12 @@ public struct LibraryFeature {
     private func loadLibrary(_ state: State) -> EffectOf<Self> {
         let request = state.request
         let library = state.$library
+        let queuedSaves = state.$queuedSaves
         return .run { send in
             do {
                 try await library.load(request, animation: .default)
                 await send(.libraryLoaded)
+                try await queuedSaves.load(PendingSavesRequest(), animation: .default)
             } catch {
                 await send(.failed(error.localizedDescription))
             }
