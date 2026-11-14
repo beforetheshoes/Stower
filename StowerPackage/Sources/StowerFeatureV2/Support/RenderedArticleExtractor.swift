@@ -95,6 +95,7 @@ enum RenderedArticleExtractor {
         // is pure obstruction.
         "[class*=author-bio]", "[class*=author-box]", "[class*=author-card]",
         "[class*=contributor-bio]", "[class*=about-the-author]",
+        "[class*=story-contributor]", "[class*=narration-contributor]",
 
         // Carousel thumbnail rails, which restate every image in the gallery at
         // postage-stamp size directly below the gallery itself.

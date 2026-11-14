@@ -326,8 +326,35 @@ private final class WebArticleCaptureSession {
         let json = try await javascriptString("""
             (() => {
               try {
-                const result = new Readability(document.cloneNode(true), { keepClasses: true }).parse();
-                return result ? JSON.stringify(result) : null;
+                // Readability scores elements by class and id, and counts
+                // "media", "meta", "scroll" and "widget" against them. Sites
+                // name their image wrappers exactly that
+                // (`figure > div.figure-media > img`), so the picture went
+                // and its caption stayed. A figure is content by definition:
+                // hide the names inside one while Readability runs, then
+                // put them back for the class-based rules downstream.
+                const clone = document.cloneNode(true);
+                for (const element of clone.querySelectorAll('figure, figure *')) {
+                  for (const name of ['class', 'id']) {
+                    if (!element.hasAttribute(name)) continue;
+                    element.setAttribute('data-stower-' + name, element.getAttribute(name));
+                    element.removeAttribute(name);
+                  }
+                }
+                const result = new Readability(clone, { keepClasses: true }).parse();
+                if (!result) return null;
+                if (result.content) {
+                  const holder = document.createElement('template');
+                  holder.innerHTML = result.content;
+                  for (const name of ['class', 'id']) {
+                    for (const element of holder.content.querySelectorAll('[data-stower-' + name + ']')) {
+                      element.setAttribute(name, element.getAttribute('data-stower-' + name));
+                      element.removeAttribute('data-stower-' + name);
+                    }
+                  }
+                  result.content = holder.innerHTML;
+                }
+                return JSON.stringify(result);
               } catch (_) { return null; }
             })()
             """)

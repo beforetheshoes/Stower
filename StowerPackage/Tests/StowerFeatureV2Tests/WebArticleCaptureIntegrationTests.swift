@@ -125,6 +125,36 @@ struct WebArticleCaptureIntegrationTests {
         }
     }
 
+    @Test(.timeLimit(.minutes(2)))
+    @MainActor
+    func figureImagesSurviveWrappersReadabilityPenalises() async throws {
+        // With no <article> to anchor on, the reader text comes from
+        // Readability, which counts a class containing "media" against an
+        // element. An essay whose every image sat in `figure-media` was
+        // saved with captions and no pictures.
+        let server = try SlowImageServer(imageDelay: .zero)
+        let port = try await server.start()
+        defer { server.stop() }
+        let sourceURL = try #require(URL(string: "http://localhost:\(port)/essay"))
+
+        let captured = try await WebArticleCaptureClient.live.capture(sourceURL)
+        let itemID = UUID()
+        defer { AssetArchiver.deleteArchive(for: itemID) }
+        defer {
+            try? FileManager.default.removeItem(
+                at: captured.artifact.stagedPackageURL.deletingLastPathComponent()
+            )
+        }
+        try ArticleCapturePackage.install(captured.artifact, for: itemID)
+
+        let archiveURL = try #require(ArticleCapturePackage.archiveURL(for: itemID, original: false))
+        let resources = try archivedResourceURLs(in: archiveURL)
+        for image in ["captioned.png", "uncaptioned.png"] {
+            #expect(resources.contains { $0.hasSuffix("/" + image) }, "The reader archive is missing \(image)")
+        }
+        #expect(!captured.ingestion.plainText.contains("has written for many publications"))
+    }
+
     private func archivedResourceURLs(in archiveURL: URL) throws -> [String] {
         let plist = try PropertyListSerialization.propertyList(
             from: Data(contentsOf: archiveURL),
@@ -178,6 +208,8 @@ private final class SlowImageServer: Sendable {
                     }
                 } else if path.hasSuffix(".png") {
                     Self.respond(on: connection, type: "image/png", body: Self.onePixelPNG)
+                } else if path.hasSuffix("/essay") {
+                    Self.respond(on: connection, type: "text/html; charset=utf-8", body: Data(Self.essayPage.utf8))
                 } else {
                     Self.respond(on: connection, type: "text/html; charset=utf-8", body: Data(Self.page.utf8))
                 }
@@ -222,6 +254,29 @@ private final class SlowImageServer: Sendable {
         <figure><img class="lazyload" src="\(placeholder)" data-src="deferred-b.png" alt="Deferred too" width="600" height="400"></figure>
         <p>A second paragraph, so there is plainly an article here for the reader to extract.</p>
         </article></body></html>
+        """
+
+    private static let essayParagraph = """
+        <p>The surveyor cut a mark into the wall, and from that mark every height in the country was measured, one careful line after another, across fields, rivers, and hills. It was slow work, done by hand, and it was done well enough to last.</p>
+        """
+
+    private static let essayPage = """
+        <!doctype html><html><head><title>Essay fixture</title></head><body>
+        <main id="main-content"><div class="essay-content">
+        <div class="essay-narration-contributors"><div class="c-story-contributors">
+        <p class="c-story-contributor__bio">The author has written for many publications.</p></div></div>
+        <section class="m-default-text">\(essayParagraph)\(essayParagraph)\(essayParagraph)</section>
+        <section class="m-variable-images"><figure class="c-variable-item">
+        <div class="m-variable-positions__figure-media"><div class="c-img-video">
+        <img class="lazyload" data-src="captioned.png" width="600" height="400" alt=""></div></div>
+        <figcaption><p>A benchmark cut into a church wall.</p></figcaption></figure></section>
+        <section class="m-default-text">\(essayParagraph)\(essayParagraph)</section>
+        <section class="m-variable-images"><figure class="c-variable-item">
+        <div class="m-variable-positions__figure-media"><div class="c-img-video">
+        <img class="lazyload" data-src="uncaptioned.png" width="600" height="400" alt=""></div></div>
+        </figure></section>
+        <section class="m-default-text">\(essayParagraph)\(essayParagraph)</section>
+        </div></main></body></html>
         """
 
     private static let onePixelPNG = Data(
