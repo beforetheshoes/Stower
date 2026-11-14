@@ -41,6 +41,23 @@ extension DependencyValues {
 enum WebCaptureDOMProbe {
     static let deliveredTextJavaScript = "document.body ? document.body.textContent : ''"
 
+    /// The number of images that have a real source and have not finished
+    /// loading, as a string. Images are switched to eager first: the capture
+    /// view never scrolls, so a lazy image below the fold would otherwise
+    /// never start, and never finish. A failed image counts as finished.
+    static let pendingImageCountJavaScript = """
+        (() => {
+          let pending = 0;
+          for (const image of document.images) {
+            const source = image.currentSrc || image.getAttribute('src') || '';
+            if (!source || source.startsWith('data:')) continue;
+            if (image.loading === 'lazy') image.loading = 'eager';
+            if (!image.complete) pending += 1;
+          }
+          return String(pending);
+        })()
+        """
+
     static func containsUsableText(_ text: String?) -> Bool {
         guard let text else { return false }
         return text.trimmingCharacters(in: .whitespacesAndNewlines).count >= 40
@@ -108,6 +125,13 @@ private final class WebArticleCaptureSession {
             warnings.append("The page kept changing while it was saved; late-loading media may be missing.")
         }
         try await normalizeRenderedResources()
+        // Normalizing switches lazy images to eager, which is the first time
+        // anything below the fold starts to load. The archive holds only
+        // what has arrived, so give them a chance to.
+        if await waitForImages(maximum: .seconds(6)) == false {
+            completeness = .partial
+            warnings.append("Some images had not finished loading when the page was saved.")
+        }
         try await annotateHiddenContent()
 
         let finalURL = webView.url ?? sourceURL
@@ -142,10 +166,24 @@ private final class WebArticleCaptureSession {
         indexed.processingError = warnings.isEmpty ? nil : warnings.joined(separator: " ")
         indexed.sourceHTML = renderedHTML
 
-        try await navigator.load(timeout: .seconds(15)) {
-            self.webView.loadHTMLString(extraction.readerHTML, baseURL: finalURL)
+        do {
+            try await navigator.load(timeout: .seconds(15)) {
+                self.webView.loadHTMLString(extraction.readerHTML, baseURL: finalURL)
+            }
+        } catch CaptureNavigationError.timeout {
+            // The text is already in hand; only slow images are outstanding.
+            // Save what arrived instead of failing the whole article.
+            completeness = .partial
+            warnings.append("Some images had not finished loading when the page was saved.")
         }
         _ = await waitForDOMQuiet(maximum: .seconds(3))
+        // The reader page is what gets read offline. A quiet DOM says
+        // nothing about its images: on a slow connection they were still in
+        // flight here, and an archive made now has none of them.
+        if await waitForImages(maximum: .seconds(8)) == false, completeness == .complete {
+            completeness = .partial
+            warnings.append("Some images had not finished loading when the page was saved.")
+        }
         let readerArchive = try await createWebArchiveData()
         let captureID = UUID()
         let artifact = try ArticleCapturePackage.stage(
@@ -167,13 +205,41 @@ private final class WebArticleCaptureSession {
     private func normalizeRenderedResources() async throws {
         try await javascriptVoid("""
             (() => {
+              // Script-driven lazy loaders park a placeholder in `src` and keep
+              // the real address in a data attribute until the image scrolls
+              // into view. The capture view never scrolls, so below the fold
+              // the placeholder is all there is. Left alone, every such image
+              // carries the same placeholder address, and the reader page
+              // drops all but the first as duplicates.
+              const firstCandidate = (set) => {
+                if (!set) return '';
+                const entry = set.split(',').map((part) => part.trim()).filter(Boolean).pop() || '';
+                return entry.split(' ')[0] || '';
+              };
+              const deferredSource = (image) => {
+                const data = image.dataset;
+                return data.src || data.lazySrc || data.original || data.lazy || data.url
+                  || data.hiResSrc || data.fullSrc
+                  || firstCandidate(data.srcset || data.lazySrcset) || '';
+              };
+              const isPlaceholder = (image) => {
+                const current = image.currentSrc || image.getAttribute('src') || '';
+                if (!current || current.startsWith('data:')) return true;
+                if (image.complete && image.naturalWidth > 0 && image.naturalWidth <= 2) return true;
+                const classes = image.classList;
+                return classes.contains('lazyload') || classes.contains('lazy') || classes.contains('b-lazy');
+              };
               for (const image of document.images) {
-                const chosen = image.currentSrc || image.src || image.dataset.src || image.dataset.lazySrc;
+                const deferred = deferredSource(image);
+                const chosen = (deferred && isPlaceholder(image))
+                  ? deferred
+                  : (image.currentSrc || image.src || deferred);
                 if (chosen) image.src = new URL(chosen, document.baseURI).href;
                 image.removeAttribute('srcset'); image.removeAttribute('sizes'); image.loading = 'eager';
               }
               for (const source of document.querySelectorAll('picture source,video source,audio source')) {
-                const chosen = source.src || source.dataset.src;
+                const chosen = source.src || source.dataset.src
+                  || firstCandidate(source.srcset || source.dataset.srcset);
                 if (chosen) source.src = new URL(chosen, document.baseURI).href;
                 source.removeAttribute('srcset');
               }
@@ -268,6 +334,21 @@ private final class WebArticleCaptureSession {
             """)
         guard let json, let data = json.data(using: .utf8) else { return nil }
         return try? JSONDecoder().decode(MozillaReadabilityResult.self, from: data)
+    }
+
+    /// Waits until every image on the page has either loaded or failed.
+    /// Returns false if some were still loading when time ran out.
+    private func waitForImages(maximum: Duration) async -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: maximum)
+        while true {
+            let pending = (try? await javascriptString(WebCaptureDOMProbe.pendingImageCountJavaScript)) ?? "0"
+            if pending == "0" {
+                return true
+            }
+            guard clock.now < deadline else { return false }
+            try? await Task.sleep(for: .milliseconds(200))
+        }
     }
 
     private func waitForDOMQuiet(maximum: Duration = .seconds(4)) async -> Bool {
