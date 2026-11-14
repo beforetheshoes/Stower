@@ -176,10 +176,9 @@ private final class WebArticleCaptureSession {
             completeness = .partial
             warnings.append("Some images had not finished loading when the page was saved.")
         }
-        _ = await waitForDOMQuiet(maximum: .seconds(3))
-        // The reader page is what gets read offline. A quiet DOM says
-        // nothing about its images: on a slow connection they were still in
-        // flight here, and an archive made now has none of them.
+        // The reader page is what gets read offline. It has no scripts, so
+        // nothing changes it after load; only its images can still be in
+        // flight, and an archive made before they land has none of them.
         if await waitForImages(maximum: .seconds(8)) == false, completeness == .complete {
             completeness = .partial
             warnings.append("Some images had not finished loading when the page was saved.")

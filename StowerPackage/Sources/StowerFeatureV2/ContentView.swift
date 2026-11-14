@@ -186,7 +186,9 @@ public struct AppView: View {
             // it, so a six-second banner never shoves the list up and back.
             .overlay(alignment: .bottom) {
                 VStack(spacing: 8) {
-                    if store.pendingSaveCount > 0 {
+                    // The list shows a row for each save in progress. The
+                    // notice is for the lists a new save does not land in.
+                    if store.pendingSaveCount > 0, !store.library.showsPendingSaves {
                         savingNotice(count: store.pendingSaveCount, palette: palette)
                             .transition(.move(edge: .bottom).combined(with: .opacity))
                     }

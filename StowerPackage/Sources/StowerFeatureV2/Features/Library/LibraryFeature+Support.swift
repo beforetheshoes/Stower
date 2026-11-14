@@ -55,3 +55,23 @@ func normalizeSourceURL(_ value: String) -> String? {
     }
     return nil
 }
+
+extension LibraryFeature.State {
+    /// Whether the list being viewed is one a new save lands in. A new item
+    /// is unread and untagged, so it is absent from the other lists.
+    public var showsPendingSaves: Bool {
+        guard query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        return switch filter {
+        case .all, .unread, .untagged:
+            true
+        case .read, .starred, .recentlyDeleted, .tag:
+            false
+        }
+    }
+
+    /// Saves to list ahead of the article they will become.
+    public var pendingSaves: [PendingSave] {
+        guard showsPendingSaves else { return [] }
+        return PendingSave.notYetArrived(queuedSaves, among: library.items)
+    }
+}
